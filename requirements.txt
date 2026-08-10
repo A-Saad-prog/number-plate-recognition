@@ -1,4 +1,5 @@
 ultralytics
 opencv-python
-paddleocr
 paddlepaddle
+paddleocr
+numpy

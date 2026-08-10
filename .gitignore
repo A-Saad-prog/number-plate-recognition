@@ -1,63 +1,75 @@
-# ==============================
 # Python
-# ==============================
 
-__pycache__/
+**pycache**/
 *.py[cod]
 *.pyo
+*.pyd
 
 # Virtual environment
+
 .venv/
 venv/
 env/
+ENV/
 
-# ==============================
-# Environment / secrets
-# ==============================
+# Environment variables / secrets
 
 .env
 .env.*
 !.env.example
 
-# ==============================
-# Datasets
-# ==============================
+# VS Code
+
+.vscode/
+*.code-workspace
+
+# Jupyter
+
+.ipynb_checkpoints/
+
+# Machine Learning datasets
 
 dataset/
 dataset_small/
 
-# ==============================
-# YOLO training / inference
-# ==============================
+# YOLO training outputs
 
 runs/
+models/
+
+# YOLO / ML model weights
+
 *.pt
+*.pth
 *.onnx
-*.engine
 
-# ==============================
-# IDE
-# ==============================
+# Generated images / predictions
 
-.vscode/
-.idea/
+*.jpg
+*.jpeg
+*.png
 
-# ==============================
-# Jupyter
-# ==============================
+# PaddleOCR / PaddleX cache
 
-.ipynb_checkpoints/
+.paddlex/
 
-# ==============================
+# Logs
+
+*.log
+
 # OS files
-# ==============================
 
 .DS_Store
 Thumbs.db
-desktop.ini
 
-# ==============================
-# Logs
-# ==============================
+# Python build files
 
-*.log
+build/
+dist/
+*.egg-info/
+
+# Test / coverage
+
+.pytest_cache/
+.coverage
+htmlcov/
