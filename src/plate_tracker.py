@@ -29,8 +29,7 @@ CONFIDENCE_THRESHOLD = 0.40
 
 # YOLO model
 MODEL_PATH = (
-    "runs/detect/runs/plate_detector_small/"
-    "weights/best.pt"
+    "models/best.pt"
 )
 
 # Number of OCR readings required

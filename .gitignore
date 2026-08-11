@@ -1,86 +1,64 @@
 # Python
-
-**pycache**/
+__pycache__/
 *.py[cod]
 *.pyo
 *.pyd
 
 # Virtual environment
-
 .venv/
 venv/
 env/
 ENV/
 
 # Environment variables / secrets
-
 .env
 .env.*
 !.env.example
 
 # VS Code
-
 .vscode/
 *.code-workspace
 
 # Jupyter
-
 .ipynb_checkpoints/
 
 # Machine Learning datasets
-
 dataset/
 dataset_small/
 
 # YOLO training outputs
+runs/
 
-runs/*
 
-# Allow the trained model
 
-!runs/detect/
-!runs/detect/runs/
-!runs/detect/runs/plate_detector_small/
-!runs/detect/runs/plate_detector_small/weights/
-!runs/detect/runs/plate_detector_small/weights/best.pt
-
-# YOLO / ML model weights
-
-*.pt
+# Other YOLO / ML model weights
+yolo11n.pt
 *.pth
 *.onnx
 
-# Allow our trained model despite the *.pt rule
 
-!runs/detect/runs/plate_detector_small/weights/best.pt
 
 # Generated images / predictions
-
 *.jpg
 *.jpeg
 *.png
 
 # PaddleOCR / PaddleX cache
-
 .paddlex/
 
 # Logs
-
 *.log
 
 # OS files
-
 .DS_Store
 Thumbs.db
 
 # Python build files
-
 build/
 dist/
 *.egg-info/
 
 # Test / coverage
-
 .pytest_cache/
 .coverage
 htmlcov/
