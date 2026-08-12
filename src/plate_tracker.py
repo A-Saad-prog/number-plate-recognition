@@ -1,5 +1,6 @@
 import os
 import re
+import requests
 
 # Disable PaddlePaddle features that caused compatibility issues
 os.environ["FLAGS_enable_pir_api"] = "0"
@@ -28,9 +29,7 @@ FRAME_SKIP = 3
 CONFIDENCE_THRESHOLD = 0.40
 
 # YOLO model
-MODEL_PATH = (
-    "models/best.pt"
-)
+MODEL_PATH = "models/best.pt"
 
 # Number of OCR readings required
 OCR_READINGS_REQUIRED = 3
@@ -41,25 +40,17 @@ OCR_CONFIDENCE_THRESHOLD = 0.60
 # Seconds before the system considers the vehicle gone
 PLATE_LOST_TIMEOUT = 2.0
 
+# FastAPI endpoint for detected plates
+DETECTED_PLATE_API_URL = (
+    "http://127.0.0.1:8000/parking/detected-plate"
+)
+
 
 # ============================================================
 # License Plate Validation
 # ============================================================
 
 def is_valid_plate(text):
-    """
-    Check whether OCR text looks like a license plate.
-
-    Current test format:
-        ABC-1234
-        ABC1234
-
-    Example:
-        HJG-5419 -> valid
-        HJG5419  -> valid
-        Unsplash  -> invalid
-    """
-
     text = text.upper().strip()
 
     # Remove spaces
@@ -74,7 +65,64 @@ def is_valid_plate(text):
 
 
 # ============================================================
-# Load models
+# Send Recognized Plate to FastAPI
+# ============================================================
+
+def send_detected_plate_to_backend(plate):
+    try:
+
+        response = requests.post(
+            DETECTED_PLATE_API_URL,
+            json={
+                "license_plate": plate
+            },
+            timeout=2,
+        )
+
+        if response.status_code == 200:
+
+            data = response.json()
+
+            if data.get("success"):
+
+                print()
+                print("==============================")
+                print("PLATE SENT TO BACKEND")
+                print("==============================")
+                print(
+                    f"Plate: {data['license_plate']}"
+                )
+                print("==============================")
+                print()
+
+                return True
+
+            print(
+                f"Backend error: "
+                f"{data.get('error')}"
+            )
+
+            return False
+
+        print(
+            f"Detected plate API returned HTTP "
+            f"{response.status_code}"
+        )
+
+        return False
+
+    except requests.exceptions.RequestException as error:
+
+        print(
+            f"Could not connect to FastAPI: "
+            f"{error}"
+        )
+
+        return False
+
+
+# ============================================================
+# Load Models
 # ============================================================
 
 print("Loading YOLO...")
@@ -112,7 +160,6 @@ camera.set(
     FRAME_HEIGHT
 )
 
-
 if not camera.isOpened():
 
     print("Could not open camera.")
@@ -128,8 +175,8 @@ actual_height = int(
     camera.get(cv2.CAP_PROP_FRAME_HEIGHT)
 )
 
-
 print()
+
 print(
     f"Camera resolution: "
     f"{actual_width}x{actual_height}"
@@ -168,7 +215,7 @@ display_fps = 0
 
 
 # ============================================================
-# OCR function
+# OCR Function
 # ============================================================
 
 def read_plate(plate_crop):
@@ -201,7 +248,6 @@ def read_plate(plate_crop):
                 "rec_scores",
                 []
             )
-
 
             for text, score in zip(
                 data,
@@ -268,7 +314,6 @@ def read_plate(plate_crop):
             f"(confidence: {confidence:.2f})"
         )
 
-
         return text
 
 
@@ -282,7 +327,7 @@ def read_plate(plate_crop):
 
 
 # ============================================================
-# Main loop
+# Main Loop
 # ============================================================
 
 while True:
@@ -302,7 +347,7 @@ while True:
 
 
     # ========================================================
-    # YOLO detection
+    # YOLO Detection
     # ========================================================
 
     if frame_count % FRAME_SKIP == 0:
@@ -348,7 +393,7 @@ while True:
 
 
         # ====================================================
-        # Plate detected
+        # Plate Detected
         # ====================================================
 
         if last_boxes:
@@ -408,6 +453,13 @@ while True:
 
 
                     # ========================================
+                    # Clear old OCR readings
+                    # ========================================
+
+                    ocr_results = []
+
+
+                    # ========================================
                     # Collect multiple OCR readings
                     # ========================================
 
@@ -447,6 +499,7 @@ while True:
 
 
                         print()
+
                         print(
                             "=============================="
                         )
@@ -463,8 +516,22 @@ while True:
                         print()
 
 
+                        # ====================================
+                        # Send detected plate to FastAPI
+                        #
+                        # IMPORTANT:
+                        # This does NOT create a parking entry.
+                        # It only tells FastAPI what the camera
+                        # detected.
+                        # ====================================
+
+                        send_detected_plate_to_backend(
+                            recognized_plate
+                        )
+
+
     # ========================================================
-    # Check whether vehicle disappeared
+    # Check Whether Vehicle Disappeared
     # ========================================================
 
     if (
@@ -474,7 +541,7 @@ while True:
     ):
 
         print(
-            f"Vehicle left: "
+            f"Vehicle left camera: "
             f"{recognized_plate}"
         )
 
@@ -486,12 +553,11 @@ while True:
 
         ocr_results = []
 
-        # Clear the old detection box
         last_boxes = []
 
 
     # ========================================================
-    # Draw YOLO detections
+    # Draw YOLO Detections
     # ========================================================
 
     for (
@@ -532,7 +598,7 @@ while True:
 
 
     # ========================================================
-    # Display recognized plate
+    # Display Recognized Plate
     # ========================================================
 
     if recognized_plate:

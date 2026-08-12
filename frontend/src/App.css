@@ -1,0 +1,655 @@
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: Arial, Helvetica, sans-serif;
+    background: #f4f6f8;
+    color: #1f2937;
+}
+
+.app {
+    min-height: 100vh;
+}
+
+/* ============================================================
+   HEADER
+============================================================ */
+
+.header {
+    background: #1f2937;
+    color: white;
+    padding: 25px 40px;
+}
+
+.header h1 {
+    margin: 0;
+    font-size: 30px;
+}
+
+.header p {
+    margin: 8px 0 0;
+    color: #d1d5db;
+}
+
+/* ============================================================
+   MAIN CONTAINER
+============================================================ */
+
+.container {
+    max-width: 1100px;
+    margin: 30px auto;
+    padding: 0 20px;
+
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 25px;
+}
+
+/* ============================================================
+   CARD
+============================================================ */
+
+.card {
+    background: white;
+    border-radius: 12px;
+    padding: 25px;
+
+    box-shadow: 0 3px 12px rgba(0, 0, 0, 0.08);
+}
+
+.card h2 {
+    margin-top: 0;
+    margin-bottom: 8px;
+}
+
+.card h3 {
+    margin-top: 25px;
+}
+
+.description {
+    color: #6b7280;
+    margin-bottom: 20px;
+    line-height: 1.5;
+}
+
+/* ============================================================
+   PARKING STATUS
+============================================================ */
+
+.parking-status {
+    grid-column: 1 / -1;
+}
+
+.parking-summary {
+    margin-top: 15px;
+}
+
+.space-status {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+
+    padding: 18px;
+
+    border-radius: 10px;
+}
+
+.space-status.available {
+    background: #f0fdf4;
+    border: 1px solid #bbf7d0;
+}
+
+.space-status.unavailable {
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+}
+
+.status-indicator {
+    font-size: 22px;
+}
+
+.space-status.available .status-indicator {
+    color: #16a34a;
+}
+
+.space-status.unavailable .status-indicator {
+    color: #dc2626;
+}
+
+.space-status strong {
+    display: block;
+    font-size: 17px;
+}
+
+.space-status p {
+    margin: 5px 0 0;
+    color: #6b7280;
+}
+
+.small-text {
+    margin-top: 12px;
+    color: #6b7280;
+    font-size: 13px;
+}
+
+.status-message {
+    padding: 15px;
+    background: #f9fafb;
+    border-radius: 8px;
+    color: #6b7280;
+}
+
+/* ============================================================
+   INPUT GROUP
+============================================================ */
+
+.input-group {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.input-group input {
+    flex: 1;
+
+    padding: 12px;
+
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+
+    font-size: 15px;
+
+    outline: none;
+}
+
+.input-group input:focus {
+    border-color: #2563eb;
+}
+
+.input-group button {
+    padding: 12px 18px;
+
+    border: none;
+    border-radius: 6px;
+
+    background: #2563eb;
+    color: white;
+
+    font-size: 14px;
+
+    cursor: pointer;
+}
+
+.input-group button:hover {
+    background: #1d4ed8;
+}
+
+.input-group button:disabled {
+    background: #9ca3af;
+    cursor: not-allowed;
+}
+
+/* ============================================================
+   DETECTED PLATE PANEL
+============================================================ */
+
+.detected-panel {
+    margin-top: 20px;
+
+    padding: 22px;
+
+    background: #eff6ff;
+
+    border: 1px solid #bfdbfe;
+
+    border-radius: 12px;
+}
+
+.detected-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+
+    gap: 15px;
+}
+
+.detected-label {
+    display: block;
+
+    color: #2563eb;
+
+    font-size: 13px;
+    font-weight: bold;
+
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+
+    margin-bottom: 5px;
+}
+
+.detected-header h3 {
+    margin: 0;
+
+    font-size: 28px;
+
+    color: #1e3a8a;
+}
+
+.live-indicator {
+    color: #dc2626;
+
+    font-size: 13px;
+    font-weight: bold;
+
+    white-space: nowrap;
+}
+
+.field-label {
+    display: block;
+
+    margin-bottom: 7px;
+
+    font-size: 14px;
+    font-weight: bold;
+
+    color: #374151;
+}
+
+.plate-input {
+    width: 100%;
+
+    padding: 13px;
+
+    border: 1px solid #93c5fd;
+    border-radius: 7px;
+
+    background: white;
+
+    font-size: 18px;
+    font-weight: bold;
+
+    letter-spacing: 1px;
+
+    outline: none;
+}
+
+.plate-input:focus {
+    border-color: #2563eb;
+
+    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+}
+
+/* ============================================================
+   CONFIRMATION BUTTONS
+============================================================ */
+
+.confirmation-buttons {
+    display: flex;
+
+    gap: 10px;
+
+    margin-top: 18px;
+}
+
+.confirm-button,
+.cancel-button {
+    flex: 1;
+
+    padding: 12px 18px;
+
+    border: none;
+    border-radius: 7px;
+
+    font-size: 14px;
+    font-weight: bold;
+
+    cursor: pointer;
+}
+
+.confirm-button {
+    background: #16a34a;
+    color: white;
+}
+
+.confirm-button:hover {
+    background: #15803d;
+}
+
+.confirm-button:disabled {
+    background: #9ca3af;
+    cursor: not-allowed;
+}
+
+.cancel-button {
+    background: #e5e7eb;
+    color: #374151;
+}
+
+.cancel-button:hover {
+    background: #d1d5db;
+}
+
+.cancel-button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* ============================================================
+   WAITING FOR CAMERA
+============================================================ */
+
+.waiting-panel {
+    margin-top: 20px;
+
+    padding: 35px 20px;
+
+    background: #f9fafb;
+
+    border: 1px dashed #d1d5db;
+
+    border-radius: 10px;
+
+    text-align: center;
+
+    color: #374151;
+}
+
+.camera-icon {
+    font-size: 42px;
+
+    margin-bottom: 12px;
+}
+
+.waiting-panel strong {
+    display: block;
+
+    font-size: 17px;
+
+    margin-bottom: 7px;
+}
+
+.waiting-panel p {
+    margin: 0 0 10px;
+
+    color: #6b7280;
+}
+
+.waiting-panel span {
+    display: block;
+
+    color: #2563eb;
+
+    font-size: 13px;
+}
+
+/* ============================================================
+   ERROR
+============================================================ */
+
+.error {
+    background: #fee2e2;
+
+    color: #991b1b;
+
+    padding: 12px;
+
+    border-radius: 6px;
+
+    margin-top: 15px;
+
+    line-height: 1.4;
+}
+
+/* ============================================================
+   RESULT
+============================================================ */
+
+.result {
+    background: #f0fdf4;
+
+    border: 1px solid #bbf7d0;
+
+    border-radius: 8px;
+
+    padding: 18px;
+
+    margin-top: 20px;
+}
+
+.result h3 {
+    margin-top: 0;
+
+    color: #166534;
+}
+
+.result-row {
+    display: flex;
+
+    justify-content: space-between;
+
+    gap: 20px;
+
+    padding: 9px 0;
+
+    border-bottom: 1px solid #dcfce7;
+}
+
+.result-row:last-child {
+    border-bottom: none;
+}
+
+.result-row strong {
+    color: #374151;
+}
+
+.result-row span {
+    text-align: right;
+
+    word-break: break-word;
+}
+
+.qr-value {
+    max-width: 250px;
+}
+
+.amount {
+    font-size: 18px;
+
+    margin-top: 5px;
+}
+
+/* ============================================================
+   ENTRY SUCCESS RESULT
+============================================================ */
+
+.success-result {
+    margin-top: 20px;
+}
+
+.success-result h3 {
+    color: #166534;
+}
+
+/* ============================================================
+   QR CODE DISPLAY
+============================================================ */
+
+.qr-display {
+    margin-top: 20px;
+
+    padding-top: 20px;
+
+    border-top: 1px solid #bbf7d0;
+
+    text-align: center;
+}
+
+.qr-display h4 {
+    margin: 0 0 15px;
+
+    color: #166534;
+
+    font-size: 16px;
+}
+
+.qr-code-box {
+    width: 180px;
+    min-height: 180px;
+
+    margin: 0 auto;
+
+    padding: 20px;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    background: white;
+
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+
+    word-break: break-all;
+
+    font-size: 13px;
+    color: #374151;
+}
+
+.qr-display p {
+    margin: 12px 0 0;
+
+    color: #6b7280;
+
+    font-size: 13px;
+}
+
+/* ============================================================
+   CURRENT VEHICLE
+============================================================ */
+
+.entry-summary {
+    grid-column: 1 / -1;
+}
+
+.current-vehicle {
+    display: grid;
+
+    grid-template-columns: 1fr 1fr;
+
+    gap: 15px;
+
+    margin-top: 15px;
+}
+
+.current-vehicle > div {
+    padding: 18px;
+
+    background: #f9fafb;
+
+    border: 1px solid #e5e7eb;
+
+    border-radius: 8px;
+}
+
+.current-vehicle span {
+    display: block;
+
+    color: #6b7280;
+
+    font-size: 13px;
+
+    margin-bottom: 7px;
+}
+
+.current-vehicle strong {
+    display: block;
+
+    font-size: 16px;
+
+    color: #1f2937;
+}
+
+/* ============================================================
+   MOBILE / TABLET
+============================================================ */
+
+@media (max-width: 800px) {
+
+    .container {
+        grid-template-columns: 1fr;
+
+        margin-top: 20px;
+    }
+
+    .parking-status {
+        grid-column: auto;
+    }
+
+    .entry-summary {
+        grid-column: auto;
+    }
+
+    .input-group {
+        flex-direction: column;
+    }
+
+    .input-group button {
+        width: 100%;
+    }
+
+    .header {
+        padding: 20px;
+    }
+
+    .header h1 {
+        font-size: 25px;
+    }
+
+    .detected-header {
+        flex-direction: column;
+    }
+
+    .confirmation-buttons {
+        flex-direction: column;
+    }
+
+    .current-vehicle {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* ============================================================
+   SMALL MOBILE SCREENS
+============================================================ */
+
+@media (max-width: 500px) {
+
+    .container {
+        padding: 0 12px;
+    }
+
+    .card {
+        padding: 18px;
+    }
+
+    .detected-header h3 {
+        font-size: 23px;
+    }
+
+    .result-row {
+        flex-direction: column;
+
+        gap: 4px;
+    }
+
+    .result-row span {
+        text-align: left;
+    }
+
+    .qr-code-box {
+        width: 160px;
+        min-height: 160px;
+    }
+}
