@@ -42,6 +42,7 @@ yolo11n.pt
 *.jpg
 *.jpeg
 *.png
+!test_plate.jpg
 
 # PaddleOCR / PaddleX cache
 .paddlex/
