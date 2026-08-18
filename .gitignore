@@ -62,3 +62,9 @@ dist/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Frontend dependencies
+frontend/node_modules/
+
+# Frontend build output
+frontend/dist/

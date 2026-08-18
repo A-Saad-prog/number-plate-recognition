@@ -4,7 +4,7 @@ const API_BASE_URL =
 
 
 // ============================================================
-// Get All Parking Spaces
+// Parking
 // ============================================================
 
 export async function getParkingSpaces() {
@@ -24,32 +24,6 @@ export async function getParkingSpaces() {
     return await response.json();
 }
 
-
-// ============================================================
-// Get Latest Detected License Plate
-// ============================================================
-
-export async function getDetectedPlate() {
-
-    const response = await fetch(
-        `${API_BASE_URL}/parking/detected-plate`
-    );
-
-    if (!response.ok) {
-
-        throw new Error(
-            `Failed to get detected plate: ${response.status}`
-        );
-
-    }
-
-    return await response.json();
-}
-
-
-// ============================================================
-// Register Vehicle Entry
-// ============================================================
 
 export async function registerEntry(
     licensePlate,
@@ -72,7 +46,6 @@ export async function registerEntry(
         }
     );
 
-
     if (!response.ok) {
 
         throw new Error(
@@ -84,10 +57,6 @@ export async function registerEntry(
     return await response.json();
 }
 
-
-// ============================================================
-// Exit Using License Plate
-// ============================================================
 
 export async function exitUsingPlate(
     licensePlate
@@ -108,11 +77,43 @@ export async function exitUsingPlate(
         }
     );
 
-
     if (!response.ok) {
 
         throw new Error(
             `Failed to process vehicle exit: ${response.status}`
+        );
+
+    }
+
+    return await response.json();
+}
+
+
+// ============================================================
+// Vision
+// ============================================================
+
+export async function detectPlateFromFrame(image) {
+
+    const response = await fetch(
+        `${API_BASE_URL}/vision/detect-plate`,
+        {
+            method: "POST",
+
+            headers: {
+                "Content-Type": "application/json",
+            },
+
+            body: JSON.stringify({
+                image,
+            }),
+        }
+    );
+
+    if (!response.ok) {
+
+        throw new Error(
+            `Vision API returned ${response.status}`
         );
 
     }

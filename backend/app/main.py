@@ -1,7 +1,13 @@
+import os
+
+from dotenv import load_dotenv
+
+from app.logging_config import configure_logging
+
+from app.api.vision import router as vision_router
+
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
-
-from pydantic import BaseModel
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -26,6 +32,18 @@ from app.services.exit_service import (
     process_vehicle_exit_by_plate,
 )
 
+configure_logging()
+
+load_dotenv()
+
+cors_origins = [
+    origin.strip()
+    for origin in os.getenv(
+        "CORS_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173",
+    ).split(",")
+    if origin.strip()
+]
 
 app = FastAPI(
     title="Parking Garage API",
@@ -43,21 +61,13 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-
-# ============================================================
-# Latest Detected License Plate
-# ============================================================
-
-latest_detected_plate = None
+app.include_router(vision_router)
 
 
 # ============================================================
@@ -199,45 +209,3 @@ def vehicle_exit(
             "success": False,
             "error": str(error),
         }
-        
-# ============================================================
-# Detected Plate Request
-# ============================================================
-
-class DetectedPlateRequest(BaseModel):
-    license_plate: str
-
-
-# ============================================================
-# Receive Detected Plate From Camera
-# ============================================================
-
-@app.post("/parking/detected-plate")
-def detected_plate(
-    request: DetectedPlateRequest,
-):
-    global latest_detected_plate
-
-    latest_detected_plate = (
-        request.license_plate
-        .strip()
-        .upper()
-    )
-
-    return {
-        "success": True,
-        "license_plate": latest_detected_plate,
-    }
-
-
-# ============================================================
-# Get Latest Detected Plate
-# ============================================================
-
-@app.get("/parking/detected-plate")
-def get_detected_plate():
-
-    return {
-        "success": True,
-        "license_plate": latest_detected_plate,
-    }

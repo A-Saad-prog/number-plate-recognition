@@ -96,7 +96,6 @@ def complete_parking_session(
 
     try:
         db.commit()
-
     except Exception:
         db.rollback()
         raise

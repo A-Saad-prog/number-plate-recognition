@@ -1201,3 +1201,18 @@ button {
         font-size: 9px;
     }
 }
+
+.camera-preview {
+    width: 100%;
+    max-width: 640px;
+    margin: 20px auto;
+    overflow: hidden;
+    border-radius: 12px;
+}
+
+.camera-preview video {
+    display: block;
+    width: 100%;
+    height: auto;
+    background: #000;
+}

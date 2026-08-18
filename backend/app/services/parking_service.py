@@ -29,12 +29,8 @@ def get_all_spaces(
     db: Session,
 ):
     """
-    Return all parking spaces.
-
-    For occupied spaces, also return the currently
-    parked vehicle's license plate and entry time.
-
-    Available spaces return None for vehicle information.
+    Return all parking spaces with active vehicle
+    information for occupied spaces.
     """
 
     spaces = (
@@ -58,12 +54,9 @@ def get_all_spaces(
             session = (
                 db.query(ParkingSession)
                 .filter(
-                    ParkingSession.parking_space_id
-                    == space.id,
-                    ParkingSession.status
-                    == "active",
-                    ParkingSession.exit_time
-                    == None,
+                    ParkingSession.parking_space_id == space.id,
+                    ParkingSession.status == "active",
+                    ParkingSession.exit_time == None,
                 )
                 .first()
             )
@@ -73,21 +66,15 @@ def get_all_spaces(
                 vehicle = (
                     db.query(Vehicle)
                     .filter(
-                        Vehicle.id
-                        == session.vehicle_id
+                        Vehicle.id == session.vehicle_id
                     )
                     .first()
                 )
 
                 if vehicle:
+                    license_plate = vehicle.license_plate
 
-                    license_plate = (
-                        vehicle.license_plate
-                    )
-
-                entry_time = (
-                    session.entry_time
-                )
+                entry_time = session.entry_time
 
         result.append(
             {
@@ -107,10 +94,6 @@ def validate_available_space(
     db: Session,
     space_id: int,
 ) -> ParkingSpace:
-    """
-    Validate that the requested parking space exists
-    and is currently available.
-    """
 
     space = (
         db.query(ParkingSpace)
