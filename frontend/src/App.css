@@ -9,6 +9,10 @@ body {
     color: #1f2937;
 }
 
+button {
+    font-family: inherit;
+}
+
 .app {
     min-height: 100vh;
 }
@@ -128,12 +132,6 @@ body {
     color: #6b7280;
 }
 
-.small-text {
-    margin-top: 12px;
-    color: #6b7280;
-    font-size: 13px;
-}
-
 .status-message {
     padding: 15px;
     background: #f9fafb;
@@ -142,57 +140,233 @@ body {
 }
 
 /* ============================================================
-   INPUT GROUP
+   PARKING LEGEND
 ============================================================ */
 
-.input-group {
+.parking-legend {
     display: flex;
-    gap: 10px;
-    margin-bottom: 15px;
-}
+    flex-wrap: wrap;
+    gap: 20px;
 
-.input-group input {
-    flex: 1;
+    margin-top: 20px;
+    padding: 12px 15px;
 
-    padding: 12px;
+    background: #f9fafb;
 
-    border: 1px solid #d1d5db;
-    border-radius: 6px;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
 
-    font-size: 15px;
-
-    outline: none;
-}
-
-.input-group input:focus {
-    border-color: #2563eb;
-}
-
-.input-group button {
-    padding: 12px 18px;
-
-    border: none;
-    border-radius: 6px;
-
-    background: #2563eb;
-    color: white;
-
+    color: #4b5563;
     font-size: 14px;
-
-    cursor: pointer;
 }
 
-.input-group button:hover {
-    background: #1d4ed8;
+.parking-legend > div {
+    display: flex;
+    align-items: center;
+    gap: 7px;
 }
 
-.input-group button:disabled {
-    background: #9ca3af;
-    cursor: not-allowed;
+.legend-box {
+    width: 16px;
+    height: 16px;
+
+    display: inline-block;
+
+    border-radius: 4px;
+}
+
+.available-box {
+    background: #dcfce7;
+    border: 1px solid #86efac;
+}
+
+.occupied-box {
+    background: #fee2e2;
+    border: 1px solid #fca5a5;
+}
+
+.selected-box {
+    background: #dbeafe;
+    border: 2px solid #2563eb;
 }
 
 /* ============================================================
-   DETECTED PLATE PANEL
+   PARKING LEVEL
+============================================================ */
+
+.parking-level {
+    margin-top: 25px;
+}
+
+.parking-level h3 {
+    margin: 0 0 12px;
+    font-size: 18px;
+}
+
+/* ============================================================
+   PARKING GRID
+============================================================ */
+
+.parking-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 12px;
+}
+
+/* ============================================================
+   PARKING SPACE
+============================================================ */
+
+.parking-space {
+    min-height: 95px;
+
+    padding: 12px 8px;
+
+    border-radius: 9px;
+
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+
+    gap: 6px;
+
+    font-family: inherit;
+
+    cursor: pointer;
+
+    transition:
+        transform 0.15s ease,
+        box-shadow 0.15s ease,
+        border-color 0.15s ease;
+}
+
+.parking-space-number {
+    font-size: 18px;
+    font-weight: bold;
+}
+
+.parking-space small {
+    font-size: 12px;
+}
+
+/* Available */
+
+.parking-space.available {
+    background: #f0fdf4;
+
+    border: 2px solid #86efac;
+
+    color: #166534;
+}
+
+.parking-space.available:hover {
+    transform: translateY(-2px);
+
+    box-shadow: 0 4px 10px rgba(22, 163, 74, 0.15);
+}
+
+/* Occupied */
+
+.parking-space.occupied {
+    background: #fef2f2;
+
+    border: 2px solid #fca5a5;
+
+    color: #991b1b;
+
+    cursor: not-allowed;
+}
+
+/* Selected */
+
+.parking-space.selected {
+    background: #dbeafe;
+
+    border: 3px solid #2563eb;
+
+    color: #1e3a8a;
+
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+/* Disabled */
+
+.parking-space:disabled {
+    opacity: 1;
+}
+
+/* ============================================================
+   VEHICLE INFORMATION INSIDE PARKING SPACE
+============================================================ */
+
+.parking-space-vehicle {
+    width: 100%;
+
+    display: flex;
+    flex-direction: column;
+
+    align-items: center;
+
+    gap: 3px;
+
+    text-align: center;
+}
+
+.parking-space-vehicle strong {
+    display: block;
+
+    max-width: 100%;
+
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+
+    font-size: 13px;
+
+    letter-spacing: 0.5px;
+}
+
+.parking-space-vehicle small {
+    display: block;
+
+    max-width: 100%;
+
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+
+    font-size: 10px;
+
+    opacity: 0.8;
+}
+
+/* ============================================================
+   VEHICLE SECTION
+============================================================ */
+
+.vehicle-section {
+    grid-column: 1 / -1;
+
+    display: grid;
+
+    grid-template-columns: 1fr 1fr;
+
+    gap: 25px;
+
+    align-items: start;
+}
+
+/* ============================================================
+   VEHICLE INFORMATION CARD
+============================================================ */
+
+.vehicle-information-card {
+    min-width: 0;
+}
+
+/* ============================================================
+   DETECTED PANEL
 ============================================================ */
 
 .detected-panel {
@@ -209,6 +383,7 @@ body {
 
 .detected-header {
     display: flex;
+
     justify-content: space-between;
     align-items: flex-start;
 
@@ -235,6 +410,8 @@ body {
     font-size: 28px;
 
     color: #1e3a8a;
+
+    letter-spacing: 1px;
 }
 
 .live-indicator {
@@ -245,6 +422,39 @@ body {
 
     white-space: nowrap;
 }
+
+/* ============================================================
+   PLATE DISPLAY
+============================================================ */
+
+.plate-display {
+    margin-top: 18px;
+}
+
+.plate-readonly {
+    width: 100%;
+
+    padding: 15px;
+
+    background: white;
+
+    border: 1px solid #bfdbfe;
+
+    border-radius: 8px;
+
+    text-align: center;
+
+    font-size: 27px;
+    font-weight: bold;
+
+    letter-spacing: 2px;
+
+    color: #1e3a8a;
+}
+
+/* ============================================================
+   FIELD LABEL
+============================================================ */
 
 .field-label {
     display: block;
@@ -257,28 +467,80 @@ body {
     color: #374151;
 }
 
-.plate-input {
-    width: 100%;
+/* ============================================================
+   ACTION SELECTION
+============================================================ */
 
-    padding: 13px;
+.action-selection {
+    margin-top: 22px;
+}
 
-    border: 1px solid #93c5fd;
-    border-radius: 7px;
+.action-title {
+    margin: 0 0 12px;
+
+    font-size: 15px;
+    font-weight: bold;
+
+    color: #374151;
+}
+
+.vehicle-action-buttons {
+    display: grid;
+
+    grid-template-columns: 1fr 1fr;
+
+    gap: 12px;
+}
+
+/* ============================================================
+   ENTRY MODE
+============================================================ */
+
+.entry-mode {
+    margin-top: 22px;
+
+    padding-top: 5px;
+}
+
+.entry-mode h3,
+.exit-mode h3 {
+    margin-top: 0;
+    margin-bottom: 8px;
+}
+
+/* ============================================================
+   SELECTED SPACE INFORMATION
+============================================================ */
+
+.selected-space-info {
+    display: flex;
+
+    justify-content: space-between;
+    align-items: center;
+
+    gap: 15px;
+
+    margin-top: 18px;
+
+    padding: 14px 16px;
 
     background: white;
 
-    font-size: 18px;
-    font-weight: bold;
+    border: 1px solid #bfdbfe;
 
-    letter-spacing: 1px;
-
-    outline: none;
+    border-radius: 8px;
 }
 
-.plate-input:focus {
-    border-color: #2563eb;
+.selected-space-info strong {
+    color: #374151;
+}
 
-    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+.selected-space-info span {
+    font-weight: bold;
+
+    color: #2563eb;
+
+    text-align: right;
 }
 
 /* ============================================================
@@ -306,6 +568,10 @@ body {
     font-weight: bold;
 
     cursor: pointer;
+
+    transition:
+        background 0.15s ease,
+        transform 0.15s ease;
 }
 
 .confirm-button {
@@ -313,8 +579,9 @@ body {
     color: white;
 }
 
-.confirm-button:hover {
+.confirm-button:hover:not(:disabled) {
     background: #15803d;
+    transform: translateY(-1px);
 }
 
 .confirm-button:disabled {
@@ -327,13 +594,98 @@ body {
     color: #374151;
 }
 
-.cancel-button:hover {
+.cancel-button:hover:not(:disabled) {
     background: #d1d5db;
 }
 
 .cancel-button:disabled {
     opacity: 0.6;
     cursor: not-allowed;
+}
+
+/* ============================================================
+   EXIT MODE
+============================================================ */
+
+.exit-mode {
+    margin-top: 22px;
+
+    padding-top: 5px;
+}
+
+.exit-plate-confirmation {
+    display: flex;
+
+    justify-content: space-between;
+    align-items: center;
+
+    gap: 15px;
+
+    margin-top: 18px;
+
+    padding: 14px 16px;
+
+    background: #fff7ed;
+
+    border: 1px solid #fed7aa;
+
+    border-radius: 8px;
+}
+
+.exit-plate-confirmation strong {
+    color: #374151;
+}
+
+.exit-plate-confirmation span {
+    font-size: 18px;
+    font-weight: bold;
+
+    color: #9a3412;
+
+    letter-spacing: 1px;
+}
+
+/* ============================================================
+   EXIT BUTTON
+============================================================ */
+
+.exit-button {
+    padding: 13px 18px;
+
+    border: none;
+
+    border-radius: 7px;
+
+    background: #dc2626;
+
+    color: white;
+
+    font-size: 15px;
+    font-weight: bold;
+
+    cursor: pointer;
+
+    transition:
+        background 0.15s ease,
+        transform 0.15s ease;
+}
+
+.exit-button:hover:not(:disabled) {
+    background: #b91c1c;
+
+    transform: translateY(-1px);
+}
+
+.exit-button:disabled {
+    background: #9ca3af;
+
+    cursor: not-allowed;
+}
+
+.vehicle-action-buttons .exit-button {
+    width: 100%;
+
+    margin-top: 0;
 }
 
 /* ============================================================
@@ -371,17 +723,213 @@ body {
 }
 
 .waiting-panel p {
-    margin: 0 0 10px;
+    margin: 0;
 
     color: #6b7280;
 }
 
-.waiting-panel span {
-    display: block;
+/* ============================================================
+   VEHICLE INFORMATION PANEL
+============================================================ */
 
-    color: #2563eb;
+.vehicle-info-panel {
+    margin-top: 20px;
+
+    padding: 20px;
+
+    border-radius: 10px;
+
+    border: 1px solid #e5e7eb;
+
+    background: #f9fafb;
+}
+
+.vehicle-info-panel h3 {
+    margin: 0 0 18px;
+
+    font-size: 25px;
+
+    letter-spacing: 1px;
+}
+
+.vehicle-info-header {
+    display: flex;
+
+    align-items: center;
+
+    justify-content: space-between;
+
+    margin-bottom: 12px;
+}
+
+.vehicle-info-header span {
+    font-size: 12px;
+
+    font-weight: bold;
+
+    letter-spacing: 0.6px;
+}
+
+.vehicle-info-row {
+    display: flex;
+
+    justify-content: space-between;
+
+    align-items: flex-start;
+
+    gap: 20px;
+
+    padding: 11px 0;
+
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.vehicle-info-row:last-child {
+    border-bottom: none;
+}
+
+.vehicle-info-row strong {
+    color: #374151;
 
     font-size: 13px;
+}
+
+.vehicle-info-row span {
+    text-align: right;
+
+    color: #1f2937;
+
+    font-size: 13px;
+
+    word-break: break-word;
+}
+
+/* ============================================================
+   DETECTED INFORMATION
+============================================================ */
+
+.detected-info {
+    background: #eff6ff;
+
+    border-color: #bfdbfe;
+}
+
+.detected-info .vehicle-info-header span {
+    color: #2563eb;
+}
+
+.detected-info h3 {
+    color: #1e3a8a;
+}
+
+/* ============================================================
+   ENTRY INFORMATION
+============================================================ */
+
+.entry-info {
+    background: #f0fdf4;
+
+    border-color: #bbf7d0;
+}
+
+.entry-info .vehicle-info-header span {
+    color: #16a34a;
+}
+
+.entry-info h3 {
+    color: #166534;
+}
+
+/* ============================================================
+   EXIT INFORMATION
+============================================================ */
+
+.exit-info {
+    background: #fff7ed;
+
+    border-color: #fed7aa;
+}
+
+.exit-info .vehicle-info-header span {
+    color: #c2410c;
+}
+
+.exit-info h3 {
+    color: #9a3412;
+}
+
+/* ============================================================
+   AMOUNT BILLED
+============================================================ */
+
+.vehicle-info-amount {
+    display: flex;
+
+    justify-content: space-between;
+
+    align-items: center;
+
+    gap: 15px;
+
+    margin-top: 18px;
+
+    padding: 15px;
+
+    background: white;
+
+    border: 1px solid #bbf7d0;
+
+    border-radius: 8px;
+}
+
+.vehicle-info-amount span {
+    font-size: 13px;
+
+    font-weight: bold;
+
+    color: #374151;
+}
+
+.vehicle-info-amount strong {
+    font-size: 20px;
+
+    color: #166534;
+}
+
+/* ============================================================
+   EMPTY VEHICLE INFORMATION
+============================================================ */
+
+.empty-info {
+    text-align: center;
+
+    padding: 35px 20px;
+
+    background: #f9fafb;
+
+    border: 1px dashed #d1d5db;
+}
+
+.empty-info .camera-icon {
+    margin-bottom: 10px;
+}
+
+.empty-info strong {
+    display: block;
+
+    font-size: 16px;
+
+    color: #374151;
+}
+
+.empty-info p {
+    margin: 8px 0 0;
+
+    color: #6b7280;
+
+    line-height: 1.5;
+
+    font-size: 14px;
 }
 
 /* ============================================================
@@ -400,6 +948,8 @@ body {
     margin-top: 15px;
 
     line-height: 1.4;
+
+    border: 1px solid #fecaca;
 }
 
 /* ============================================================
@@ -450,19 +1000,11 @@ body {
     word-break: break-word;
 }
 
-.qr-value {
-    max-width: 250px;
-}
-
 .amount {
     font-size: 18px;
 
     margin-top: 5px;
 }
-
-/* ============================================================
-   ENTRY SUCCESS RESULT
-============================================================ */
 
 .success-result {
     margin-top: 20px;
@@ -472,57 +1014,10 @@ body {
     color: #166534;
 }
 
-/* ============================================================
-   QR CODE DISPLAY
-============================================================ */
+.exit-success-result {
+    background: #f0fdf4;
 
-.qr-display {
-    margin-top: 20px;
-
-    padding-top: 20px;
-
-    border-top: 1px solid #bbf7d0;
-
-    text-align: center;
-}
-
-.qr-display h4 {
-    margin: 0 0 15px;
-
-    color: #166534;
-
-    font-size: 16px;
-}
-
-.qr-code-box {
-    width: 180px;
-    min-height: 180px;
-
-    margin: 0 auto;
-
-    padding: 20px;
-
-    display: flex;
-    align-items: center;
-    justify-content: center;
-
-    background: white;
-
-    border: 1px solid #d1d5db;
-    border-radius: 8px;
-
-    word-break: break-all;
-
-    font-size: 13px;
-    color: #374151;
-}
-
-.qr-display p {
-    margin: 12px 0 0;
-
-    color: #6b7280;
-
-    font-size: 13px;
+    border-color: #bbf7d0;
 }
 
 /* ============================================================
@@ -572,7 +1067,7 @@ body {
 }
 
 /* ============================================================
-   MOBILE / TABLET
+   TABLET
 ============================================================ */
 
 @media (max-width: 800px) {
@@ -591,12 +1086,10 @@ body {
         grid-column: auto;
     }
 
-    .input-group {
-        flex-direction: column;
-    }
+    .vehicle-section {
+        grid-column: auto;
 
-    .input-group button {
-        width: 100%;
+        grid-template-columns: 1fr;
     }
 
     .header {
@@ -618,6 +1111,10 @@ body {
     .current-vehicle {
         grid-template-columns: 1fr;
     }
+
+    .parking-grid {
+        grid-template-columns: repeat(4, 1fr);
+    }
 }
 
 /* ============================================================
@@ -638,18 +1135,69 @@ body {
         font-size: 23px;
     }
 
-    .result-row {
-        flex-direction: column;
-
-        gap: 4px;
+    .parking-grid {
+        grid-template-columns: repeat(2, 1fr);
     }
 
-    .result-row span {
+    .parking-legend {
+        flex-direction: column;
+
+        gap: 10px;
+    }
+
+    .selected-space-info {
+        flex-direction: column;
+
+        align-items: flex-start;
+    }
+
+    .selected-space-info span {
         text-align: left;
     }
 
-    .qr-code-box {
-        width: 160px;
-        min-height: 160px;
+    .vehicle-action-buttons {
+        grid-template-columns: 1fr;
+    }
+
+    .exit-plate-confirmation {
+        flex-direction: column;
+
+        align-items: flex-start;
+    }
+
+    .vehicle-info-row {
+        flex-direction: column;
+
+        gap: 5px;
+    }
+
+    .vehicle-info-row span {
+        text-align: left;
+    }
+
+    .vehicle-info-amount {
+        flex-direction: column;
+
+        align-items: flex-start;
+    }
+
+    .confirmation-buttons {
+        gap: 8px;
+    }
+
+    .plate-readonly {
+        font-size: 22px;
+    }
+
+    .parking-space {
+        min-height: 90px;
+    }
+
+    .parking-space-vehicle strong {
+        font-size: 12px;
+    }
+
+    .parking-space-vehicle small {
+        font-size: 9px;
     }
 }

@@ -4,19 +4,19 @@ const API_BASE_URL =
 
 
 // ============================================================
-// Get Available Parking Space
+// Get All Parking Spaces
 // ============================================================
 
-export async function getAvailableSpace() {
+export async function getParkingSpaces() {
 
     const response = await fetch(
-        `${API_BASE_URL}/parking/available-space`
+        `${API_BASE_URL}/parking/spaces`
     );
 
     if (!response.ok) {
 
         throw new Error(
-            `Failed to get available parking space: ${response.status}`
+            `Failed to get parking spaces: ${response.status}`
         );
 
     }
@@ -51,7 +51,10 @@ export async function getDetectedPlate() {
 // Register Vehicle Entry
 // ============================================================
 
-export async function registerEntry(licensePlate) {
+export async function registerEntry(
+    licensePlate,
+    parkingSpaceId
+) {
 
     const response = await fetch(
         `${API_BASE_URL}/parking/entry`,
@@ -64,9 +67,11 @@ export async function registerEntry(licensePlate) {
 
             body: JSON.stringify({
                 license_plate: licensePlate,
+                parking_space_id: parkingSpaceId,
             }),
         }
     );
+
 
     if (!response.ok) {
 
@@ -84,10 +89,12 @@ export async function registerEntry(licensePlate) {
 // Exit Using License Plate
 // ============================================================
 
-export async function exitUsingPlate(licensePlate) {
+export async function exitUsingPlate(
+    licensePlate
+) {
 
     const response = await fetch(
-        `${API_BASE_URL}/parking/exit/plate`,
+        `${API_BASE_URL}/parking/exit`,
         {
             method: "POST",
 
@@ -101,43 +108,11 @@ export async function exitUsingPlate(licensePlate) {
         }
     );
 
+
     if (!response.ok) {
 
         throw new Error(
             `Failed to process vehicle exit: ${response.status}`
-        );
-
-    }
-
-    return await response.json();
-}
-
-
-// ============================================================
-// Exit Using QR Code
-// ============================================================
-
-export async function exitUsingQR(qrCode) {
-
-    const response = await fetch(
-        `${API_BASE_URL}/parking/exit/qr`,
-        {
-            method: "POST",
-
-            headers: {
-                "Content-Type": "application/json",
-            },
-
-            body: JSON.stringify({
-                qr_code: qrCode,
-            }),
-        }
-    );
-
-    if (!response.ok) {
-
-        throw new Error(
-            `Failed to process QR exit: ${response.status}`
         );
 
     }

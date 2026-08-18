@@ -1,21 +1,48 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
-    getAvailableSpace,
+    getParkingSpaces,
     getDetectedPlate,
     registerEntry,
     exitUsingPlate,
-    exitUsingQR,
 } from "./services/api";
 
 import "./App.css";
 
+
 function App() {
+
     // ============================================================
-    // Detected plate / entry state
+    // Detected vehicle
     // ============================================================
 
     const [detectedPlate, setDetectedPlate] = useState("");
+
+    const [vehicleAction, setVehicleAction] = useState(null);
+
+    /*
+     * IMPORTANT:
+     * The polling function runs inside a useEffect with [].
+     * Therefore it cannot safely rely on the latest React state.
+     *
+     * This ref always contains the current plate being handled.
+     */
+    const detectedPlateRef = useRef("");
+
+    /*
+     * Stores the plate that has just completed an entry/exit.
+     *
+     * This prevents the camera from immediately detecting the
+     * same vehicle again while it is still in front of the camera.
+     */
+    const lastCompletedPlateRef = useRef("");
+
+
+    // ============================================================
+    // Entry state
+    // ============================================================
+
+    const [selectedSpaceId, setSelectedSpaceId] = useState(null);
 
     const [entryLoading, setEntryLoading] = useState(false);
 
@@ -25,10 +52,21 @@ function App() {
 
 
     // ============================================================
+    // Exit state
+    // ============================================================
+
+    const [exitLoading, setExitLoading] = useState(false);
+
+    const [exitError, setExitError] = useState("");
+
+    const [exitResult, setExitResult] = useState(null);
+
+
+    // ============================================================
     // Parking state
     // ============================================================
 
-    const [availableSpace, setAvailableSpace] = useState(null);
+    const [parkingSpaces, setParkingSpaces] = useState([]);
 
     const [parkingLoading, setParkingLoading] = useState(false);
 
@@ -36,18 +74,30 @@ function App() {
 
 
     // ============================================================
-    // Exit state
+    // Vehicle information stored against parking spaces
     // ============================================================
 
-    const [exitPlate, setExitPlate] = useState("");
+    const [spaceVehicleInfo, setSpaceVehicleInfo] = useState({});
 
-    const [qrCode, setQrCode] = useState("");
 
-    const [exitResult, setExitResult] = useState(null);
+    // ============================================================
+    // Format timestamp
+    // ============================================================
 
-    const [exitError, setExitError] = useState("");
+    function formatDateTime(value) {
 
-    const [exitLoading, setExitLoading] = useState(false);
+        if (!value) {
+            return "Unknown";
+        }
+
+        const date = new Date(value);
+
+        if (Number.isNaN(date.getTime())) {
+            return value;
+        }
+
+        return date.toLocaleString();
+    }
 
 
     // ============================================================
@@ -55,21 +105,96 @@ function App() {
     // ============================================================
 
     async function checkDetectedPlate() {
+
         try {
-            const result = await getDetectedPlate();
+
+            const result =
+                await getDetectedPlate();
+
+
+            // ----------------------------------------------------
+            // Camera currently sees no vehicle
+            // ----------------------------------------------------
 
             if (
-                result.success &&
-                result.license_plate &&
-                !detectedPlate
+                !result.success ||
+                !result.license_plate
             ) {
-                setDetectedPlate(
-                    result.license_plate.toUpperCase()
-                );
 
-                setEntryError("");
+                /*
+                 * The camera is no longer seeing a plate.
+                 *
+                 * This unlocks the previously completed vehicle
+                 * so that a future vehicle can be detected normally.
+                 */
+                lastCompletedPlateRef.current = "";
+
+                return;
             }
+
+
+            // ----------------------------------------------------
+            // Normalize detected plate
+            // ----------------------------------------------------
+
+            const plate =
+                result.license_plate
+                    .trim()
+                    .toUpperCase();
+
+
+            // ----------------------------------------------------
+            // Ignore vehicle that just completed a transaction
+            // ----------------------------------------------------
+
+            if (
+                plate ===
+                lastCompletedPlateRef.current
+            ) {
+
+                return;
+            }
+
+
+            // ----------------------------------------------------
+            // IMPORTANT:
+            // A vehicle is already being handled.
+            //
+            // Use the ref instead of detectedPlate state because
+            // this function is running from a polling interval.
+            // ----------------------------------------------------
+
+            if (
+                detectedPlateRef.current
+            ) {
+
+                return;
+            }
+
+
+            // ----------------------------------------------------
+            // New vehicle detected
+            // ----------------------------------------------------
+
+            detectedPlateRef.current =
+                plate;
+
+            setDetectedPlate(plate);
+
+            setVehicleAction(null);
+
+            setSelectedSpaceId(null);
+
+            setEntryError("");
+
+            setExitError("");
+
+            setEntryResult(null);
+
+            setExitResult(null);
+
         } catch (error) {
+
             console.error(
                 "Could not get detected plate:",
                 error
@@ -79,20 +204,49 @@ function App() {
 
 
     // ============================================================
-    // Get parking status
+    // Get all parking spaces
     // ============================================================
 
-    async function loadAvailableSpace() {
+    async function loadParkingSpaces() {
+
         try {
+
             setParkingLoading(true);
+
             setParkingError("");
 
-            const result = await getAvailableSpace();
+            const result =
+                await getParkingSpaces();
 
-            setAvailableSpace(result);
+
+            if (result.success) {
+
+                setParkingSpaces(
+                    result.spaces || []
+                );
+
+            } else {
+
+                setParkingError(
+                    result.error ||
+                    "Could not load parking spaces."
+                );
+            }
+
         } catch (error) {
-            setParkingError(error.message);
+
+            console.error(
+                "Could not load parking spaces:",
+                error
+            );
+
+            setParkingError(
+                error.message ||
+                "Could not load parking spaces."
+            );
+
         } finally {
+
             setParkingLoading(false);
         }
     }
@@ -103,169 +257,853 @@ function App() {
     // ============================================================
 
     useEffect(() => {
+
         checkDetectedPlate();
 
-        const interval = setInterval(() => {
-            checkDetectedPlate();
-        }, 1000);
+        const interval =
+            setInterval(() => {
+
+                checkDetectedPlate();
+
+            }, 1000);
+
 
         return () => {
+
             clearInterval(interval);
+
         };
-    }, [detectedPlate]);
 
-
-    // ============================================================
-    // Poll parking status
-    // ============================================================
-
-    useEffect(() => {
-        loadAvailableSpace();
-
-        const interval = setInterval(() => {
-            loadAvailableSpace();
-        }, 3000);
-
-        return () => {
-            clearInterval(interval);
-        };
     }, []);
 
 
     // ============================================================
-    // Confirm vehicle entry
+    // Poll parking spaces
     // ============================================================
 
-    async function handleConfirmEntry() {
-        const plate = detectedPlate.trim().toUpperCase();
+    useEffect(() => {
 
-        if (!plate) {
-            setEntryError(
-                "Please enter a license plate."
-            );
+        loadParkingSpaces();
+
+        const interval =
+            setInterval(() => {
+
+                loadParkingSpaces();
+
+            }, 3000);
+
+
+        return () => {
+
+            clearInterval(interval);
+
+        };
+
+    }, []);
+
+
+    // ============================================================
+    // Select ENTRY mode
+    // ============================================================
+
+    function handleSelectEntry() {
+
+        setVehicleAction("entry");
+
+        setEntryError("");
+
+        setExitError("");
+
+        setEntryResult(null);
+
+        setExitResult(null);
+    }
+
+
+    // ============================================================
+    // Select EXIT mode
+    // ============================================================
+
+    function handleSelectExit() {
+
+        setVehicleAction("exit");
+
+        setEntryError("");
+
+        setExitError("");
+
+        setEntryResult(null);
+
+        setExitResult(null);
+
+        setSelectedSpaceId(null);
+    }
+
+
+    // ============================================================
+    // Select parking space
+    // ============================================================
+
+    function handleSpaceSelection(space) {
+
+        if (space.is_occupied) {
             return;
         }
 
-        setEntryLoading(true);
+        if (
+            entryLoading ||
+            exitLoading
+        ) {
+            return;
+        }
+
+        if (vehicleAction !== "entry") {
+            return;
+        }
+
+        setSelectedSpaceId(space.id);
+
         setEntryError("");
+    }
+
+
+    // ============================================================
+    // Confirm vehicle ENTRY
+    // ============================================================
+
+    async function handleConfirmEntry() {
+
+        if (!detectedPlate) {
+
+            setEntryError(
+                "No vehicle license plate has been detected."
+            );
+
+            return;
+        }
+
+
+        if (!selectedSpaceId) {
+
+            setEntryError(
+                "Please select an available parking space."
+            );
+
+            return;
+        }
+
+
+        setEntryLoading(true);
+
+        setEntryError("");
+
         setEntryResult(null);
 
+
         try {
-            const result = await registerEntry(plate);
+
+            const result =
+                await registerEntry(
+                    detectedPlate,
+                    selectedSpaceId
+                );
+
 
             if (!result.success) {
+
                 setEntryError(
                     result.error ||
                     "Vehicle entry failed."
                 );
+
                 return;
             }
 
-            setEntryResult(result.vehicle);
+
+            // ----------------------------------------------------
+            // Store entry result
+            // ----------------------------------------------------
+
+            const vehicle =
+                result.vehicle;
+
+
+            /*
+             * Remember this plate as completed before clearing
+             * the active vehicle.
+             */
+            lastCompletedPlateRef.current ="";
+
+
+            setEntryResult(vehicle);
+
+
+            // ----------------------------------------------------
+            // Store vehicle information against parking space
+            // ----------------------------------------------------
+
+            setSpaceVehicleInfo(
+                (previous) => ({
+                    ...previous,
+
+                    [selectedSpaceId]: {
+                        license_plate:
+                            vehicle.license_plate,
+
+                        entry_time:
+                            vehicle.entry_time,
+
+                        level:
+                            vehicle.level,
+
+                        space:
+                            vehicle.space,
+                    },
+                })
+            );
+
+
+            // ----------------------------------------------------
+            // Clear active vehicle
+            // ----------------------------------------------------
+
+            detectedPlateRef.current = "";
 
             setDetectedPlate("");
 
-            await loadAvailableSpace();
+            setVehicleAction(null);
+
+            setSelectedSpaceId(null);
+
+
+            // ----------------------------------------------------
+            // Refresh parking status
+            // ----------------------------------------------------
+
+            await loadParkingSpaces();
+
         } catch (error) {
-            setEntryError(error.message);
+
+            console.error(
+                "Vehicle entry error:",
+                error
+            );
+
+            setEntryError(
+                error.message ||
+                "Vehicle entry failed."
+            );
+
         } finally {
+
             setEntryLoading(false);
         }
     }
 
 
     // ============================================================
-    // Cancel detected vehicle
+    // Confirm vehicle EXIT
+    // ============================================================
+
+    async function handleConfirmExit() {
+
+        if (!detectedPlate) {
+
+            setExitError(
+                "No vehicle license plate has been detected."
+            );
+
+            return;
+        }
+
+
+        setExitLoading(true);
+
+        setExitError("");
+
+        setExitResult(null);
+
+
+        try {
+
+            const result =
+                await exitUsingPlate(
+                    detectedPlate
+                );
+
+
+            if (!result.success) {
+
+                setExitError(
+                    result.error ||
+                    "Vehicle exit failed."
+                );
+
+                return;
+            }
+
+
+            // ----------------------------------------------------
+            // Store exit result
+            // ----------------------------------------------------
+
+            const vehicle =
+                result.vehicle;
+
+
+            /*
+             * Remember the completed plate before clearing the
+             * active detected vehicle.
+             */
+            lastCompletedPlateRef.current =
+                detectedPlate;
+
+
+            setExitResult(vehicle);
+
+
+            // ----------------------------------------------------
+            // Find released parking space
+            // ----------------------------------------------------
+
+            const releasedSpace =
+                parkingSpaces.find(
+                    (space) =>
+                        Number(space.level) ===
+                            Number(vehicle.level) &&
+                        String(space.space) ===
+                            String(vehicle.space)
+                );
+
+
+            // ----------------------------------------------------
+            // Remove vehicle information from released space
+            // ----------------------------------------------------
+
+            if (releasedSpace) {
+
+                setSpaceVehicleInfo(
+                    (previous) => {
+
+                        const updated = {
+                            ...previous,
+                        };
+
+                        delete updated[
+                            releasedSpace.id
+                        ];
+
+                        return updated;
+                    }
+                );
+            }
+
+
+            // ----------------------------------------------------
+            // Clear active detected vehicle
+            // ----------------------------------------------------
+
+            detectedPlateRef.current = "";
+
+            setDetectedPlate("");
+
+            setVehicleAction(null);
+
+            setSelectedSpaceId(null);
+
+
+            // ----------------------------------------------------
+            // Refresh parking status
+            // ----------------------------------------------------
+
+            await loadParkingSpaces();
+
+        } catch (error) {
+
+            console.error(
+                "Vehicle exit error:",
+                error
+            );
+
+            setExitError(
+                error.message ||
+                "Vehicle exit failed."
+            );
+
+        } finally {
+
+            setExitLoading(false);
+        }
+    }
+
+
+    // ============================================================
+    // Cancel current vehicle
     // ============================================================
 
     function handleCancelDetection() {
+
+        /*
+         * Canceling means the vehicle is no longer being handled.
+         * Keep the completed-plate protection intact only if this
+         * was a completed transaction.
+         */
+
+        detectedPlateRef.current = "";
+
         setDetectedPlate("");
 
+        setVehicleAction(null);
+
+        setSelectedSpaceId(null);
+
         setEntryError("");
+
+        setExitError("");
+
+        setEntryResult(null);
+
+        setExitResult(null);
     }
 
 
     // ============================================================
-    // Exit using license plate
+    // Parking statistics
     // ============================================================
 
-    async function handlePlateExit() {
-        const plate = exitPlate.trim().toUpperCase();
+    const totalSpaces =
+        parkingSpaces.length;
 
-        if (!plate) {
-            setExitError(
-                "Please enter a license plate."
+
+    const occupiedSpaces =
+        parkingSpaces.filter(
+            (space) =>
+                space.is_occupied
+        ).length;
+
+
+    const availableSpaces =
+        totalSpaces -
+        occupiedSpaces;
+
+
+    // ============================================================
+    // Selected parking space
+    // ============================================================
+
+    const selectedSpace =
+        parkingSpaces.find(
+            (space) =>
+                space.id === selectedSpaceId
+        );
+
+
+    // ============================================================
+    // Check whether garage has space
+    // ============================================================
+
+    const garageFull =
+        totalSpaces > 0 &&
+        availableSpaces === 0;
+
+
+    // ============================================================
+    // Render parking level
+    // ============================================================
+
+    function renderLevel(level) {
+
+        const spaces =
+            parkingSpaces.filter(
+                (space) =>
+                    Number(space.level) ===
+                    Number(level)
             );
-            return;
-        }
 
-        setExitLoading(true);
-        setExitError("");
-        setExitResult(null);
 
-        try {
-            const result = await exitUsingPlate(plate);
+        return (
 
-            if (!result.success) {
-                setExitError(
-                    result.error ||
-                    "Vehicle exit failed."
-                );
-                return;
-            }
+            <div
+                className="parking-level"
+                key={level}
+            >
 
-            setExitResult(result.vehicle);
+                <h3>
+                    Level {level}
+                </h3>
 
-            setExitPlate("");
 
-            await loadAvailableSpace();
-        } catch (error) {
-            setExitError(error.message);
-        } finally {
-            setExitLoading(false);
-        }
+                <div className="parking-grid">
+
+                    {spaces.map((space) => {
+
+                        const isSelected =
+                            selectedSpaceId ===
+                            space.id;
+
+
+                        const vehicle =
+                            spaceVehicleInfo[
+                                space.id
+                            ];
+
+
+                        return (
+
+                            <button
+                                key={space.id}
+                                type="button"
+                                className={
+                                    `parking-space ${
+                                        space.is_occupied
+                                            ? "occupied"
+                                            : "available"
+                                    } ${
+                                        isSelected
+                                            ? "selected"
+                                            : ""
+                                    }`
+                                }
+                                onClick={() =>
+                                    handleSpaceSelection(
+                                        space
+                                    )
+                                }
+                                disabled={
+                                    space.is_occupied ||
+                                    entryLoading ||
+                                    exitLoading ||
+                                    vehicleAction !== "entry"
+                                }
+                            >
+
+                                <span className="parking-space-number">
+                                    {space.space}
+                                </span>
+
+
+                                {space.is_occupied ? (
+
+                                    vehicle ? (
+
+                                        <div className="parking-space-vehicle">
+
+                                            <strong>
+                                                {vehicle.license_plate}
+                                            </strong>
+
+                                            <small>
+                                                Entry:{" "}
+                                                {formatDateTime(
+                                                    vehicle.entry_time
+                                                )}
+                                            </small>
+
+                                        </div>
+
+                                    ) : (
+
+                                        <small>
+                                            Occupied
+                                        </small>
+
+                                    )
+
+                                ) : (
+
+                                    <small>
+
+                                        {isSelected
+                                            ? "Selected"
+                                            : "Available"}
+
+                                    </small>
+
+                                )}
+
+                            </button>
+
+                        );
+
+                    })}
+
+                </div>
+
+            </div>
+        );
     }
 
 
     // ============================================================
-    // Exit using QR code
+    // Vehicle information panel
     // ============================================================
 
-    async function handleQRExit() {
-        const code = qrCode.trim();
+    function renderVehicleInformation() {
 
-        if (!code) {
-            setExitError(
-                "Please enter the QR code."
+        // --------------------------------------------------------
+        // EXIT RECEIPT
+        // --------------------------------------------------------
+
+        if (exitResult) {
+
+            return (
+
+                <div className="vehicle-info-panel exit-info">
+
+                    <div className="vehicle-info-header">
+
+                        <span>
+                            EXIT COMPLETED
+                        </span>
+
+                    </div>
+
+
+                    <h3>
+                        {exitResult.license_plate}
+                    </h3>
+
+
+                    <div className="vehicle-info-row">
+
+                        <strong>
+                            Entry Time
+                        </strong>
+
+                        <span>
+                            {formatDateTime(
+                                exitResult.entry_time
+                            )}
+                        </span>
+
+                    </div>
+
+
+                    <div className="vehicle-info-row">
+
+                        <strong>
+                            Exit Time
+                        </strong>
+
+                        <span>
+                            {formatDateTime(
+                                exitResult.exit_time
+                            )}
+                        </span>
+
+                    </div>
+
+
+                    <div className="vehicle-info-row">
+
+                        <strong>
+                            Duration
+                        </strong>
+
+                        <span>
+                            {exitResult.duration_hours}
+                            {" "}hour(s)
+                        </span>
+
+                    </div>
+
+
+                    <div className="vehicle-info-row">
+
+                        <strong>
+                            Parking Space
+                        </strong>
+
+                        <span>
+                            Level {exitResult.level}
+                            {" — "}
+                            {exitResult.space}
+                        </span>
+
+                    </div>
+
+
+                    <div className="vehicle-info-amount">
+
+                        <span>
+                            Amount Billed
+                        </span>
+
+                        <strong>
+                            {exitResult.amount}
+                        </strong>
+
+                    </div>
+
+                </div>
+
             );
-            return;
         }
 
-        setExitLoading(true);
-        setExitError("");
-        setExitResult(null);
 
-        try {
-            const result = await exitUsingQR(code);
+        // --------------------------------------------------------
+        // ENTRY RECEIPT
+        // --------------------------------------------------------
 
-            if (!result.success) {
-                setExitError(
-                    result.error ||
-                    "Vehicle exit failed."
-                );
-                return;
-            }
+        if (entryResult) {
 
-            setExitResult(result.vehicle);
+            return (
 
-            setQrCode("");
+                <div className="vehicle-info-panel entry-info">
 
-            await loadAvailableSpace();
-        } catch (error) {
-            setExitError(error.message);
-        } finally {
-            setExitLoading(false);
+                    <div className="vehicle-info-header">
+
+                        <span>
+                            ENTRY COMPLETED
+                        </span>
+
+                    </div>
+
+
+                    <h3>
+                        {entryResult.license_plate}
+                    </h3>
+
+
+                    <div className="vehicle-info-row">
+
+                        <strong>
+                            Entry Time
+                        </strong>
+
+                        <span>
+                            {formatDateTime(
+                                entryResult.entry_time
+                            )}
+                        </span>
+
+                    </div>
+
+
+                    <div className="vehicle-info-row">
+
+                        <strong>
+                            Parking Space
+                        </strong>
+
+                        <span>
+                            Level {entryResult.level}
+                            {" — "}
+                            {entryResult.space}
+                        </span>
+
+                    </div>
+
+
+                    <div className="vehicle-info-row">
+
+                        <strong>
+                            Status
+                        </strong>
+
+                        <span>
+                            Vehicle Parked
+                        </span>
+
+                    </div>
+
+                </div>
+
+            );
         }
+
+
+        // --------------------------------------------------------
+        // CURRENTLY DETECTED VEHICLE
+        // --------------------------------------------------------
+
+        if (detectedPlate) {
+
+            return (
+
+                <div className="vehicle-info-panel detected-info">
+
+                    <div className="vehicle-info-header">
+
+                        <span>
+                            VEHICLE DETECTED
+                        </span>
+
+                    </div>
+
+
+                    <h3>
+                        {detectedPlate}
+                    </h3>
+
+
+                    <div className="vehicle-info-row">
+
+                        <strong>
+                            Action
+                        </strong>
+
+                        <span>
+                            {vehicleAction === "entry"
+                                ? "Entry"
+                                : vehicleAction === "exit"
+                                    ? "Exit"
+                                    : "Awaiting selection"}
+                        </span>
+
+                    </div>
+
+
+                    {vehicleAction === "entry" && (
+
+                        <div className="vehicle-info-row">
+
+                            <strong>
+                                Parking Space
+                            </strong>
+
+                            <span>
+
+                                {selectedSpace
+                                    ? `Level ${selectedSpace.level} — ${selectedSpace.space}`
+                                    : "Not selected"}
+
+                            </span>
+
+                        </div>
+
+                    )}
+
+                </div>
+
+            );
+        }
+
+
+        // --------------------------------------------------------
+        // NOTHING TO SHOW
+        // --------------------------------------------------------
+
+        return (
+
+            <div className="vehicle-info-panel empty-info">
+
+                <div className="camera-icon">
+                    📷
+                </div>
+
+                <strong>
+                    No vehicle information
+                </strong>
+
+                <p>
+                    Vehicle information will appear here
+                    when a vehicle is detected.
+                </p>
+
+            </div>
+
+        );
     }
 
 
@@ -274,20 +1112,26 @@ function App() {
     // ============================================================
 
     return (
+
         <div className="app">
 
-            {/* =====================================================
+
+            {/* ====================================================
                 HEADER
-            ===================================================== */}
+            ==================================================== */}
 
             <header className="header">
 
                 <div>
-                    <h1>Parking Garage</h1>
+
+                    <h1>
+                        Parking Garage
+                    </h1>
 
                     <p>
                         License Plate Parking Management System
                     </p>
+
                 </div>
 
             </header>
@@ -295,458 +1139,532 @@ function App() {
 
             <main className="container">
 
+
                 {/* =================================================
                     PARKING STATUS
                 ================================================= */}
 
                 <section className="card parking-status">
 
-                    <h2>Parking Status</h2>
+                    <h2>
+                        Parking Status
+                    </h2>
 
                     <p className="description">
-                        Current parking availability.
+                        Current parking garage occupancy.
                     </p>
 
-                    {parkingLoading && !availableSpace && (
+
+                    {parkingLoading &&
+                        parkingSpaces.length === 0 && (
+
                         <div className="status-message">
                             Loading parking status...
                         </div>
+
                     )}
 
+
                     {parkingError && (
+
                         <div className="error">
                             {parkingError}
                         </div>
+
                     )}
 
-                    {availableSpace && (
-                        <div className="parking-summary">
 
-                            {availableSpace.available ? (
+                    {parkingSpaces.length > 0 && (
 
-                                <div className="space-status available">
+                        <>
 
-                                    <span className="status-indicator">
-                                        ●
-                                    </span>
+                            <div className="parking-summary">
 
-                                    <div>
-                                        <strong>
-                                            Parking Available
-                                        </strong>
-
-                                        <p>
-                                            Level{" "}
-                                            {availableSpace.level}
-                                            {" "}— Space{" "}
-                                            {availableSpace.space}
-                                        </p>
-                                    </div>
-
-                                </div>
-
-                            ) : (
-
-                                <div className="space-status unavailable">
+                                <div
+                                    className={
+                                        `space-status ${
+                                            garageFull
+                                                ? "unavailable"
+                                                : "available"
+                                        }`
+                                    }
+                                >
 
                                     <span className="status-indicator">
                                         ●
                                     </span>
 
                                     <div>
+
                                         <strong>
-                                            Parking Full
+
+                                            {garageFull
+                                                ? "Parking Full"
+                                                : `${availableSpaces} Spaces Available`}
+
                                         </strong>
 
                                         <p>
-                                            No parking spaces
-                                            are currently
-                                            available.
+
+                                            {occupiedSpaces}{" "}
+                                            of{" "}
+                                            {totalSpaces}{" "}
+                                            spaces occupied
+
                                         </p>
+
                                     </div>
 
                                 </div>
 
-                            )}
+                            </div>
 
-                        </div>
+
+                            {/* =================================================
+                                LEGEND
+                            ================================================= */}
+
+                            <div className="parking-legend">
+
+                                <div>
+
+                                    <span className="legend-box available-box"></span>
+
+                                    Available
+
+                                </div>
+
+
+                                <div>
+
+                                    <span className="legend-box occupied-box"></span>
+
+                                    Occupied
+
+                                </div>
+
+
+                                <div>
+
+                                    <span className="legend-box selected-box"></span>
+
+                                    Selected
+
+                                </div>
+
+                            </div>
+
+
+                            {/* =================================================
+                                PARKING LEVELS
+                            ================================================= */}
+
+                            {renderLevel(1)}
+
+                            {renderLevel(2)}
+
+                        </>
+
                     )}
 
                 </section>
 
 
                 {/* =================================================
-                    VEHICLE ENTRY
+                    VEHICLE AREA
                 ================================================= */}
 
-                <section className="card entry-card">
-
-                    <h2>Vehicle Entry</h2>
-
-                    <p className="description">
-                        The camera automatically detects the
-                        vehicle's license plate.
-                    </p>
+                <section className="vehicle-section">
 
 
                     {/* =================================================
-                        DETECTED PLATE
+                        ENTRY / EXIT CARD
                     ================================================= */}
 
-                    {detectedPlate ? (
+                    <section className="card entry-card">
 
-                        <div className="detected-panel">
+                        <h2>
+                            Vehicle Detection
+                        </h2>
 
-                            <div className="detected-header">
+                        <p className="description">
 
-                                <div>
-                                    <span className="detected-label">
-                                        Vehicle Detected
-                                    </span>
+                            The camera automatically detects the
+                            vehicle's license plate.
 
-                                    <h3>
-                                        {detectedPlate}
-                                    </h3>
+                        </p>
+
+
+                        {!detectedPlate && (
+
+                            <div className="waiting-panel">
+
+                                <div className="camera-icon">
+                                    📷
                                 </div>
 
-                                <span className="live-indicator">
-                                    ● LIVE
-                                </span>
-
-                            </div>
-
-
-                            <p className="description">
-                                Verify the detected license plate.
-                                You can correct it before confirming
-                                the entry.
-                            </p>
-
-
-                            <label className="field-label">
-                                License Plate
-                            </label>
-
-                            <input
-                                className="plate-input"
-                                type="text"
-                                value={detectedPlate}
-                                onChange={(event) => {
-                                    setDetectedPlate(
-                                        event.target.value.toUpperCase()
-                                    );
-                                    setEntryError("");
-                                }}
-                                placeholder="ABC-1234"
-                            />
-
-
-                            {entryError && (
-                                <div className="error">
-                                    {entryError}
-                                </div>
-                            )}
-
-
-                            <div className="confirmation-buttons">
-
-                                <button
-                                    className="confirm-button"
-                                    onClick={
-                                        handleConfirmEntry
-                                    }
-                                    disabled={
-                                        entryLoading
-                                    }
-                                >
-                                    {entryLoading
-                                        ? "Confirming..."
-                                        : "Confirm Entry"}
-                                </button>
-
-
-                                <button
-                                    className="cancel-button"
-                                    onClick={
-                                        handleCancelDetection
-                                    }
-                                    disabled={
-                                        entryLoading
-                                    }
-                                >
-                                    Cancel
-                                </button>
-
-                            </div>
-
-                        </div>
-
-                    ) : (
-
-                        <div className="waiting-panel">
-
-                            <div className="camera-icon">
-                                📷
-                            </div>
-
-                            <strong>
-                                Waiting for vehicle...
-                            </strong>
-
-                            <p>
-                                Position a vehicle in front
-                                of the camera.
-                            </p>
-
-                        </div>
-
-                    )}
-
-
-                    {/* =================================================
-                        ENTRY RESULT
-                    ================================================= */}
-
-                    {entryResult && (
-
-                        <div className="result success-result">
-
-                            <h3>
-                                Vehicle Entry Confirmed
-                            </h3>
-
-
-                            <div className="result-row">
                                 <strong>
-                                    License Plate:
+                                    Waiting for vehicle...
                                 </strong>
-
-                                <span>
-                                    {entryResult.license_plate}
-                                </span>
-                            </div>
-
-
-                            <div className="result-row">
-                                <strong>
-                                    Level:
-                                </strong>
-
-                                <span>
-                                    {entryResult.level}
-                                </span>
-                            </div>
-
-
-                            <div className="result-row">
-                                <strong>
-                                    Parking Space:
-                                </strong>
-
-                                <span>
-                                    {entryResult.space}
-                                </span>
-                            </div>
-
-
-                            <div className="result-row">
-                                <strong>
-                                    Entry Time:
-                                </strong>
-
-                                <span>
-                                    {entryResult.entry_time}
-                                </span>
-                            </div>
-
-
-                            <div className="qr-display">
-
-                                <h4>
-                                    Vehicle QR Code
-                                </h4>
-
-                                <div className="qr-code-box">
-                                    <span>
-                                        {entryResult.qr_code}
-                                    </span>
-                                </div>
 
                                 <p>
-                                    Save this QR code for
-                                    vehicle exit.
+                                    Position a vehicle in front
+                                    of the camera.
                                 </p>
 
                             </div>
 
-                        </div>
+                        )}
 
-                    )}
+
+                        {detectedPlate && (
+
+                            <div className="detected-panel">
+
+
+                                {/* -----------------------------------------
+                                    Plate
+                                ----------------------------------------- */}
+
+                                <div className="detected-header">
+
+                                    <div>
+
+                                        <span className="detected-label">
+                                            Vehicle Detected
+                                        </span>
+
+                                        <h3>
+                                            {detectedPlate}
+                                        </h3>
+
+                                    </div>
+
+
+                                    <span className="live-indicator">
+                                        ● LIVE
+                                    </span>
+
+                                </div>
+
+
+                                <p className="description">
+
+                                    License plate detected automatically.
+                                    Select whether the vehicle is entering
+                                    or exiting.
+
+                                </p>
+
+
+                                <div className="plate-display">
+
+                                    <span className="field-label">
+                                        Detected License Plate
+                                    </span>
+
+
+                                    <div className="plate-readonly">
+
+                                        {detectedPlate}
+
+                                    </div>
+
+                                </div>
+
+
+                                {/* =================================================
+                                    ACTION SELECTION
+                                ================================================= */}
+
+                                {!vehicleAction && (
+
+                                    <div className="action-selection">
+
+                                        <p className="action-title">
+                                            What would you like to do?
+                                        </p>
+
+
+                                        <div className="vehicle-action-buttons">
+
+                                            <button
+                                                className="confirm-button"
+                                                onClick={
+                                                    handleSelectEntry
+                                                }
+                                                disabled={
+                                                    garageFull ||
+                                                    entryLoading ||
+                                                    exitLoading
+                                                }
+                                            >
+
+                                                {garageFull
+                                                    ? "Garage Full"
+                                                    : "Entry Vehicle"}
+
+                                            </button>
+
+
+                                            <button
+                                                className="exit-button"
+                                                onClick={
+                                                    handleSelectExit
+                                                }
+                                                disabled={
+                                                    entryLoading ||
+                                                    exitLoading
+                                                }
+                                            >
+
+                                                Exit Vehicle
+
+                                            </button>
+
+                                        </div>
+
+
+                                        {garageFull && (
+
+                                            <p className="description">
+
+                                                The garage is currently
+                                                full. Entry is unavailable,
+                                                but vehicles can still exit.
+
+                                            </p>
+
+                                        )}
+
+                                    </div>
+
+                                )}
+
+
+                                {/* =================================================
+                                    ENTRY MODE
+                                ================================================= */}
+
+                                {vehicleAction === "entry" && (
+
+                                    <div className="entry-mode">
+
+                                        <h3>
+                                            Select Parking Space
+                                        </h3>
+
+
+                                        <p className="description">
+
+                                            Select an available space
+                                            for this vehicle.
+
+                                        </p>
+
+
+                                        <div className="selected-space-info">
+
+                                            <strong>
+                                                Selected Space:
+                                            </strong>
+
+
+                                            <span>
+
+                                                {selectedSpace
+                                                    ? `Level ${selectedSpace.level} — ${selectedSpace.space}`
+                                                    : "None selected"}
+
+                                            </span>
+
+                                        </div>
+
+
+                                        {entryError && (
+
+                                            <div className="error">
+                                                {entryError}
+                                            </div>
+
+                                        )}
+
+
+                                        <div className="confirmation-buttons">
+
+                                            <button
+                                                className="confirm-button"
+                                                onClick={
+                                                    handleConfirmEntry
+                                                }
+                                                disabled={
+                                                    entryLoading ||
+                                                    !selectedSpaceId
+                                                }
+                                            >
+
+                                                {entryLoading
+                                                    ? "Processing Entry..."
+                                                    : "Confirm Entry"}
+
+                                            </button>
+
+
+                                            <button
+                                                className="cancel-button"
+                                                onClick={() => {
+
+                                                    setVehicleAction(
+                                                        null
+                                                    );
+
+                                                    setSelectedSpaceId(
+                                                        null
+                                                    );
+
+                                                    setEntryError("");
+
+                                                }}
+                                                disabled={
+                                                    entryLoading
+                                                }
+                                            >
+
+                                                Back
+
+                                            </button>
+
+                                        </div>
+
+                                    </div>
+
+                                )}
+
+
+                                {/* =================================================
+                                    EXIT MODE
+                                ================================================= */}
+
+                                {vehicleAction === "exit" && (
+
+                                    <div className="exit-mode">
+
+                                        <h3>
+                                            Exit Vehicle
+                                        </h3>
+
+
+                                        <p className="description">
+
+                                            The detected license plate
+                                            will be used to find the
+                                            vehicle's active parking
+                                            session.
+
+                                        </p>
+
+
+                                        <div className="exit-plate-confirmation">
+
+                                            <strong>
+                                                Exit plate:
+                                            </strong>
+
+                                            <span>
+                                                {detectedPlate}
+                                            </span>
+
+                                        </div>
+
+
+                                        {exitError && (
+
+                                            <div className="error">
+                                                {exitError}
+                                            </div>
+
+                                        )}
+
+
+                                        <div className="confirmation-buttons">
+
+                                            <button
+                                                className="exit-button"
+                                                onClick={
+                                                    handleConfirmExit
+                                                }
+                                                disabled={
+                                                    exitLoading
+                                                }
+                                            >
+
+                                                {exitLoading
+                                                    ? "Processing Exit..."
+                                                    : "Confirm Exit"}
+
+                                            </button>
+
+
+                                            <button
+                                                className="cancel-button"
+                                                onClick={() => {
+
+                                                    setVehicleAction(
+                                                        null
+                                                    );
+
+                                                    setExitError("");
+
+                                                }}
+                                                disabled={
+                                                    exitLoading
+                                                }
+                                            >
+
+                                                Back
+
+                                            </button>
+
+                                        </div>
+
+                                    </div>
+
+                                )}
+
+                            </div>
+
+                        )}
+
+                    </section>
+
+
+                    {/* =================================================
+                        VEHICLE INFORMATION
+                    ================================================= */}
+
+                    <aside className="card vehicle-information-card">
+
+                        <h2>
+                            Vehicle Information
+                        </h2>
+
+                        <p className="description">
+                            Current entry or exit information.
+                        </p>
+
+                        {renderVehicleInformation()}
+
+                    </aside>
+
 
                 </section>
 
-
-                {/* =================================================
-                    VEHICLE EXIT
-                ================================================= */}
-
-                <section className="card">
-
-                    <h2>Vehicle Exit</h2>
-
-                    <p className="description">
-                        Exit using the vehicle's QR code or
-                        license plate.
-                    </p>
-
-
-                    {/* =================================================
-                        QR EXIT
-                    ================================================= */}
-
-                    <h3>Exit Using QR</h3>
-
-                    <div className="input-group">
-
-                        <input
-                            type="text"
-                            placeholder="Enter QR code"
-                            value={qrCode}
-                            onChange={(event) =>
-                                setQrCode(
-                                    event.target.value
-                                )
-                            }
-                        />
-
-                        <button
-                            onClick={handleQRExit}
-                            disabled={exitLoading}
-                        >
-                            {exitLoading
-                                ? "Processing..."
-                                : "Exit Using QR"}
-                        </button>
-
-                    </div>
-
-
-                    {/* =================================================
-                        PLATE EXIT
-                    ================================================= */}
-
-                    <h3>Exit Using Plate</h3>
-
-                    <div className="input-group">
-
-                        <input
-                            type="text"
-                            placeholder="ABC-1234"
-                            value={exitPlate}
-                            onChange={(event) =>
-                                setExitPlate(
-                                    event.target.value
-                                )
-                            }
-                        />
-
-                        <button
-                            onClick={handlePlateExit}
-                            disabled={exitLoading}
-                        >
-                            {exitLoading
-                                ? "Processing..."
-                                : "Exit Using Plate"}
-                        </button>
-
-                    </div>
-
-
-                    {exitError && (
-                        <div className="error">
-                            {exitError}
-                        </div>
-                    )}
-
-
-                    {/* =================================================
-                        EXIT RESULT
-                    ================================================= */}
-
-                    {exitResult && (
-
-                        <div className="result">
-
-                            <h3>
-                                Vehicle Exit Successful
-                            </h3>
-
-
-                            <div className="result-row">
-                                <strong>
-                                    License Plate:
-                                </strong>
-
-                                <span>
-                                    {exitResult.license_plate}
-                                </span>
-                            </div>
-
-
-                            <div className="result-row">
-                                <strong>
-                                    Entry Time:
-                                </strong>
-
-                                <span>
-                                    {exitResult.entry_time}
-                                </span>
-                            </div>
-
-
-                            <div className="result-row">
-                                <strong>
-                                    Exit Time:
-                                </strong>
-
-                                <span>
-                                    {exitResult.exit_time}
-                                </span>
-                            </div>
-
-
-                            <div className="result-row">
-                                <strong>
-                                    Parking Duration:
-                                </strong>
-
-                                <span>
-                                    {exitResult.billed_hours}
-                                    {" "}hour(s)
-                                </span>
-                            </div>
-
-
-                            <div className="result-row amount">
-                                <strong>
-                                    Amount Owed:
-                                </strong>
-
-                                <span>
-                                    {exitResult.amount}
-                                </span>
-                            </div>
-
-                        </div>
-
-                    )}
-
-                </section>
 
             </main>
 
         </div>
     );
 }
+
 
 export default App;

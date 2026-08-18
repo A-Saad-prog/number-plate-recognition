@@ -1,6 +1,8 @@
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 
+from pydantic import BaseModel
+
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -49,6 +51,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ============================================================
+# Latest Detected License Plate
+# ============================================================
+
+latest_detected_plate = None
 
 
 # ============================================================
@@ -105,23 +114,15 @@ def parking_spaces(
     """
     Return all parking spaces.
 
-    The frontend uses this to display the complete
-    two-level parking layout.
+    Occupied spaces also include the currently parked
+    vehicle's license plate and entry time.
     """
 
     spaces = get_all_spaces(db)
 
     return {
         "success": True,
-        "spaces": [
-            {
-                "id": space.id,
-                "level": space.level,
-                "space": space.space_number,
-                "is_occupied": space.is_occupied,
-            }
-            for space in spaces
-        ],
+        "spaces": spaces,
     }
 
 
@@ -198,3 +199,45 @@ def vehicle_exit(
             "success": False,
             "error": str(error),
         }
+        
+# ============================================================
+# Detected Plate Request
+# ============================================================
+
+class DetectedPlateRequest(BaseModel):
+    license_plate: str
+
+
+# ============================================================
+# Receive Detected Plate From Camera
+# ============================================================
+
+@app.post("/parking/detected-plate")
+def detected_plate(
+    request: DetectedPlateRequest,
+):
+    global latest_detected_plate
+
+    latest_detected_plate = (
+        request.license_plate
+        .strip()
+        .upper()
+    )
+
+    return {
+        "success": True,
+        "license_plate": latest_detected_plate,
+    }
+
+
+# ============================================================
+# Get Latest Detected Plate
+# ============================================================
+
+@app.get("/parking/detected-plate")
+def get_detected_plate():
+
+    return {
+        "success": True,
+        "license_plate": latest_detected_plate,
+    }
