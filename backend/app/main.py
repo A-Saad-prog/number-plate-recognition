@@ -4,39 +4,40 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from pydantic import BaseModel
-
 from app.database.database import engine
 from app.database.database import get_db
 
-from app.services.parking_service import get_available_space
+from app.services.parking_service import (
+    get_all_spaces,
+)
 
 from app.schemas.parking import (
     VehicleEntryRequest,
-    VehicleExitPlateRequest,
-    VehicleExitQRRequest,
+    VehicleExitRequest,
 )
 
-from app.services.entry_service import create_vehicle_entry
+from app.services.entry_service import (
+    create_vehicle_entry,
+)
 
 from app.services.exit_service import (
     process_vehicle_exit_by_plate,
-    process_vehicle_exit_by_qr,
 )
 
 
 app = FastAPI(
     title="Parking Garage API",
-    description="Backend API for the number plate recognition parking system",
-    version="1.0.0",
+    description=(
+        "Backend API for the number plate recognition "
+        "parking system"
+    ),
+    version="2.0.0",
 )
 
 
 # ============================================================
 # CORS
 # ============================================================
-
-# Allows the React frontend to communicate with FastAPI.
 
 app.add_middleware(
     CORSMiddleware,
@@ -48,9 +49,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-latest_detected_plate = None
 
 
 # ============================================================
@@ -92,32 +90,38 @@ def database_test():
 
     return {
         "status": "connected",
-        "database": database_name
+        "database": database_name,
     }
 
 
 # ============================================================
-# Get Available Parking Space
+# Get All Parking Spaces
 # ============================================================
 
-@app.get("/parking/available-space")
-def available_space(
-    db: Session = Depends(get_db)
+@app.get("/parking/spaces")
+def parking_spaces(
+    db: Session = Depends(get_db),
 ):
+    """
+    Return all parking spaces.
 
-    space = get_available_space(db)
+    The frontend uses this to display the complete
+    two-level parking layout.
+    """
 
-    if space is None:
-
-        return {
-            "available": False,
-            "message": "Parking garage is full",
-        }
+    spaces = get_all_spaces(db)
 
     return {
-        "available": True,
-        "level": space.level,
-        "space": space.space_number,
+        "success": True,
+        "spaces": [
+            {
+                "id": space.id,
+                "level": space.level,
+                "space": space.space_number,
+                "is_occupied": space.is_occupied,
+            }
+            for space in spaces
+        ],
     }
 
 
@@ -130,12 +134,21 @@ def vehicle_entry(
     request: VehicleEntryRequest,
     db: Session = Depends(get_db),
 ):
+    """
+    Register a vehicle entering the garage.
+
+    The license plate is expected to come from the
+    recognition system.
+
+    The user only chooses the parking space.
+    """
 
     try:
 
         result = create_vehicle_entry(
             db=db,
             license_plate=request.license_plate,
+            parking_space_id=request.parking_space_id,
         )
 
         return {
@@ -152,44 +165,20 @@ def vehicle_entry(
 
 
 # ============================================================
-# Vehicle Exit Using QR
+# Vehicle Exit
 # ============================================================
 
-@app.post("/parking/exit/qr")
-def vehicle_exit_qr(
-    request: VehicleExitQRRequest,
+@app.post("/parking/exit")
+def vehicle_exit(
+    request: VehicleExitRequest,
     db: Session = Depends(get_db),
 ):
+    """
+    Complete a vehicle's parking session.
 
-    try:
-
-        result = process_vehicle_exit_by_qr(
-            db=db,
-            qr_code_value=request.qr_code,
-        )
-
-        return {
-            "success": True,
-            "vehicle": result,
-        }
-
-    except ValueError as error:
-
-        return {
-            "success": False,
-            "error": str(error),
-        }
-
-
-# ============================================================
-# Vehicle Exit Using License Plate
-# ============================================================
-
-@app.post("/parking/exit/plate")
-def vehicle_exit_plate(
-    request: VehicleExitPlateRequest,
-    db: Session = Depends(get_db),
-):
+    The license plate is expected to come from the
+    exit camera recognition system.
+    """
 
     try:
 
@@ -209,43 +198,3 @@ def vehicle_exit_plate(
             "success": False,
             "error": str(error),
         }
-
-
-# ============================================================
-# Detected Plate Request
-# ============================================================
-
-class DetectedPlateRequest(BaseModel):
-    license_plate: str
-
-
-# ============================================================
-# Receive Detected Plate From Camera
-# ============================================================
-
-@app.post("/parking/detected-plate")
-def detected_plate(
-    request: DetectedPlateRequest
-):
-
-    global latest_detected_plate
-
-    latest_detected_plate = request.license_plate
-
-    return {
-        "success": True,
-        "license_plate": latest_detected_plate,
-    }
-
-
-# ============================================================
-# Get Latest Detected Plate
-# ============================================================
-
-@app.get("/parking/detected-plate")
-def get_detected_plate():
-
-    return {
-        "success": True,
-        "license_plate": latest_detected_plate,
-    }

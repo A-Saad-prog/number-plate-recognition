@@ -1,10 +1,9 @@
 from app.database.database import Base, engine, SessionLocal
 
-# Import all models so SQLAlchemy knows about them
+# Import all active models so SQLAlchemy knows about them
 from app.models.vehicle import Vehicle
 from app.models.parking_space import ParkingSpace
 from app.models.parking_session import ParkingSession
-from app.models.qr_code import QRCode
 
 
 def create_tables():
@@ -19,7 +18,10 @@ def create_parking_spaces():
         existing_spaces = db.query(ParkingSpace).count()
 
         if existing_spaces > 0:
-            print(f"Parking spaces already exist: {existing_spaces}")
+            print(
+                f"Parking spaces already exist: "
+                f"{existing_spaces}"
+            )
             return
 
         # Level 1: L1-01 to L1-20
