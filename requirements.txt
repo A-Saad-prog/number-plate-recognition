@@ -1,6 +1,6 @@
 ultralytics==8.4.116
 opencv-python==5.0.0.93
-opencv-contrib-python==5.0.0.93
+opencv-contrib-python==4.10.0.84
 paddlepaddle==3.3.1
 paddleocr==3.7.0
 numpy==2.3.5
