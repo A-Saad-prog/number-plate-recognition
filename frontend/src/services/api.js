@@ -2,6 +2,30 @@ const API_BASE_URL =
     import.meta.env.VITE_API_BASE_URL ||
     "http://127.0.0.1:8000";
 
+function formatErrorDetail(detail) {
+    if (typeof detail === "string") {
+        return detail;
+    }
+
+    if (Array.isArray(detail)) {
+        return detail
+            .map((item) => {
+                if (typeof item === "string") {
+                    return item;
+                }
+
+                return item.msg || JSON.stringify(item);
+            })
+            .join("; ");
+    }
+
+    if (detail && typeof detail === "object") {
+        return detail.msg || JSON.stringify(detail);
+    }
+
+    return "";
+}
+
 
 // ============================================================
 // Parking
@@ -30,6 +54,14 @@ export async function registerEntry(
     parkingSpaceId
 ) {
 
+    const body = {
+        license_plate: licensePlate,
+    };
+
+    if (parkingSpaceId !== null && parkingSpaceId !== undefined) {
+        body.parking_space_id = parkingSpaceId;
+    }
+
     const response = await fetch(
         `${API_BASE_URL}/parking/entry`,
         {
@@ -39,17 +71,21 @@ export async function registerEntry(
                 "Content-Type": "application/json",
             },
 
-            body: JSON.stringify({
-                license_plate: licensePlate,
-                parking_space_id: parkingSpaceId,
-            }),
+            body: JSON.stringify(body),
         }
     );
 
     if (!response.ok) {
 
+        const errorBody = await response.json().catch(() => ({}));
+        const detail = formatErrorDetail(
+            errorBody.detail || errorBody.error
+        );
+
         throw new Error(
-            `Failed to register vehicle entry: ${response.status}`
+            detail
+                ? `Failed to register vehicle entry: ${detail}`
+                : `Failed to register vehicle entry: ${response.status}`
         );
 
     }
@@ -59,7 +95,8 @@ export async function registerEntry(
 
 
 export async function exitUsingPlate(
-    licensePlate
+    licensePlate,
+    paymentMethod
 ) {
 
     const response = await fetch(
@@ -73,6 +110,7 @@ export async function exitUsingPlate(
 
             body: JSON.stringify({
                 license_plate: licensePlate,
+                payment_method: paymentMethod,
             }),
         }
     );

@@ -1,9 +1,7 @@
 import math
 from datetime import datetime
 
-
-PARKING_RATE_PER_HOUR = 50
-MINIMUM_PARKING_FEE = 50
+PARKING_RATE_PER_MINUTE = 1.67
 
 
 def calculate_parking_fee(
@@ -11,32 +9,19 @@ def calculate_parking_fee(
     exit_time: datetime,
 ) -> tuple[float, int]:
     """
-    Calculate parking duration and fee.
-
-    Under one hour = minimum fee of 50.
-    After one hour, every started hour is charged at 50.
+    Charge Rs 1.67 for every started parking minute.
     """
 
-    # Make both datetimes timezone-naive.
     if entry_time.tzinfo is not None:
-        entry_time = entry_time.replace(tzinfo=None)
+        entry_time = entry_time.astimezone().replace(tzinfo=None)
 
     if exit_time.tzinfo is not None:
-        exit_time = exit_time.replace(tzinfo=None)
+        exit_time = exit_time.astimezone().replace(tzinfo=None)
 
     duration = exit_time - entry_time
+    total_seconds = max(0, duration.total_seconds())
 
-    total_seconds = duration.total_seconds()
+    billed_minutes = max(1, math.ceil(total_seconds / 60))
+    amount = round(billed_minutes * PARKING_RATE_PER_MINUTE, 2)
 
-    # Always charge at least one billed hour.
-    billed_hours = max(
-        1,
-        math.ceil(total_seconds / 3600),
-    )
-
-    amount = max(
-        MINIMUM_PARKING_FEE,
-        billed_hours * PARKING_RATE_PER_HOUR,
-    )
-
-    return amount, billed_hours
+    return amount, billed_minutes

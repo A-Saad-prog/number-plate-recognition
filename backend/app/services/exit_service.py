@@ -5,12 +5,16 @@ from sqlalchemy.orm import Session
 from app.models.parking_session import ParkingSession
 from app.models.parking_space import ParkingSpace
 from app.models.vehicle import Vehicle
-from app.services.billing_service import calculate_parking_fee
+from app.services.billing_service import (
+    PARKING_RATE_PER_MINUTE,
+    calculate_parking_fee,
+)
 
 
 def process_vehicle_exit_by_plate(
     db: Session,
     license_plate: str,
+    payment_method: str,
 ):
     """
     Complete the active parking session for a license
@@ -20,17 +24,9 @@ def process_vehicle_exit_by_plate(
     license_plate = license_plate.strip().upper()
 
     if not license_plate:
-        raise ValueError(
-            "License plate was not recognized"
-        )
+        raise ValueError("License plate was not recognized")
 
-    vehicle = (
-        db.query(Vehicle)
-        .filter(
-            Vehicle.license_plate == license_plate
-        )
-        .first()
-    )
+    vehicle = db.query(Vehicle).filter(Vehicle.license_plate == license_plate).first()
 
     if vehicle is None:
         raise ValueError("Vehicle not found")
@@ -45,14 +41,13 @@ def process_vehicle_exit_by_plate(
     )
 
     if session is None:
-        raise ValueError(
-            "No active parking session found"
-        )
+        raise ValueError("No active parking session found")
 
     return complete_parking_session(
         db=db,
         session=session,
         vehicle=vehicle,
+        payment_method=payment_method,
     )
 
 
@@ -60,6 +55,7 @@ def complete_parking_session(
     db: Session,
     session: ParkingSession,
     vehicle: Vehicle,
+    payment_method: str,
 ):
     """
     Complete an active parking session.
@@ -69,28 +65,25 @@ def complete_parking_session(
 
     exit_time = datetime.now()
 
-    amount, billed_hours = calculate_parking_fee(
+    amount, billed_minutes = calculate_parking_fee(
         session.entry_time,
         exit_time,
     )
 
     session.exit_time = exit_time
     session.amount = amount
+    session.payment_method = payment_method
     session.status = "completed"
 
     parking_space = (
         db.query(ParkingSpace)
-        .filter(
-            ParkingSpace.id == session.parking_space_id
-        )
+        .filter(ParkingSpace.id == session.parking_space_id)
         .first()
     )
 
     if parking_space is None:
         db.rollback()
-        raise ValueError(
-            "Parking space associated with session was not found"
-        )
+        raise ValueError("Parking space associated with session was not found")
 
     parking_space.is_occupied = False
 
@@ -107,8 +100,10 @@ def complete_parking_session(
         "license_plate": vehicle.license_plate,
         "entry_time": session.entry_time,
         "exit_time": session.exit_time,
-        "duration_hours": billed_hours,
+        "duration_minutes": billed_minutes,
+        "rate_per_minute": PARKING_RATE_PER_MINUTE,
         "amount": session.amount,
+        "payment_method": session.payment_method,
         "level": parking_space.level,
         "space": parking_space.space_number,
         "status": session.status,

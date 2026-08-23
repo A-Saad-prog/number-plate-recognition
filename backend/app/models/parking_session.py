@@ -36,6 +36,11 @@ class ParkingSession(Base):
         nullable=True,
     )
 
+    payment_method: Mapped[str | None] = mapped_column(
+        String(10),
+        nullable=True,
+    )
+
     status: Mapped[str] = mapped_column(
         String(20),
         default="active",

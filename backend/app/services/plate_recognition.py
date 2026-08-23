@@ -14,7 +14,6 @@ os.environ["FLAGS_enable_pir_api"] = "0"
 from ultralytics import YOLO
 from paddleocr import PaddleOCR
 
-
 # ============================================================
 # Configuration
 # ============================================================
@@ -26,11 +25,11 @@ MODEL_PATH = os.path.abspath(
     )
 )
 
-CONFIDENCE_THRESHOLD = 0.40
+CONFIDENCE_THRESHOLD = 0.30
 
-OCR_READINGS_REQUIRED = 3
+OCR_READINGS_REQUIRED = 1
 
-OCR_CONFIDENCE_THRESHOLD = 0.60
+OCR_CONFIDENCE_THRESHOLD = 0.50
 
 PLATE_PADDING = 10
 
@@ -84,9 +83,7 @@ def update_fps():
 
     if elapsed >= 1.0:
 
-        current_fps = (
-            fps_frame_count / elapsed
-        )
+        current_fps = fps_frame_count / elapsed
 
         fps_frame_count = 0
         fps_start_time = time.time()
@@ -97,6 +94,7 @@ def update_fps():
 # ============================================================
 # License Plate Validation
 # ============================================================
+
 
 def is_valid_plate(text: str) -> bool:
 
@@ -109,14 +107,13 @@ def is_valid_plate(text: str) -> bool:
 
     pattern = r"^[A-Z]{3}-?[0-9]{4}$"
 
-    return bool(
-        re.match(pattern, text)
-    )
+    return bool(re.match(pattern, text))
 
 
 # ============================================================
 # Normalize Plate
 # ============================================================
+
 
 def normalize_plate(text: str) -> str:
 
@@ -124,16 +121,9 @@ def normalize_plate(text: str) -> str:
 
     text = text.replace(" ", "")
 
-    if (
-        len(text) == 7
-        and "-" not in text
-    ):
+    if len(text) == 7 and "-" not in text:
 
-        text = (
-            text[:3]
-            + "-"
-            + text[3:]
-        )
+        text = text[:3] + "-" + text[3:]
 
     return text
 
@@ -142,19 +132,16 @@ def normalize_plate(text: str) -> str:
 # Decode Browser Image
 # ============================================================
 
+
 def decode_image(image_base64: str):
 
     try:
 
         if "," in image_base64:
 
-            image_base64 = (
-                image_base64.split(",", 1)[1]
-            )
+            image_base64 = image_base64.split(",", 1)[1]
 
-        image_bytes = base64.b64decode(
-            image_base64
-        )
+        image_bytes = base64.b64decode(image_base64)
 
         image_array = np.frombuffer(
             image_bytes,
@@ -170,9 +157,7 @@ def decode_image(image_base64: str):
 
     except Exception as error:
 
-        print(
-            f"Image decoding error: {error}"
-        )
+        print(f"Image decoding error: {error}")
 
         return None
 
@@ -180,6 +165,7 @@ def decode_image(image_base64: str):
 # ============================================================
 # Encode Plate Image
 # ============================================================
+
 
 def encode_plate_image(plate_crop):
 
@@ -198,15 +184,11 @@ def encode_plate_image(plate_crop):
 
             return None
 
-        return base64.b64encode(
-            encoded_image.tobytes()
-        ).decode("utf-8")
+        return base64.b64encode(encoded_image.tobytes()).decode("utf-8")
 
     except Exception as error:
 
-        print(
-            f"Image encoding error: {error}"
-        )
+        print(f"Image encoding error: {error}")
 
         return None
 
@@ -215,13 +197,12 @@ def encode_plate_image(plate_crop):
 # OCR
 # ============================================================
 
+
 def read_plate(plate_crop):
 
     try:
 
-        results = ocr.predict(
-            plate_crop
-        )
+        results = ocr.predict(plate_crop)
 
         texts = []
         scores = []
@@ -260,35 +241,25 @@ def read_plate(plate_crop):
 
             return None
 
-        best_index = scores.index(
-            max(scores)
-        )
+        best_index = scores.index(max(scores))
 
         text = texts[best_index]
 
         if not is_valid_plate(text):
 
-            print(
-                f"OCR rejected: {text}"
-            )
+            print(f"OCR rejected: {text}")
 
             return None
 
         plate = normalize_plate(text)
 
-        print(
-            f"OCR: {plate} "
-            f"(confidence: "
-            f"{scores[best_index]:.2f})"
-        )
+        print(f"OCR: {plate} " f"(confidence: " f"{scores[best_index]:.2f})")
 
         return plate
 
     except Exception as error:
 
-        print(
-            f"OCR error: {error}"
-        )
+        print(f"OCR error: {error}")
 
         return None
 
@@ -313,20 +284,16 @@ def read_plate(plate_crop):
 # Majority vote
 # ============================================================
 
+
 def detect_plate(image_base64: str):
 
     global current_fps
 
-    frame = decode_image(
-        image_base64
-    )
+    frame = decode_image(image_base64)
 
     if frame is None:
 
-        raise ValueError(
-            "Could not decode camera frame."
-        )
-
+        raise ValueError("Could not decode camera frame.")
 
     # ========================================================
     # FPS
@@ -334,13 +301,11 @@ def detect_plate(image_base64: str):
 
     current_fps = update_fps()
 
-
     # ========================================================
     # Image dimensions
     # ========================================================
 
     height, width = frame.shape[:2]
-
 
     # ========================================================
     # YOLO
@@ -353,7 +318,6 @@ def detect_plate(image_base64: str):
         verbose=False,
     )
 
-
     # ========================================================
     # Find strongest plate
     # ========================================================
@@ -362,29 +326,20 @@ def detect_plate(image_base64: str):
 
     best_confidence = 0.0
 
-
     for result in results:
 
         if result.boxes is None:
             continue
 
-
         for box in result.boxes:
 
-            confidence = float(
-                box.conf[0]
-            )
-
+            confidence = float(box.conf[0])
 
             if confidence > best_confidence:
 
                 best_confidence = confidence
 
-                best_box = (
-                    box.xyxy[0]
-                    .tolist()
-                )
-
+                best_box = box.xyxy[0].tolist()
 
     # ========================================================
     # No plate detected
@@ -394,18 +349,12 @@ def detect_plate(image_base64: str):
 
         return {
             "detected": False,
-
             "license_plate": None,
-
             "plate_image": None,
-
             "confidence": 0.0,
-
             "box": None,
-
             "fps": current_fps,
         }
-
 
     # ========================================================
     # Bounding box
@@ -415,7 +364,6 @@ def detect_plate(image_base64: str):
         int,
         best_box,
     )
-
 
     x1 = max(
         0,
@@ -436,7 +384,6 @@ def detect_plate(image_base64: str):
         height,
         y2,
     )
-
 
     # ========================================================
     # Crop with padding
@@ -462,34 +409,26 @@ def detect_plate(image_base64: str):
         y2 + PLATE_PADDING,
     )
 
-
     plate_crop = frame[
         crop_y1:crop_y2,
         crop_x1:crop_x2,
     ]
 
-
     if plate_crop.size == 0:
 
         return {
             "detected": True,
-
             "license_plate": None,
-
             "plate_image": None,
-
             "confidence": best_confidence,
-
             "box": {
                 "x1": x1,
                 "y1": y1,
                 "x2": x2,
                 "y2": y2,
             },
-
             "fps": current_fps,
         }
-
 
     # ========================================================
     # OCR
@@ -500,21 +439,13 @@ def detect_plate(image_base64: str):
 
     ocr_results = []
 
+    for _ in range(OCR_READINGS_REQUIRED):
 
-    for _ in range(
-        OCR_READINGS_REQUIRED
-    ):
-
-        plate = read_plate(
-            plate_crop
-        )
+        plate = read_plate(plate_crop)
 
         if plate:
 
-            ocr_results.append(
-                plate
-            )
-
+            ocr_results.append(plate)
 
     # ========================================================
     # Majority vote
@@ -522,60 +453,34 @@ def detect_plate(image_base64: str):
 
     recognized_plate = None
 
-
     if ocr_results:
 
-        counts = Counter(
-            ocr_results
-        )
+        counts = Counter(ocr_results)
 
-        recognized_plate = (
-            counts
-            .most_common(1)[0][0]
-        )
-
+        recognized_plate = counts.most_common(1)[0][0]
 
     # ========================================================
     # Encode crop
     # ========================================================
 
-    plate_image_base64 = (
-        encode_plate_image(
-            plate_crop
-        )
-    )
-
+    plate_image_base64 = encode_plate_image(plate_crop)
 
     # ========================================================
     # Return everything to React
     # ========================================================
 
     return {
-
         "detected": True,
-
-        "license_plate":
-            recognized_plate,
-
-        "plate_image":
-            plate_image_base64,
-
-        "confidence":
-            best_confidence,
-
+        "license_plate": recognized_plate,
+        "plate_image": plate_image_base64,
+        "confidence": best_confidence,
         "box": {
-
             "x1": x1,
-
             "y1": y1,
-
             "x2": x2,
-
             "y2": y2,
         },
-
-        "fps":
-            current_fps,
+        "fps": current_fps,
     }
 
 
@@ -583,23 +488,17 @@ def detect_plate(image_base64: str):
 # Compatibility Wrapper
 # ============================================================
 
+
 def recognize_plate(image_base64: str):
 
-    result = detect_plate(
-        image_base64
-    )
+    result = detect_plate(image_base64)
 
     if not result["detected"]:
 
-        raise ValueError(
-            "No license plate detected."
-        )
+        raise ValueError("No license plate detected.")
 
     if not result["license_plate"]:
 
-        raise ValueError(
-            "License plate detected, "
-            "but OCR could not read it."
-        )
+        raise ValueError("License plate detected, " "but OCR could not read it.")
 
     return result

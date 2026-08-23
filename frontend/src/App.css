@@ -198,9 +198,52 @@ button {
     margin-top: 25px;
 }
 
+.level-tabs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 20px;
+}
+
 .parking-level h3 {
     margin: 0 0 12px;
     font-size: 18px;
+}
+
+.level-toggle {
+    width: 100%;
+    min-height: 46px;
+    margin: 0;
+    padding: 0 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border: 1px solid var(--line, #dce4dc);
+    border-radius: 6px;
+    background: #ffffff;
+    color: var(--ink, #17221d);
+    cursor: pointer;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 700;
+    text-align: left;
+}
+
+.level-toggle:hover {
+    background: #f7faf6;
+}
+
+.level-toggle.active {
+    border-color: var(--green, #17835b);
+    background: var(--green-soft, #e7f4ed);
+    color: var(--green-dark, #0d6042);
+}
+
+.level-toggle > span:last-child {
+    color: var(--green, #17835b);
+    font-size: 22px;
+    font-weight: 400;
+    line-height: 1;
 }
 
 /* ============================================================
@@ -415,7 +458,7 @@ button {
 }
 
 .live-indicator {
-    color: #dc2626;
+    color: #a81212;
 
     font-size: 13px;
     font-weight: bold;
@@ -643,6 +686,43 @@ button {
     color: #9a3412;
 
     letter-spacing: 1px;
+}
+
+.payment-options {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin: 12px 0 18px;
+}
+
+.payment-option {
+    padding: 13px 18px;
+    border: 2px solid #d1d5db;
+    border-radius: 8px;
+    background: white;
+    color: #374151;
+    font-size: 15px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.payment-option:hover:not(:disabled) {
+    border-color: #9a3412;
+}
+
+.payment-option.selected {
+    border-color: #9a3412;
+    background: #fff7ed;
+    color: #9a3412;
+}
+
+.receipt-done-button {
+    width: 100%;
+    margin-top: 16px;
+    padding: 12px 16px;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
 }
 
 /* ============================================================
@@ -1215,4 +1295,533 @@ button {
     width: 100%;
     height: auto;
     background: #000;
+}
+
+:root {
+    --ink: #17221d;
+    --muted: #68736d;
+    --paper: #f3f5f0;
+    --surface: #ffffff;
+    --line: #dce4dc;
+    --green: #17835b;
+    --green-dark: #0d6042;
+    --green-soft: #e7f4ed;
+    --amber: #d78b26;
+    --amber-soft: #fff4df;
+    --red: #c9574a;
+    --red-soft: #fcebe8;
+    --dashboard-shadow: 0 18px 45px rgba(23, 34, 29, 0.08);
+}
+
+body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+}
+
+.app {
+    min-height: 100vh;
+    background: radial-gradient(circle at 88% 0%, rgba(215, 139, 38, 0.13), transparent 28rem), linear-gradient(180deg, #f8faf6 0%, var(--paper) 38rem);
+}
+
+.header {
+    position: relative;
+    overflow: hidden;
+    padding: 42px clamp(20px, 5vw, 76px);
+    background: var(--ink);
+    text-align: left;
+}
+
+.header::after {
+    position: absolute;
+    right: 9%;
+    bottom: -58px;
+    width: 190px;
+    height: 190px;
+    border: 1px solid rgba(231, 244, 237, 0.16);
+    border-radius: 50%;
+    box-shadow: 0 0 0 24px rgba(231, 244, 237, 0.04), 0 0 0 48px rgba(231, 244, 237, 0.03);
+    content: "";
+}
+
+.header h1 {
+    position: relative;
+    z-index: 1;
+    color: #f8fbf6;
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: clamp(42px, 7vw, 78px);
+    font-weight: 700;
+    line-height: 0.98;
+    letter-spacing: -2.5px;
+}
+
+.header p {
+    position: relative;
+    z-index: 1;
+    max-width: 420px;
+    margin-top: 17px;
+    color: #9caf9f;
+    font-size: 13px;
+    letter-spacing: 1.2px;
+    line-height: 1.5;
+    text-transform: uppercase;
+}
+
+.container {
+    width: 100%;
+    max-width: none;
+    margin: 0 auto;
+    padding: 28px clamp(20px, 5vw, 76px) 56px;
+    gap: 20px;
+}
+
+.parking-status {
+    order: 2;
+    padding: 12px 0 8px;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+}
+
+.parking-status > h2,
+.entry-card > h2 {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin: 0;
+    color: var(--ink);
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: clamp(32px, 4vw, 48px);
+    font-weight: 700;
+    letter-spacing: -1px;
+    line-height: 1;
+}
+
+.parking-status > h2::before,
+.entry-card > h2::before {
+    width: 6px;
+    height: 42px;
+    border-radius: 4px;
+    background: var(--amber);
+    content: "";
+}
+
+.parking-status > .description,
+.entry-card > .description {
+    margin: 12px 0 24px 20px;
+    color: var(--muted);
+    font-size: 14px;
+    letter-spacing: 0.2px;
+}
+
+.card {
+    padding: 25px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.9);
+    box-shadow: var(--dashboard-shadow);
+}
+
+.card h2 {
+    color: var(--ink);
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 26px;
+    font-weight: 400;
+}
+
+.description {
+    color: var(--muted);
+    font-size: 14px;
+}
+
+.space-status.available {
+    background: var(--green-soft);
+    border-color: #b8dfc8;
+}
+
+.space-status.unavailable {
+    background: var(--red-soft);
+    border-color: #f1c2bb;
+}
+
+.space-status strong,
+.parking-level h3 {
+    color: var(--ink);
+}
+
+.space-status p {
+    color: var(--muted);
+    font-size: 13px;
+}
+
+.parking-legend {
+    margin-top: 17px;
+    padding: 10px 0;
+    border: 0;
+    border-bottom: 1px solid var(--line);
+    border-radius: 0;
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.parking-level h3 {
+    font-size: 14px;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+}
+
+.level-toggle {
+    margin-top: 0;
+    border-color: var(--line);
+    color: var(--ink);
+    font-size: 14px;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+}
+
+.parking-grid {
+    gap: 9px;
+}
+
+.parking-space {
+    min-height: 86px;
+    border-width: 1px;
+    border-radius: 6px;
+}
+
+.parking-space-number {
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 21px;
+    font-weight: 400;
+}
+
+.parking-space.available {
+    background: #f5fbf6;
+    border-color: #acd7bb;
+    color: var(--green-dark);
+}
+
+.parking-space.available:hover {
+    box-shadow: 0 8px 18px rgba(23, 131, 91, 0.15);
+}
+
+.parking-space.occupied {
+    background: var(--red-soft);
+    border-color: #efb4ac;
+    color: #9e443a;
+}
+
+.parking-space.selected {
+    background: var(--amber-soft);
+    border: 2px solid var(--amber);
+    color: #9a5c0d;
+    box-shadow: 0 0 0 3px rgba(215, 139, 38, 0.14);
+}
+
+.camera-preview {
+    position: relative;
+    min-height: 230px;
+    aspect-ratio: 4 / 3;
+    margin-top: 20px;
+    border: 1px solid #2c4036;
+    border-radius: 7px;
+    background: #17221d;
+}
+
+.camera-feed-status {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    z-index: 2;
+    padding: 0;
+    color: #b8dfc8;
+}
+
+.camera-feed-status.camera-status.active {
+    color: #f06a5f;
+    font-size: 13px;
+}
+
+.camera-feed-status.camera-status.standby {
+    color: #7ed6a1;
+    font-size: 13px;
+}
+
+.camera-feed-status.camera-status.active {
+    font-weight: 700;
+}
+
+.live-dot {
+    display: inline-block;
+    animation: live-dot-blink 1s steps(2, start) infinite;
+}
+
+@keyframes live-dot-blink {
+    50% {
+        opacity: 0.25;
+    }
+}
+
+.plate-detection-box {
+    position: absolute;
+    z-index: 2;
+    min-width: 36px;
+    min-height: 24px;
+    border: 2px solid #f2b84b;
+    border-radius: 3px;
+    box-shadow: 0 0 0 1px rgba(23, 34, 29, 0.55);
+    pointer-events: none;
+}
+
+.plate-detection-box span {
+    position: absolute;
+    top: -22px;
+    left: -2px;
+    padding: 2px 5px;
+    background: #f2b84b;
+    color: #17221d;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.4;
+    white-space: nowrap;
+}
+
+.camera-preview video {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    object-fit: cover;
+}
+
+.camera-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+    margin-top: 20px;
+}
+
+.camera-panel {
+    min-width: 0;
+}
+
+.camera-panel-header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 9px;
+}
+
+.camera-panel-header strong {
+    display: block;
+    color: var(--ink);
+    font-size: 15px;
+}
+
+.camera-kicker {
+    display: block;
+    margin-bottom: 3px;
+    color: var(--muted);
+    font-size: 10px;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+}
+
+.camera-status {
+    flex-shrink: 0;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+}
+
+.camera-status.active {
+    color: var(--green);
+}
+
+.camera-status.standby {
+    color: var(--muted);
+}
+
+.camera-standby {
+    display: flex;
+    position: absolute;
+    inset: 0;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    padding: 20px;
+    color: #d5e1d8;
+    text-align: center;
+}
+
+.camera-standby .camera-icon {
+    margin-bottom: 9px;
+    color: var(--amber);
+    font-size: 28px;
+}
+
+.camera-standby strong {
+    font-size: 14px;
+}
+
+.camera-standby p {
+    margin-top: 6px;
+    color: #9caf9f;
+    font-size: 12px;
+}
+
+.open-camera-button {
+    width: 100%;
+    min-height: 42px;
+    margin-top: 10px;
+    border: 1px solid #b8dfc8;
+    border-radius: 5px;
+    background: var(--green-soft);
+    color: var(--green-dark);
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 700;
+    transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.open-camera-button:hover {
+    border-color: var(--green);
+    background: #d8eee1;
+}
+
+.close-camera-button {
+    width: 100%;
+    min-height: 42px;
+    margin-top: 10px;
+    border: 1px solid #efb4ac;
+    border-radius: 5px;
+    background: var(--red-soft);
+    color: #9e443a;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 700;
+    transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.close-camera-button:hover {
+    border-color: var(--red);
+    background: #f8dcd7;
+}
+
+.waiting-panel,
+.empty-info {
+    border-color: #cbd8cf;
+    border-radius: 7px;
+    background: #f7faf6;
+}
+
+.detected-panel {
+    border-color: #b8dfc8;
+    border-radius: 7px;
+    background: var(--green-soft);
+}
+
+.detected-label {
+    color: var(--green-dark);
+}
+
+.detected-header h3,
+.detected-info h3 {
+    color: var(--ink);
+    font-family: Georgia, "Times New Roman", serif;
+    font-weight: 400;
+}
+
+.plate-readonly {
+    border-color: #b8dfc8;
+    border-radius: 5px;
+    color: var(--ink);
+    font-family: Consolas, monospace;
+}
+
+.confirm-button,
+.exit-button,
+.cancel-button {
+    min-height: 44px;
+    border-radius: 5px;
+}
+
+.confirm-button {
+    background: var(--green);
+}
+
+.confirm-button:hover:not(:disabled) {
+    background: var(--green-dark);
+}
+
+.exit-button {
+    background: var(--red);
+}
+
+.exit-button:hover:not(:disabled) {
+    background: #a9443b;
+}
+
+.cancel-button {
+    background: #e7ece7;
+    color: var(--ink);
+}
+
+.error {
+    border-color: #efb4ac;
+    border-radius: 5px;
+    background: var(--red-soft);
+    color: #9e443a;
+}
+
+.vehicle-info-panel {
+    border-radius: 7px;
+}
+
+.vehicle-info-panel h3 {
+    color: var(--ink);
+    font-family: Consolas, monospace;
+    font-weight: 500;
+}
+
+.detected-info,
+.entry-info {
+    background: var(--green-soft);
+    border-color: #b8dfc8;
+}
+
+.exit-info {
+    background: var(--amber-soft);
+    border-color: #efd39e;
+}
+
+@media (max-width: 720px) {
+    .header {
+        padding: 32px 20px;
+    }
+
+    .container {
+        padding: 18px 12px 36px;
+    }
+
+    .card {
+        padding: 18px;
+    }
+
+    .parking-grid {
+        grid-template-columns: repeat(3, 1fr);
+    }
+
+    .camera-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.vehicle-section {
+    order: 1;
+}
+
+.entry-card {
+    grid-column: 1 / -1;
 }

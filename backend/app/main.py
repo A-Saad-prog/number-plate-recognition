@@ -196,6 +196,7 @@ def vehicle_exit(
         result = process_vehicle_exit_by_plate(
             db=db,
             license_plate=request.license_plate,
+            payment_method=request.payment_method,
         )
 
         return {

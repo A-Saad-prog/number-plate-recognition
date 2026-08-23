@@ -1,3 +1,5 @@
+from typing import Literal, Optional
+
 from pydantic import BaseModel, Field
 
 
@@ -7,7 +9,8 @@ class VehicleEntryRequest(BaseModel):
         max_length=20,
     )
 
-    parking_space_id: int = Field(
+    parking_space_id: Optional[int] = Field(
+        default=None,
         gt=0,
     )
 
@@ -17,3 +20,5 @@ class VehicleExitRequest(BaseModel):
         min_length=1,
         max_length=20,
     )
+
+    payment_method: Literal["cash", "card"]
