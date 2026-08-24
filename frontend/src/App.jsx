@@ -331,22 +331,33 @@ function GaragePage() {
             return "Unknown";
         }
 
-        const date = new Date(value);
+        const date = parseBackendDate(value);
 
         if (Number.isNaN(date.getTime())) {
             return value;
         }
 
-        return date.toLocaleString(undefined, {
+        return date.toLocaleString("en-PK", {
             dateStyle: "medium",
             timeStyle: "medium",
+            timeZone: "Asia/Karachi",
         });
     }
 
 
+    function parseBackendDate(value) {
+        if (typeof value !== "string") {
+            return new Date(value);
+        }
+
+        const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(value);
+        return new Date(hasTimezone ? value : `${value}+05:00`);
+    }
+
+
     function formatDuration(entryTime, exitTime) {
-        const entry = new Date(entryTime);
-        const exit = new Date(exitTime);
+        const entry = parseBackendDate(entryTime);
+        const exit = parseBackendDate(exitTime);
 
         if (
             Number.isNaN(entry.getTime()) ||
