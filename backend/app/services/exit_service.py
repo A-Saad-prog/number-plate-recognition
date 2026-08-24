@@ -3,8 +3,10 @@ from sqlalchemy.orm import Session
 from app.models.parking_session import ParkingSession
 from app.models.parking_space import ParkingSpace
 from app.models.vehicle import Vehicle
+from app.models.whitelist_entry import WhitelistEntry
 from app.services.billing_service import (
     PARKING_RATE_PER_MINUTE,
+    apply_discount,
     calculate_parking_fee,
 )
 from app.services.time_service import pakistan_now
@@ -69,6 +71,14 @@ def complete_parking_session(
         exit_time,
     )
 
+    whitelist_entry = (
+        db.query(WhitelistEntry)
+        .filter(WhitelistEntry.license_plate == vehicle.license_plate)
+        .first()
+    )
+    discount_percent = whitelist_entry.discount_percent if whitelist_entry else 0
+    amount = apply_discount(amount, discount_percent)
+
     session.exit_time = exit_time
     session.amount = amount
     session.payment_method = payment_method
@@ -102,6 +112,7 @@ def complete_parking_session(
         "duration_minutes": billed_minutes,
         "rate_per_minute": PARKING_RATE_PER_MINUTE,
         "amount": session.amount,
+        "discount_percent": discount_percent,
         "payment_method": session.payment_method,
         "level": parking_space.level,
         "space": parking_space.space_number,

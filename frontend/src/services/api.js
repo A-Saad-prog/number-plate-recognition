@@ -197,3 +197,41 @@ export async function getAdminSession(token) {
 
     return await response.json();
 }
+
+
+async function adminRequest(path, token, options = {}) {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+        ...options,
+        headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+            ...(options.headers || {}),
+        },
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(formatErrorDetail(body.detail) || "Admin request failed.");
+    }
+    return body;
+}
+
+
+export function getWhitelist(token) {
+    return adminRequest("/admin/whitelist", token);
+}
+
+
+export function addWhitelistEntry(token, entry) {
+    return adminRequest("/admin/whitelist", token, {
+        method: "POST",
+        body: JSON.stringify(entry),
+    });
+}
+
+
+export function removeWhitelistEntry(token, search) {
+    return adminRequest("/admin/whitelist", token, {
+        method: "DELETE",
+        body: JSON.stringify({ search }),
+    });
+}

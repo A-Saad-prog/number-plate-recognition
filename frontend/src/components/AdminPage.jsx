@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
 
-import { getAdminSession, loginAdmin } from "../services/api";
+import {
+    addWhitelistEntry,
+    getAdminSession,
+    getWhitelist,
+    loginAdmin,
+    removeWhitelistEntry,
+} from "../services/api";
 import "./AdminPage.css";
 
 const TOKEN_KEY = "parking_admin_token";
@@ -13,6 +19,15 @@ function AdminPage() {
     const [loading, setLoading] = useState(Boolean(token));
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState("");
+    const [activeFeature, setActiveFeature] = useState(null);
+    const [plate, setPlate] = useState("");
+    const [vehicleName, setVehicleName] = useState("");
+    const [discount, setDiscount] = useState("");
+    const [removeSearch, setRemoveSearch] = useState("");
+    const [whitelist, setWhitelist] = useState([]);
+    const [whitelistLoading, setWhitelistLoading] = useState(false);
+    const [whitelistError, setWhitelistError] = useState("");
+    const [whitelistMessage, setWhitelistMessage] = useState("");
 
     useEffect(() => {
         if (!token) return;
@@ -48,6 +63,57 @@ function AdminPage() {
         setAdminName("");
     }
 
+    async function submitWhitelist(event) {
+        event.preventDefault();
+        setWhitelistLoading(true);
+        setWhitelistError("");
+        setWhitelistMessage("");
+        try {
+            await addWhitelistEntry(token, {
+                license_plate: plate,
+                vehicle_name: vehicleName,
+                discount_percent: Number(discount),
+            });
+            setPlate("");
+            setVehicleName("");
+            setDiscount("");
+            setWhitelistMessage("Vehicle added to the whitelist.");
+        } catch (requestError) {
+            setWhitelistError(requestError.message);
+        } finally {
+            setWhitelistLoading(false);
+        }
+    }
+
+    async function submitRemove(event) {
+        event.preventDefault();
+        setWhitelistLoading(true);
+        setWhitelistError("");
+        setWhitelistMessage("");
+        try {
+            await removeWhitelistEntry(token, removeSearch);
+            setRemoveSearch("");
+            setWhitelistMessage("Vehicle removed from the whitelist.");
+        } catch (requestError) {
+            setWhitelistError(requestError.message);
+        } finally {
+            setWhitelistLoading(false);
+        }
+    }
+
+    async function showWhitelist() {
+        setWhitelistLoading(true);
+        setWhitelistError("");
+        try {
+            const result = await getWhitelist(token);
+            setWhitelist(result.entries || []);
+        } catch (requestError) {
+            setWhitelistError(requestError.message);
+        } finally {
+            setWhitelistLoading(false);
+        }
+    }
+
     if (loading) return <main className="admin-shell admin-loading">Checking session...</main>;
 
     if (token) {
@@ -57,13 +123,35 @@ function AdminPage() {
                     <a href="/" className="admin-logo">PARKING<span>OS</span></a>
                     <div className="admin-user">{adminName}<button type="button" onClick={signOut}>Sign out</button></div>
                 </header>
-                <section className="admin-dashboard">
-                    <p className="admin-label">Admin workspace</p>
-                    <h1>Welcome back,<br /><span>{adminName}.</span></h1>
-                    <div className="admin-status"><b /> System online</div>
-                    <p className="admin-message">Your garage control center is ready. Management tools and reports will appear here next.</p>
-                    <div className="admin-placeholder"><span>01</span><h2>Operations dashboard</h2><p>Coming soon</p></div>
-                </section>
+                <div className="admin-app-body">
+                    <aside className="admin-sidebar">
+                        <p className="admin-label">Control center</p>
+                        <button type="button" className={`sidebar-feature ${activeFeature === "whitelist" ? "active" : ""}`} onClick={() => { setActiveFeature(activeFeature === "whitelist" ? null : "whitelist"); setWhitelistError(""); }}>
+                            <span className="feature-number">01</span><span>Whitelist</span><span className="feature-arrow">{activeFeature === "whitelist" ? "−" : "+"}</span>
+                        </button>
+                        <div className="sidebar-muted"><span>02</span><span>Operations</span><small>Coming soon</small></div>
+                        <div className="sidebar-muted"><span>03</span><span>Reports</span><small>Coming soon</small></div>
+                    </aside>
+                    <section className="admin-dashboard">
+                        {activeFeature !== "whitelist" ? (
+                            <><p className="admin-label">Admin workspace</p><h1>Welcome back,<br /><span>{adminName}.</span></h1><div className="admin-status"><b /> System online</div><p className="admin-message">Select a feature from the sidebar to manage your garage.</p></>
+                        ) : (
+                            <div className="whitelist-view">
+                                <p className="admin-label">Feature 01 / Access pricing</p>
+                                <h1>Vehicle<br /><span>whitelist.</span></h1>
+                                <p className="admin-message">Give trusted vehicles a custom discount at checkout.</p>
+                                <div className="whitelist-actions">
+                                    <form className="whitelist-card" onSubmit={submitWhitelist}><div className="card-heading"><span>01</span><h2>Add vehicle</h2></div><label htmlFor="plate">Number plate</label><input id="plate" value={plate} onChange={(event) => setPlate(event.target.value)} placeholder="e.g. ABC-123" required /><label htmlFor="vehicle-name">Vehicle name</label><input id="vehicle-name" value={vehicleName} onChange={(event) => setVehicleName(event.target.value)} placeholder="e.g. Manager" required /><label htmlFor="discount">Discount percentage</label><input id="discount" type="number" min="0" max="100" step="1" value={discount} onChange={(event) => setDiscount(event.target.value)} placeholder="0 - 100" required /><button type="submit" disabled={whitelistLoading}>Add to whitelist <span>→</span></button></form>
+                                    <form className="whitelist-card remove-card" onSubmit={submitRemove}><div className="card-heading"><span>02</span><h2>Remove vehicle</h2></div><label htmlFor="remove-search">Name or number plate</label><input id="remove-search" value={removeSearch} onChange={(event) => setRemoveSearch(event.target.value)} placeholder="Search the list" required /><p className="form-hint">Enter either the assigned name or the exact number plate.</p><button type="submit" disabled={whitelistLoading}>Remove from list <span>→</span></button></form>
+                                </div>
+                                {whitelistError && <p className="admin-error whitelist-feedback">{whitelistError}</p>}
+                                {whitelistMessage && <p className="whitelist-success">{whitelistMessage}</p>}
+                                <button type="button" className="show-list-button" onClick={showWhitelist} disabled={whitelistLoading}>Show list <span>{whitelistLoading ? "..." : "↓"}</span></button>
+                                {whitelist.length > 0 && <div className="whitelist-table-wrap"><table><thead><tr><th>Name</th><th>Number plate</th><th>Discount</th><th>Added</th></tr></thead><tbody>{whitelist.map((entry) => <tr key={entry.id}><td>{entry.vehicle_name}</td><td>{entry.license_plate}</td><td>{entry.discount_percent}%</td><td>{entry.created_at ? new Date(entry.created_at).toLocaleDateString("en-PK", { timeZone: "Asia/Karachi" }) : "-"}</td></tr>)}</tbody></table></div>}
+                            </div>
+                        )}
+                    </section>
+                </div>
             </main>
         );
     }

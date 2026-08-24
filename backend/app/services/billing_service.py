@@ -25,3 +25,8 @@ def calculate_parking_fee(
     amount = round(billed_minutes * PARKING_RATE_PER_MINUTE, 2)
 
     return amount, billed_minutes
+
+
+def apply_discount(amount: float, discount_percent: float) -> float:
+    discount = min(100, max(0, discount_percent))
+    return round(amount * (1 - discount / 100), 2)

@@ -1003,6 +1003,18 @@ function GaragePage() {
                         </span>
                     </div>
 
+                    {Number(exitResult.discount_percent) > 0 && (
+                        <div className="vehicle-info-row">
+                            <strong>
+                                Whitelist Discount
+                            </strong>
+
+                            <span>
+                                {exitResult.discount_percent}%
+                            </span>
+                        </div>
+                    )}
+
                     <div className="vehicle-info-amount">
                         <span>
                             Amount Owed
