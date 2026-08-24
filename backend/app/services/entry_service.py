@@ -1,5 +1,3 @@
-from datetime import datetime
-
 from sqlalchemy.orm import Session
 
 from app.models.parking_session import ParkingSession
@@ -9,6 +7,7 @@ from app.services.parking_service import (
     get_available_spaces,
     validate_available_space,
 )
+from app.services.time_service import pakistan_now
 
 
 def create_vehicle_entry(
@@ -87,7 +86,7 @@ def create_vehicle_entry(
     session = ParkingSession(
         vehicle_id=vehicle.id,
         parking_space_id=space.id,
-        entry_time=datetime.now(),
+        entry_time=pakistan_now(),
         status="active",
     )
 

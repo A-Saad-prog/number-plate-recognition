@@ -8,9 +8,10 @@ import {
 } from "./services/api";
 
 import "./App.css";
+import AdminPage from "./components/AdminPage";
 
 
-function App() {
+function GaragePage() {
     const [detectedPlate, setDetectedPlate] = useState("");
     const [vehicleAction, setVehicleAction] = useState(null);
     const [detectionSource, setDetectionSource] = useState(null);
@@ -377,22 +378,33 @@ function App() {
             return "Unknown";
         }
 
-        const date = new Date(value);
+        const date = parseBackendDate(value);
 
         if (Number.isNaN(date.getTime())) {
             return value;
         }
 
-        return date.toLocaleString(undefined, {
+        return date.toLocaleString("en-PK", {
             dateStyle: "medium",
             timeStyle: "medium",
+            timeZone: "Asia/Karachi",
         });
     }
 
 
+    function parseBackendDate(value) {
+        if (typeof value !== "string") {
+            return new Date(value);
+        }
+
+        const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(value);
+        return new Date(hasTimezone ? value : `${value}+05:00`);
+    }
+
+
     function formatDuration(entryTime, exitTime) {
-        const entry = new Date(entryTime);
-        const exit = new Date(exitTime);
+        const entry = parseBackendDate(entryTime);
+        const exit = parseBackendDate(exitTime);
 
         if (
             Number.isNaN(entry.getTime()) ||
@@ -1085,6 +1097,18 @@ function App() {
                             )}
                         </span>
                     </div>
+
+                    {Number(exitResult.discount_percent) > 0 && (
+                        <div className="vehicle-info-row">
+                            <strong>
+                                Whitelist Discount
+                            </strong>
+
+                            <span>
+                                {exitResult.discount_percent}%
+                            </span>
+                        </div>
+                    )}
 
                     <div className="vehicle-info-amount">
                         <span>
@@ -1934,6 +1958,13 @@ function App() {
             </main>
         </div>
     );
+}
+
+
+function App() {
+    return window.location.pathname === "/admin"
+        ? <AdminPage />
+        : <GaragePage />;
 }
 
 

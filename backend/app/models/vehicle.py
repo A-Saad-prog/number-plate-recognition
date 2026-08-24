@@ -4,6 +4,7 @@ from sqlalchemy import DateTime, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.database import Base
+from app.services.time_service import pakistan_now
 
 
 class Vehicle(Base):
@@ -18,6 +19,6 @@ class Vehicle(Base):
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
-        default=datetime.utcnow,
+        default=pakistan_now,
         nullable=False,
     )

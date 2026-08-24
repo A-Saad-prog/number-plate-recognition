@@ -182,3 +182,80 @@ export async function detectPlateFromFrame(image) {
 
     return await response.json();
 }
+
+
+export async function loginAdmin(username, password) {
+    const response = await fetch(
+        `${API_BASE_URL}/admin/login`,
+        {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ username, password }),
+        }
+    );
+
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(formatErrorDetail(body.detail) || "Invalid username or password.");
+    }
+
+    return body;
+}
+
+
+export async function getAdminSession(token) {
+    const response = await fetch(
+        `${API_BASE_URL}/admin/me`,
+        {
+            headers: {
+                Authorization: `Bearer ${token}`,
+            },
+        }
+    );
+
+    if (!response.ok) {
+        throw new Error("Your admin session has expired.");
+    }
+
+    return await response.json();
+}
+
+
+async function adminRequest(path, token, options = {}) {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+        ...options,
+        headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+            ...(options.headers || {}),
+        },
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(formatErrorDetail(body.detail) || "Admin request failed.");
+    }
+    return body;
+}
+
+
+export function getWhitelist(token) {
+    return adminRequest("/admin/whitelist", token);
+}
+
+
+export function addWhitelistEntry(token, entry) {
+    return adminRequest("/admin/whitelist", token, {
+        method: "POST",
+        body: JSON.stringify(entry),
+    });
+}
+
+
+export function removeWhitelistEntry(token, search) {
+    return adminRequest("/admin/whitelist", token, {
+        method: "DELETE",
+        body: JSON.stringify({ search }),
+    });
+}

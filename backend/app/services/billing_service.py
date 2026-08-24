@@ -1,5 +1,6 @@
 import math
 from datetime import datetime
+from decimal import Decimal, ROUND_HALF_UP
 
 PARKING_RATE_PER_MINUTE = 1.67
 
@@ -26,3 +27,11 @@ def calculate_parking_fee(
     amount = round(billed_minutes * PARKING_RATE_PER_MINUTE, 2)
 
     return amount, billed_minutes
+
+
+def apply_discount(amount: float, discount_percent: float) -> float:
+    discount = min(100, max(0, discount_percent))
+    discounted_amount = Decimal(str(amount)) * (
+        Decimal("1") - Decimal(str(discount)) / Decimal("100")
+    )
+    return float(discounted_amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
