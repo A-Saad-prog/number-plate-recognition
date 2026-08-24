@@ -1,16 +1,72 @@
-# React + Vite
+﻿# Frontend App
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+This folder contains the React frontend for the parking garage system.
 
-Currently, two official plugins are available:
+## Purpose
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+The frontend handles:
 
-## React Compiler
+- live camera preview
+- license plate detection display
+- entry and exit vehicle actions
+- parking slot status view
+- payment selection and receipt generation
+- admin navigation
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Tech Stack
 
-## Expanding the ESLint configuration
+- React 19
+- Vite
+- JavaScript
+- CSS Modules / custom CSS
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## Setup
+
+```powershell
+cd frontend
+npm install
+```
+
+Create a `.env` file if you need a custom backend URL:
+
+```env
+VITE_API_BASE_URL=http://127.0.0.1:8000
+```
+
+## Run in Development Mode
+
+```powershell
+npm run dev
+```
+
+Then open:
+
+- http://localhost:5173
+
+## Production Build
+
+```powershell
+npm run build
+```
+
+Preview the build locally:
+
+```powershell
+npm run preview
+```
+
+## Main Features
+
+- Entry camera stream
+- Exit camera stream
+- Automatic number plate detection
+- Parking selection UI
+- Vehicle confirmation flow
+- Billing summary and exit receipt
+- Parking status dashboard
+
+## Notes
+
+- The frontend relies on the backend running at `VITE_API_BASE_URL`.
+- Camera access is necessary for live detection.
+- The app expects the backend to respond with parking and detection data in the expected format.

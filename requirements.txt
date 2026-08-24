@@ -1,15 +1,8 @@
-ultralytics==8.4.116
-opencv-python==5.0.0.93
-opencv-contrib-python==4.10.0.84
-paddlepaddle==3.3.1
-paddleocr==3.7.0
-numpy==2.3.5
+﻿# Root project dependency file
+# Install backend Python dependencies with:
+#   python -m pip install -r requirements.txt
+# Install frontend Node dependencies with:
+#   cd frontend
+#   npm install
 
-fastapi==0.141.1
-uvicorn==0.52.1
-SQLAlchemy==2.0.52
-psycopg2-binary==2.9.12
-python-dotenv==1.2.2
-
-torch==2.13.0
-torchvision==0.28.0
+-r backend/requirements.txt
