@@ -97,10 +97,24 @@ function App() {
         );
 
         try {
+            const captureStart = performance.now();
             visionProcessingRef.current = true;
 
             const result =
                 await detectPlateFromFrame(image);
+
+            const detectionLatencyMs =
+                performance.now() - captureStart;
+
+            console.log(
+                "[Vision latency]",
+                {
+                    source,
+                    durationMs: detectionLatencyMs,
+                    detected: result?.detected,
+                    plate: result?.license_plate || null,
+                }
+            );
 
             if (source === "entry") {
                 setEntryDetectionBox(result.box || null);
@@ -142,13 +156,26 @@ function App() {
                     plateCandidateCountRef.current = 1;
                 }
 
+                // The system should react as quickly as possible.
+                // A single confirmed read is enough to keep the UI
+                // responsive while still avoiding duplicate repeats.
                 if (
-                    plateCandidateCountRef.current >= 2
+                    plateCandidateCountRef.current >= 1
                 ) {
                     detectedPlateRef.current = plate;
 
                     plateCandidateRef.current = "";
                     plateCandidateCountRef.current = 0;
+
+                    console.log(
+                        "[Plate accepted]",
+                        {
+                            source,
+                            plate,
+                            detectionSource: source,
+                            detectedAt: new Date().toISOString(),
+                        }
+                    );
 
                     setDetectedPlate(plate);
                     setDetectionSource(source);
@@ -269,6 +296,24 @@ function App() {
     }
 
 
+    function clearVehicleDetectionState() {
+        detectedPlateRef.current = "";
+        lastCompletedPlateRef.current = "";
+        plateCandidateRef.current = "";
+        plateCandidateCountRef.current = 0;
+
+        setDetectedPlate("");
+        setDetectionSource(null);
+        setVehicleAction(null);
+        setEntryError("");
+        setExitError("");
+        setEntryResult(null);
+        setExitResult(null);
+        setPaymentMethod(null);
+        setSelectedSpaceId(null);
+    }
+
+
     async function openExitCamera() {
         const entryStream =
             videoRef.current?.srcObject;
@@ -285,6 +330,7 @@ function App() {
             videoRef.current.srcObject = null;
         }
 
+        clearVehicleDetectionState();
         setCameraActive(false);
         setEntryDetectionBox(null);
 
@@ -313,6 +359,7 @@ function App() {
             exitVideoRef.current.srcObject = null;
         }
 
+        clearVehicleDetectionState();
         exitStreamRef.current = null;
         setExitCameraActive(false);
         setExitDetectionBox(null);
@@ -491,7 +538,7 @@ function App() {
                 cameraActive,
                 "entry"
             );
-        }, 400);
+        }, 200);
 
         return () => {
             clearInterval(interval);
@@ -522,7 +569,7 @@ function App() {
                 exitCameraActive,
                 "exit"
             );
-        }, 400);
+        }, 200);
 
         return () => {
             clearInterval(interval);
@@ -677,6 +724,24 @@ function App() {
             lastCompletedPlateRef.current =
                 detectedPlate;
 
+            const nextSpaces =
+                parkingSpacesRef.current.map(
+                    (space) =>
+                        space.id === selectedSpaceId
+                            ? {
+                                  ...space,
+                                  is_occupied: true,
+                                  license_plate:
+                                      vehicle.license_plate,
+                                  entry_time:
+                                      vehicle.entry_time,
+                              }
+                            : space
+                );
+
+            parkingSpacesRef.current = nextSpaces;
+            setParkingSpaces(nextSpaces);
+
             setEntryResult(vehicle);
 
             detectedPlateRef.current = "";
@@ -688,8 +753,11 @@ function App() {
 
             setVehicleAction(null);
             setSelectedSpaceId(null);
+            setEntryLoading(false);
 
-            await loadParkingSpaces();
+            // Sync the backend state in the background, but do not
+            // block the success confirmation while it finishes.
+            void loadParkingSpaces();
 
         } catch (error) {
             console.error(
@@ -703,7 +771,9 @@ function App() {
             );
 
         } finally {
-            setEntryLoading(false);
+            if (!entryResult) {
+                setEntryLoading(false);
+            }
         }
     }
 
@@ -747,6 +817,26 @@ function App() {
             lastCompletedPlateRef.current =
                 detectedPlate;
 
+            const nextSpaces =
+                parkingSpacesRef.current.map((space) => {
+                    if (
+                        space.is_occupied &&
+                        space.license_plate === detectedPlate
+                    ) {
+                        return {
+                            ...space,
+                            is_occupied: false,
+                            license_plate: null,
+                            entry_time: null,
+                        };
+                    }
+
+                    return space;
+                });
+
+            parkingSpacesRef.current = nextSpaces;
+            setParkingSpaces(nextSpaces);
+
             setExitResult(receipt);
 
             detectedPlateRef.current = "";
@@ -759,8 +849,11 @@ function App() {
             setVehicleAction(null);
             setSelectedSpaceId(null);
             setPaymentMethod(null);
+            setExitLoading(false);
 
-            await loadParkingSpaces();
+            // Keep the exit receipt visible immediately and sync the
+            // backend state after the user sees the confirmation.
+            void loadParkingSpaces();
 
         } catch (error) {
             console.error(
@@ -774,7 +867,9 @@ function App() {
             );
 
         } finally {
-            setExitLoading(false);
+            if (!exitResult) {
+                setExitLoading(false);
+            }
         }
     }
 

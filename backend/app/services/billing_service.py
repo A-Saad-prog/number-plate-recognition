@@ -9,7 +9,8 @@ def calculate_parking_fee(
     exit_time: datetime,
 ) -> tuple[float, int]:
     """
-    Charge Rs 1.67 for every started parking minute.
+    Charge Rs 1.67 per started minute, with a minimum
+    one-minute charge for even a sub-second stay.
     """
 
     if entry_time.tzinfo is not None:

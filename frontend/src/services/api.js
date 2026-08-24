@@ -53,6 +53,7 @@ export async function registerEntry(
     licensePlate,
     parkingSpaceId
 ) {
+    const requestStartedAt = performance.now();
 
     const body = {
         license_plate: licensePlate,
@@ -74,6 +75,13 @@ export async function registerEntry(
             body: JSON.stringify(body),
         }
     );
+
+    const apiLatencyMs = performance.now() - requestStartedAt;
+    console.log("[API latency]", {
+        endpoint: "/parking/entry",
+        status: response.status,
+        durationMs: apiLatencyMs,
+    });
 
     if (!response.ok) {
 
@@ -98,6 +106,7 @@ export async function exitUsingPlate(
     licensePlate,
     paymentMethod
 ) {
+    const requestStartedAt = performance.now();
 
     const response = await fetch(
         `${API_BASE_URL}/parking/exit`,
@@ -114,6 +123,13 @@ export async function exitUsingPlate(
             }),
         }
     );
+
+    const apiLatencyMs = performance.now() - requestStartedAt;
+    console.log("[API latency]", {
+        endpoint: "/parking/exit",
+        status: response.status,
+        durationMs: apiLatencyMs,
+    });
 
     if (!response.ok) {
 
@@ -132,6 +148,7 @@ export async function exitUsingPlate(
 // ============================================================
 
 export async function detectPlateFromFrame(image) {
+    const requestStartedAt = performance.now();
 
     const response = await fetch(
         `${API_BASE_URL}/vision/detect-plate`,
@@ -147,6 +164,13 @@ export async function detectPlateFromFrame(image) {
             }),
         }
     );
+
+    const apiLatencyMs = performance.now() - requestStartedAt;
+    console.log("[Vision API latency]", {
+        endpoint: "/vision/detect-plate",
+        status: response.status,
+        durationMs: apiLatencyMs,
+    });
 
     if (!response.ok) {
 
