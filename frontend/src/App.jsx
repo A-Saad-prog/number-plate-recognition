@@ -8,9 +8,10 @@ import {
 } from "./services/api";
 
 import "./App.css";
+import AdminPage from "./components/AdminPage";
 
 
-function App() {
+function GaragePage() {
     const [detectedPlate, setDetectedPlate] = useState("");
     const [vehicleAction, setVehicleAction] = useState(null);
     const [detectionSource, setDetectionSource] = useState(null);
@@ -1839,6 +1840,13 @@ function App() {
             </main>
         </div>
     );
+}
+
+
+function App() {
+    return window.location.pathname === "/admin"
+        ? <AdminPage />
+        : <GaragePage />;
 }
 
 

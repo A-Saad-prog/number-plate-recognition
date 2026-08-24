@@ -158,3 +158,42 @@ export async function detectPlateFromFrame(image) {
 
     return await response.json();
 }
+
+
+export async function loginAdmin(username, password) {
+    const response = await fetch(
+        `${API_BASE_URL}/admin/login`,
+        {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ username, password }),
+        }
+    );
+
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(formatErrorDetail(body.detail) || "Invalid username or password.");
+    }
+
+    return body;
+}
+
+
+export async function getAdminSession(token) {
+    const response = await fetch(
+        `${API_BASE_URL}/admin/me`,
+        {
+            headers: {
+                Authorization: `Bearer ${token}`,
+            },
+        }
+    );
+
+    if (!response.ok) {
+        throw new Error("Your admin session has expired.");
+    }
+
+    return await response.json();
+}
