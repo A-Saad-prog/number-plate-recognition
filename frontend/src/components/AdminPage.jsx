@@ -25,6 +25,7 @@ function AdminPage() {
     const [discount, setDiscount] = useState("");
     const [removeSearch, setRemoveSearch] = useState("");
     const [whitelist, setWhitelist] = useState([]);
+    const [whitelistVisible, setWhitelistVisible] = useState(false);
     const [whitelistLoading, setWhitelistLoading] = useState(false);
     const [whitelistError, setWhitelistError] = useState("");
     const [whitelistMessage, setWhitelistMessage] = useState("");
@@ -69,11 +70,25 @@ function AdminPage() {
         setWhitelistError("");
         setWhitelistMessage("");
         try {
-            await addWhitelistEntry(token, {
+            const newEntry = await addWhitelistEntry(token, {
                 license_plate: plate,
                 vehicle_name: vehicleName,
                 discount_percent: Number(discount),
             });
+            const nextEntry = newEntry?.entry || {
+                id: Date.now(),
+                license_plate: plate.trim().toUpperCase(),
+                vehicle_name: vehicleName.trim(),
+                discount_percent: Number(discount),
+                created_at: new Date().toISOString(),
+            };
+            setWhitelist((currentEntries) => {
+                const exists = currentEntries.some(
+                    (entry) => entry.license_plate.toLowerCase() === nextEntry.license_plate.toLowerCase()
+                );
+                return exists ? currentEntries : [nextEntry, ...currentEntries];
+            });
+            setWhitelistVisible(true);
             setPlate("");
             setVehicleName("");
             setDiscount("");
@@ -92,7 +107,16 @@ function AdminPage() {
         setWhitelistMessage("");
         try {
             await removeWhitelistEntry(token, removeSearch);
+            const normalizedSearch = removeSearch.trim();
+            setWhitelist((currentEntries) =>
+                currentEntries.filter((entry) => {
+                    const matchesPlate = entry.license_plate.toLowerCase() === normalizedSearch.toLowerCase();
+                    const matchesName = entry.vehicle_name.toLowerCase() === normalizedSearch.toLowerCase();
+                    return !(matchesPlate || matchesName);
+                })
+            );
             setRemoveSearch("");
+            setWhitelistVisible(true);
             setWhitelistMessage("Vehicle removed from the whitelist.");
         } catch (requestError) {
             setWhitelistError(requestError.message);
@@ -102,11 +126,17 @@ function AdminPage() {
     }
 
     async function showWhitelist() {
+        if (whitelistVisible) {
+            setWhitelistVisible(false);
+            return;
+        }
+
         setWhitelistLoading(true);
         setWhitelistError("");
         try {
             const result = await getWhitelist(token);
             setWhitelist(result.entries || []);
+            setWhitelistVisible(true);
         } catch (requestError) {
             setWhitelistError(requestError.message);
         } finally {
@@ -141,13 +171,13 @@ function AdminPage() {
                                 <h1>Vehicle<br /><span>whitelist.</span></h1>
                                 <p className="admin-message">Give trusted vehicles a custom discount at checkout.</p>
                                 <div className="whitelist-actions">
-                                    <form className="whitelist-card" onSubmit={submitWhitelist}><div className="card-heading"><span>01</span><h2>Add vehicle</h2></div><label htmlFor="plate">Number plate</label><input id="plate" value={plate} onChange={(event) => setPlate(event.target.value)} placeholder="e.g. ABC-123" required /><label htmlFor="vehicle-name">Vehicle name</label><input id="vehicle-name" value={vehicleName} onChange={(event) => setVehicleName(event.target.value)} placeholder="e.g. Manager" required /><label htmlFor="discount">Discount percentage</label><input id="discount" type="number" min="0" max="100" step="1" value={discount} onChange={(event) => setDiscount(event.target.value)} placeholder="0 - 100" required /><button type="submit" disabled={whitelistLoading}>Add to whitelist <span>→</span></button></form>
+                                    <form className="whitelist-card" onSubmit={submitWhitelist}><div className="card-heading"><span>01</span><h2>Add vehicle</h2></div><label htmlFor="plate">Number plate</label><input id="plate" value={plate} onChange={(event) => setPlate(event.target.value)} placeholder="e.g. ABC-123" required /><label htmlFor="vehicle-name">Name</label><input id="vehicle-name" value={vehicleName} onChange={(event) => setVehicleName(event.target.value)} placeholder="e.g. Manager" required /><label htmlFor="discount">Discount percentage</label><input id="discount" type="number" min="0" max="100" step="1" value={discount} onChange={(event) => setDiscount(event.target.value)} placeholder="0 - 100" required /><button type="submit" disabled={whitelistLoading}>Add to whitelist <span>→</span></button></form>
                                     <form className="whitelist-card remove-card" onSubmit={submitRemove}><div className="card-heading"><span>02</span><h2>Remove vehicle</h2></div><label htmlFor="remove-search">Name or number plate</label><input id="remove-search" value={removeSearch} onChange={(event) => setRemoveSearch(event.target.value)} placeholder="Search the list" required /><p className="form-hint">Enter either the assigned name or the exact number plate.</p><button type="submit" disabled={whitelistLoading}>Remove from list <span>→</span></button></form>
                                 </div>
                                 {whitelistError && <p className="admin-error whitelist-feedback">{whitelistError}</p>}
                                 {whitelistMessage && <p className="whitelist-success">{whitelistMessage}</p>}
-                                <button type="button" className="show-list-button" onClick={showWhitelist} disabled={whitelistLoading}>Show list <span>{whitelistLoading ? "..." : "↓"}</span></button>
-                                {whitelist.length > 0 && <div className="whitelist-table-wrap"><table><thead><tr><th>Name</th><th>Number plate</th><th>Discount</th><th>Added</th></tr></thead><tbody>{whitelist.map((entry) => <tr key={entry.id}><td>{entry.vehicle_name}</td><td>{entry.license_plate}</td><td>{entry.discount_percent}%</td><td>{entry.created_at ? new Date(entry.created_at).toLocaleDateString("en-PK", { timeZone: "Asia/Karachi" }) : "-"}</td></tr>)}</tbody></table></div>}
+                                <button type="button" className="show-list-button" onClick={showWhitelist} disabled={whitelistLoading}>{whitelistVisible ? "Hide list" : "Show list"} <span>{whitelistLoading ? "..." : whitelistVisible ? "↑" : "↓"}</span></button>
+                                {whitelistVisible && whitelist.length > 0 && <div className="whitelist-table-wrap"><table><thead><tr><th>Name</th><th>Number plate</th><th>Discount</th><th>Added</th></tr></thead><tbody>{whitelist.map((entry) => <tr key={entry.id}><td>{entry.vehicle_name}</td><td>{entry.license_plate}</td><td>{entry.discount_percent}%</td><td>{entry.created_at ? new Date(entry.created_at).toLocaleDateString("en-PK", { timeZone: "Asia/Karachi" }) : "-"}</td></tr>)}</tbody></table></div>}
                             </div>
                         )}
                     </section>
