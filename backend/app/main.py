@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 from app.logging_config import configure_logging
 
 from app.api.vision import router as vision_router
+from app.api.admin import router as admin_router
 
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -68,6 +69,7 @@ app.add_middleware(
 )
 
 app.include_router(vision_router)
+app.include_router(admin_router)
 
 
 # ============================================================
