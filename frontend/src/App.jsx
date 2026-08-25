@@ -1258,11 +1258,11 @@ function GaragePage() {
             <header className="header">
                 <div>
                     <h1>
-                        Parking Garage
+                        ParkingOS
                     </h1>
 
                     <p>
-                        License Plate Parking
+                         Parking
                         Management System
                     </p>
                 </div>
