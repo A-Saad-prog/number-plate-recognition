@@ -166,11 +166,33 @@ PLATE_PROVINCES = {
 }
 
 PLATE_LABELS = set(PLATE_PROVINCES) | {
-    "PARKING", "POLICE", "GOVERNMENT", "DEPARTMENT", "EXCISE", "ETNC",
-    "TRANSPORT", "MOTOR", "VEHICLE", "REGISTRATION", "LAHORE", "KARACHI",
-    "RAWALPINDI", "FAISALABAD", "MULTAN", "GUJRANWALA", "SIALKOT",
-    "HYDERABAD", "SUKKUR", "QUETTA", "PESHAWAR", "ABBOTTABAD", "GILGIT",
-    "MUZAFFARABAD", "SKARDU", "CHITRAL", "BAHAWALPUR",
+    "PARKING",
+    "POLICE",
+    "GOVERNMENT",
+    "DEPARTMENT",
+    "EXCISE",
+    "ETNC",
+    "TRANSPORT",
+    "MOTOR",
+    "VEHICLE",
+    "REGISTRATION",
+    "LAHORE",
+    "KARACHI",
+    "RAWALPINDI",
+    "FAISALABAD",
+    "MULTAN",
+    "GUJRANWALA",
+    "SIALKOT",
+    "HYDERABAD",
+    "SUKKUR",
+    "QUETTA",
+    "PESHAWAR",
+    "ABBOTTABAD",
+    "GILGIT",
+    "MUZAFFARABAD",
+    "SKARDU",
+    "CHITRAL",
+    "BAHAWALPUR",
 }
 
 OCR_CONFUSIONS = {"O": "0", "I": "1", "L": "1", "S": "5", "B": "8", "Z": "2", "G": "6"}
@@ -178,7 +200,9 @@ OCR_CONFUSIONS = {"O": "0", "I": "1", "L": "1", "S": "5", "B": "8", "Z": "2", "G
 
 def _plate_province(raw_text):
     compact_text = re.sub(r"[\s\-./]+", "", raw_text.upper())
-    for label, province in sorted(PLATE_PROVINCES.items(), key=lambda item: -len(item[0])):
+    for label, province in sorted(
+        PLATE_PROVINCES.items(), key=lambda item: -len(item[0])
+    ):
         if re.sub(r"[\s\-./]+", "", label) in compact_text:
             return province
     return None
@@ -219,18 +243,25 @@ def classify_plate(text: str, confidence: float = 0.0) -> dict | None:
 
     for candidate in candidates:
         for format_name, pattern in options:
-            normalized = _correct_for_format(re.sub(r"[\s\-./]+", "", candidate), format_name)
+            normalized = _correct_for_format(
+                re.sub(r"[\s\-./]+", "", candidate), format_name
+            )
             if re.fullmatch(pattern, normalized):
                 matching_types = [
                     vehicle_type
                     for vehicle_type, formats in PLATE_FORMATS.get(province, {}).items()
-                    if any(name == format_name and re.fullmatch(regex, normalized) for name, regex in formats)
+                    if any(
+                        name == format_name and re.fullmatch(regex, normalized)
+                        for name, regex in formats
+                    )
                 ]
                 return {
                     "raw_text": raw_text,
                     "plate": normalized,
                     "province": province or "unknown",
-                    "vehicle_type": matching_types[0] if len(matching_types) == 1 else "unknown",
+                    "vehicle_type": (
+                        matching_types[0] if len(matching_types) == 1 else "unknown"
+                    ),
                     "format": format_name,
                     "confidence": round(max(0.0, min(1.0, float(confidence))), 4),
                 }
