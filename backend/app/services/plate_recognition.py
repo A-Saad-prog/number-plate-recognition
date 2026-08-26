@@ -95,19 +95,150 @@ def update_fps():
 # License Plate Validation
 # ============================================================
 
+PLATE_FORMATS = {
+    "AJK": {
+        "car": [("AA999", r"^[A-Z]{2}[0-9]{3}$")],
+        "motorcycle": [("AABB000", r"^[A-Z]{4}[0-9]{3}$")],
+        "public_transport": [("AABB000", r"^[A-Z]{4}[0-9]{3}$")],
+        "government": [("AABB000", r"^[A-Z]{4}[0-9]{3}$")],
+    },
+    "Balochistan": {
+        "car": [("AA999", r"^[A-Z]{2}[0-9]{3}$")],
+        "motorcycle": [("AA0000", r"^[A-Z]{2}[0-9]{4}$")],
+        "public_transport": [("AA0000", r"^[A-Z]{2}[0-9]{4}$")],
+        "government": [("AAAA000", r"^[A-Z]{4}[0-9]{3}$")],
+    },
+    "Gilgit-Baltistan": {
+        "car": [("AAA00", r"^[A-Z]{3}[0-9]{2}$")],
+    },
+    "Islamabad": {
+        "car": [("AA999", r"^[A-Z]{2}[0-9]{3}$")],
+        "motorcycle": [("AA999", r"^[A-Z]{2}[0-9]{3}$")],
+        "government": [("alphanumeric", r"^[A-Z0-9]+$")],
+    },
+    "Khyber Pakhtunkhwa": {
+        "car": [("AA9999", r"^[A-Z]{2}[0-9]{4}$")],
+        "motorcycle": [("AA000", r"^[A-Z]{2}[0-9]{3}$")],
+        "public_transport": [("AA000", r"^[A-Z]{2}[0-9]{3}$")],
+        "government": [("AA000", r"^[A-Z]{2}[0-9]{3}$")],
+    },
+    "Punjab": {
+        "car": [
+            ("AA999", r"^[A-Z]{2}[0-9]{3}$"),
+            ("A9999", r"^[A-Z][0-9]{4}$"),
+        ],
+        "motorcycle": [("AA/AAA0000", r"^[A-Z]{2,3}[0-9]{4}$")],
+        "public_transport": [("AAA000", r"^[A-Z]{3}[0-9]{3}$")],
+        "government": [("alphanumeric", r"^[A-Z0-9]+$")],
+    },
+    "Sindh": {
+        "car": [("AAA000", r"^[A-Z]{3}[0-9]{3}$")],
+        "motorcycle": [("AAA0000", r"^[A-Z]{3}[0-9]{4}$")],
+        "public_transport": [("AA0000", r"^[A-Z]{2}[0-9]{4}$")],
+        "government": [("AA000", r"^[A-Z]{2}[0-9]{3}$")],
+    },
+}
+
+GENERIC_PLATE_FORMATS = [
+    ("AA999", r"^[A-Z]{2}[0-9]{3}$"),
+    ("AA9999", r"^[A-Z]{2}[0-9]{4}$"),
+    ("AAA00", r"^[A-Z]{3}[0-9]{2}$"),
+    ("AAA000", r"^[A-Z]{3}[0-9]{3}$"),
+    ("AAA0000", r"^[A-Z]{3}[0-9]{4}$"),
+    ("AABB000", r"^[A-Z]{4}[0-9]{3}$"),
+    ("A9999", r"^[A-Z][0-9]{4}$"),
+    ("AA/AAA0000", r"^[A-Z]{2,3}[0-9]{4}$"),
+]
+
+PLATE_PROVINCES = {
+    "AJK": "AJK",
+    "AJ&K": "AJK",
+    "BALOCHISTAN": "Balochistan",
+    "GILGITBALTISTAN": "Gilgit-Baltistan",
+    "GB": "Gilgit-Baltistan",
+    "ISLAMABAD": "Islamabad",
+    "ICT": "Islamabad",
+    "PUNJAB": "Punjab",
+    "SINDH": "Sindh",
+    "KP": "Khyber Pakhtunkhwa",
+    "KPK": "Khyber Pakhtunkhwa",
+    "KHYBERPAKHTUNKHWA": "Khyber Pakhtunkhwa",
+}
+
+PLATE_LABELS = set(PLATE_PROVINCES) | {
+    "PARKING", "POLICE", "GOVERNMENT", "DEPARTMENT", "EXCISE", "ETNC",
+    "TRANSPORT", "MOTOR", "VEHICLE", "REGISTRATION", "LAHORE", "KARACHI",
+    "RAWALPINDI", "FAISALABAD", "MULTAN", "GUJRANWALA", "SIALKOT",
+    "HYDERABAD", "SUKKUR", "QUETTA", "PESHAWAR", "ABBOTTABAD", "GILGIT",
+    "MUZAFFARABAD", "SKARDU", "CHITRAL", "BAHAWALPUR",
+}
+
+OCR_CONFUSIONS = {"O": "0", "I": "1", "L": "1", "S": "5", "B": "8", "Z": "2", "G": "6"}
+
+
+def _plate_province(raw_text):
+    compact_text = re.sub(r"[\s\-./]+", "", raw_text.upper())
+    for label, province in sorted(PLATE_PROVINCES.items(), key=lambda item: -len(item[0])):
+        if re.sub(r"[\s\-./]+", "", label) in compact_text:
+            return province
+    return None
+
+
+def _plate_tokens(raw_text):
+    tokens = re.findall(r"[A-Z0-9]+", raw_text.upper())
+    return [token for token in tokens if token not in PLATE_LABELS]
+
+
+def _correct_for_format(value, format_name):
+    template = re.sub(r"[^A-Z0-9]", "", format_name)
+    if len(value) != len(template):
+        return value
+
+    corrected = []
+    for character, expected in zip(value, template):
+        if expected == "0" and character in OCR_CONFUSIONS:
+            character = OCR_CONFUSIONS[character]
+        elif expected == "A":
+            reverse = {digit: letter for letter, digit in OCR_CONFUSIONS.items()}
+            character = reverse.get(character, character)
+        corrected.append(character)
+    return "".join(corrected)
+
+
+def classify_plate(text: str, confidence: float = 0.0) -> dict | None:
+    """Normalize OCR text and match the supplied Pakistani plate formats."""
+    raw_text = text or ""
+    province = _plate_province(raw_text)
+    tokens = _plate_tokens(raw_text)
+    candidates = list(dict.fromkeys(tokens + (["".join(tokens)] if tokens else [])))
+    options = (
+        [item for values in PLATE_FORMATS[province].values() for item in values]
+        if province
+        else GENERIC_PLATE_FORMATS
+    )
+
+    for candidate in candidates:
+        for format_name, pattern in options:
+            normalized = _correct_for_format(re.sub(r"[\s\-./]+", "", candidate), format_name)
+            if re.fullmatch(pattern, normalized):
+                matching_types = [
+                    vehicle_type
+                    for vehicle_type, formats in PLATE_FORMATS.get(province, {}).items()
+                    if any(name == format_name and re.fullmatch(regex, normalized) for name, regex in formats)
+                ]
+                return {
+                    "raw_text": raw_text,
+                    "plate": normalized,
+                    "province": province or "unknown",
+                    "vehicle_type": matching_types[0] if len(matching_types) == 1 else "unknown",
+                    "format": format_name,
+                    "confidence": round(max(0.0, min(1.0, float(confidence))), 4),
+                }
+    return None
+
 
 def is_valid_plate(text: str) -> bool:
-
-    if not text:
-        return False
-
-    text = text.upper().strip()
-
-    text = text.replace(" ", "")
-
-    pattern = r"^[A-Z]{3}-?[0-9]{4}$"
-
-    return bool(re.match(pattern, text))
+    return classify_plate(text, 1.0) is not None
 
 
 # ============================================================
@@ -116,16 +247,8 @@ def is_valid_plate(text: str) -> bool:
 
 
 def normalize_plate(text: str) -> str:
-
-    text = text.upper().strip()
-
-    text = text.replace(" ", "")
-
-    if len(text) == 7 and "-" not in text:
-
-        text = text[:3] + "-" + text[3:]
-
-    return text
+    result = classify_plate(text, 1.0)
+    return result["plate"] if result else ""
 
 
 # ============================================================
@@ -241,21 +364,17 @@ def read_plate(plate_crop):
 
             return None
 
-        best_index = scores.index(max(scores))
+        result = classify_plate("\n".join(texts), max(scores))
 
-        text = texts[best_index]
+        if result is None:
 
-        if not is_valid_plate(text):
-
-            print(f"OCR rejected: {text}")
+            print(f"OCR rejected: {' '.join(texts)}")
 
             return None
 
-        plate = normalize_plate(text)
+        print(f"OCR: {result['plate']} (confidence: {result['confidence']:.2f})")
 
-        print(f"OCR: {plate} " f"(confidence: " f"{scores[best_index]:.2f})")
-
-        return plate
+        return result
 
     except Exception as error:
 
@@ -350,6 +469,7 @@ def detect_plate(image_base64: str):
         return {
             "detected": False,
             "license_plate": None,
+            "plate_metadata": None,
             "plate_image": None,
             "confidence": 0.0,
             "box": None,
@@ -419,6 +539,7 @@ def detect_plate(image_base64: str):
         return {
             "detected": True,
             "license_plate": None,
+            "plate_metadata": None,
             "plate_image": None,
             "confidence": best_confidence,
             "box": {
@@ -452,12 +573,16 @@ def detect_plate(image_base64: str):
     # ========================================================
 
     recognized_plate = None
+    plate_metadata = None
 
     if ocr_results:
 
-        counts = Counter(ocr_results)
+        counts = Counter(result["plate"] for result in ocr_results)
 
         recognized_plate = counts.most_common(1)[0][0]
+        plate_metadata = next(
+            result for result in ocr_results if result["plate"] == recognized_plate
+        )
 
     # ========================================================
     # Encode crop
@@ -472,6 +597,7 @@ def detect_plate(image_base64: str):
     return {
         "detected": True,
         "license_plate": recognized_plate,
+        "plate_metadata": plate_metadata,
         "plate_image": plate_image_base64,
         "confidence": best_confidence,
         "box": {

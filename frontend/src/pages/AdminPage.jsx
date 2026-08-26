@@ -7,7 +7,7 @@ import {
     loginAdmin,
     removeWhitelistEntry,
 } from "../services/api";
-import "./AdminPage.css";
+import "../styles/AdminPage.css";
 
 const TOKEN_KEY = "parking_admin_token";
 

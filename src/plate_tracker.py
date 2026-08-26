@@ -12,7 +12,6 @@ from collections import Counter
 from ultralytics import YOLO
 from paddleocr import PaddleOCR
 
-
 # ============================================================
 # Configuration
 # ============================================================
@@ -41,14 +40,13 @@ OCR_CONFIDENCE_THRESHOLD = 0.60
 PLATE_LOST_TIMEOUT = 2.0
 
 # FastAPI endpoint for detected plates
-DETECTED_PLATE_API_URL = (
-    "http://127.0.0.1:8000/parking/detected-plate"
-)
+DETECTED_PLATE_API_URL = "http://127.0.0.1:8000/parking/detected-plate"
 
 
 # ============================================================
 # License Plate Validation
 # ============================================================
+
 
 def is_valid_plate(text):
     text = text.upper().strip()
@@ -68,14 +66,13 @@ def is_valid_plate(text):
 # Send Recognized Plate to FastAPI
 # ============================================================
 
+
 def send_detected_plate_to_backend(plate):
     try:
 
         response = requests.post(
             DETECTED_PLATE_API_URL,
-            json={
-                "license_plate": plate
-            },
+            json={"license_plate": plate},
             timeout=2,
         )
 
@@ -89,34 +86,23 @@ def send_detected_plate_to_backend(plate):
                 print("==============================")
                 print("PLATE SENT TO BACKEND")
                 print("==============================")
-                print(
-                    f"Plate: {data['license_plate']}"
-                )
+                print(f"Plate: {data['license_plate']}")
                 print("==============================")
                 print()
 
                 return True
 
-            print(
-                f"Backend error: "
-                f"{data.get('error')}"
-            )
+            print(f"Backend error: " f"{data.get('error')}")
 
             return False
 
-        print(
-            f"Detected plate API returned HTTP "
-            f"{response.status_code}"
-        )
+        print(f"Detected plate API returned HTTP " f"{response.status_code}")
 
         return False
 
     except requests.exceptions.RequestException as error:
 
-        print(
-            f"Could not connect to FastAPI: "
-            f"{error}"
-        )
+        print(f"Could not connect to FastAPI: " f"{error}")
 
         return False
 
@@ -150,15 +136,9 @@ print("OCR loaded.")
 
 camera = cv2.VideoCapture(CAMERA_INDEX)
 
-camera.set(
-    cv2.CAP_PROP_FRAME_WIDTH,
-    FRAME_WIDTH
-)
+camera.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
 
-camera.set(
-    cv2.CAP_PROP_FRAME_HEIGHT,
-    FRAME_HEIGHT
-)
+camera.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
 
 if not camera.isOpened():
 
@@ -167,20 +147,13 @@ if not camera.isOpened():
     exit()
 
 
-actual_width = int(
-    camera.get(cv2.CAP_PROP_FRAME_WIDTH)
-)
+actual_width = int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))
 
-actual_height = int(
-    camera.get(cv2.CAP_PROP_FRAME_HEIGHT)
-)
+actual_height = int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
 print()
 
-print(
-    f"Camera resolution: "
-    f"{actual_width}x{actual_height}"
-)
+print(f"Camera resolution: " f"{actual_width}x{actual_height}")
 
 print("Press X to quit.")
 print()
@@ -218,20 +191,18 @@ display_fps = 0
 # OCR Function
 # ============================================================
 
+
 def read_plate(plate_crop):
 
     print("Running OCR...")
 
     try:
 
-        results = ocr.predict(
-            plate_crop
-        )
+        results = ocr.predict(plate_crop)
 
         texts = []
 
         scores = []
-
 
         # ====================================================
         # Extract OCR results
@@ -239,31 +210,17 @@ def read_plate(plate_crop):
 
         for result in results:
 
-            data = result.get(
-                "rec_texts",
-                []
-            )
+            data = result.get("rec_texts", [])
 
-            confidence = result.get(
-                "rec_scores",
-                []
-            )
+            confidence = result.get("rec_scores", [])
 
-            for text, score in zip(
-                data,
-                confidence
-            ):
+            for text, score in zip(data, confidence):
 
                 if float(score) >= OCR_CONFIDENCE_THRESHOLD:
 
-                    texts.append(
-                        text.strip()
-                    )
+                    texts.append(text.strip())
 
-                    scores.append(
-                        float(score)
-                    )
-
+                    scores.append(float(score))
 
         # ====================================================
         # No readable text
@@ -271,25 +228,19 @@ def read_plate(plate_crop):
 
         if not texts:
 
-            print(
-                "OCR could not read plate."
-            )
+            print("OCR could not read plate.")
 
             return None
-
 
         # ====================================================
         # Select strongest OCR result
         # ====================================================
 
-        best_index = scores.index(
-            max(scores)
-        )
+        best_index = scores.index(max(scores))
 
         text = texts[best_index]
 
         confidence = scores[best_index]
-
 
         # ====================================================
         # Validate plate format
@@ -297,31 +248,21 @@ def read_plate(plate_crop):
 
         if not is_valid_plate(text):
 
-            print(
-                f"OCR rejected: {text} "
-                f"(does not look like a plate)"
-            )
+            print(f"OCR rejected: {text} " f"(does not look like a plate)")
 
             return None
-
 
         # ====================================================
         # Valid plate
         # ====================================================
 
-        print(
-            f"OCR: {text} "
-            f"(confidence: {confidence:.2f})"
-        )
+        print(f"OCR: {text} " f"(confidence: {confidence:.2f})")
 
         return text
 
-
     except Exception as error:
 
-        print(
-            f"OCR error: {error}"
-        )
+        print(f"OCR error: {error}")
 
         return None
 
@@ -336,15 +277,11 @@ while True:
 
     if not success:
 
-        print(
-            "Could not read camera."
-        )
+        print("Could not read camera.")
 
         break
 
-
     frame_count += 1
-
 
     # ========================================================
     # YOLO Detection
@@ -359,9 +296,7 @@ while True:
             verbose=False,
         )
 
-
         last_boxes = []
-
 
         for result in results:
 
@@ -369,28 +304,13 @@ while True:
 
                 continue
 
-
             for box in result.boxes:
 
-                x1, y1, x2, y2 = (
-                    box.xyxy[0].tolist()
-                )
+                x1, y1, x2, y2 = box.xyxy[0].tolist()
 
-                confidence = float(
-                    box.conf[0]
-                )
+                confidence = float(box.conf[0])
 
-
-                last_boxes.append(
-                    (
-                        int(x1),
-                        int(y1),
-                        int(x2),
-                        int(y2),
-                        confidence
-                    )
-                )
-
+                last_boxes.append((int(x1), int(y1), int(x2), int(y2), confidence))
 
         # ====================================================
         # Plate Detected
@@ -400,57 +320,31 @@ while True:
 
             last_plate_time = time.time()
 
-
             # Only run OCR if we do not
             # already have a recognized plate
 
-            if (
-                recognized_plate is None
-                and not ocr_running
-            ):
+            if recognized_plate is None and not ocr_running:
 
-                x1, y1, x2, y2, confidence = (
-                    last_boxes[0]
-                )
-
+                x1, y1, x2, y2, confidence = last_boxes[0]
 
                 # Add a small margin around
                 # the detected plate
 
                 padding = 10
 
+                x1 = max(0, x1 - padding)
 
-                x1 = max(
-                    0,
-                    x1 - padding
-                )
+                y1 = max(0, y1 - padding)
 
-                y1 = max(
-                    0,
-                    y1 - padding
-                )
+                x2 = min(actual_width, x2 + padding)
 
-                x2 = min(
-                    actual_width,
-                    x2 + padding
-                )
+                y2 = min(actual_height, y2 + padding)
 
-                y2 = min(
-                    actual_height,
-                    y2 + padding
-                )
-
-
-                plate_crop = frame[
-                    y1:y2,
-                    x1:x2
-                ]
-
+                plate_crop = frame[y1:y2, x1:x2]
 
                 if plate_crop.size > 0:
 
                     ocr_running = True
-
 
                     # ========================================
                     # Clear old OCR readings
@@ -458,29 +352,19 @@ while True:
 
                     ocr_results = []
 
-
                     # ========================================
                     # Collect multiple OCR readings
                     # ========================================
 
-                    for _ in range(
-                        OCR_READINGS_REQUIRED
-                    ):
+                    for _ in range(OCR_READINGS_REQUIRED):
 
-                        result = read_plate(
-                            plate_crop
-                        )
-
+                        result = read_plate(plate_crop)
 
                         if result:
 
-                            ocr_results.append(
-                                result
-                            )
-
+                            ocr_results.append(result)
 
                     ocr_running = False
-
 
                     # ========================================
                     # Determine final plate
@@ -488,33 +372,19 @@ while True:
 
                     if ocr_results:
 
-                        counts = Counter(
-                            ocr_results
-                        )
+                        counts = Counter(ocr_results)
 
-
-                        recognized_plate = (
-                            counts.most_common(1)[0][0]
-                        )
-
+                        recognized_plate = counts.most_common(1)[0][0]
 
                         print()
 
-                        print(
-                            "=============================="
-                        )
+                        print("==============================")
 
-                        print(
-                            f"RECOGNIZED PLATE: "
-                            f"{recognized_plate}"
-                        )
+                        print(f"RECOGNIZED PLATE: " f"{recognized_plate}")
 
-                        print(
-                            "=============================="
-                        )
+                        print("==============================")
 
                         print()
-
 
                         # ====================================
                         # Send detected plate to FastAPI
@@ -525,10 +395,7 @@ while True:
                         # detected.
                         # ====================================
 
-                        send_detected_plate_to_backend(
-                            recognized_plate
-                        )
-
+                        send_detected_plate_to_backend(recognized_plate)
 
     # ========================================================
     # Check Whether Vehicle Disappeared
@@ -536,15 +403,10 @@ while True:
 
     if (
         recognized_plate is not None
-        and time.time() - last_plate_time
-        > PLATE_LOST_TIMEOUT
+        and time.time() - last_plate_time > PLATE_LOST_TIMEOUT
     ):
 
-        print(
-            f"Vehicle left camera: "
-            f"{recognized_plate}"
-        )
-
+        print(f"Vehicle left camera: " f"{recognized_plate}")
 
         # Reset the system so the next
         # vehicle can be recognized
@@ -555,47 +417,25 @@ while True:
 
         last_boxes = []
 
-
     # ========================================================
     # Draw YOLO Detections
     # ========================================================
 
-    for (
-        x1,
-        y1,
-        x2,
-        y2,
-        confidence
-    ) in last_boxes:
+    for x1, y1, x2, y2, confidence in last_boxes:
 
-        cv2.rectangle(
-            frame,
-            (x1, y1),
-            (x2, y2),
-            (0, 255, 0),
-            2
-        )
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
 
-
-        label = (
-            f"Plate "
-            f"{confidence:.2f}"
-        )
-
+        label = f"Plate " f"{confidence:.2f}"
 
         cv2.putText(
             frame,
             label,
-            (
-                x1,
-                max(y1 - 10, 20)
-            ),
+            (x1, max(y1 - 10, 20)),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.6,
             (0, 255, 0),
-            2
+            2,
         )
-
 
     # ========================================================
     # Display Recognized Plate
@@ -610,7 +450,7 @@ while True:
             cv2.FONT_HERSHEY_SIMPLEX,
             1.0,
             (0, 255, 0),
-            3
+            3,
         )
 
     elif ocr_running:
@@ -622,7 +462,7 @@ while True:
             cv2.FONT_HERSHEY_SIMPLEX,
             0.8,
             (0, 255, 255),
-            2
+            2,
         )
 
     else:
@@ -634,9 +474,8 @@ while True:
             cv2.FONT_HERSHEY_SIMPLEX,
             0.8,
             (0, 255, 255),
-            2
+            2,
         )
-
 
     # ========================================================
     # FPS
@@ -644,23 +483,15 @@ while True:
 
     processed_frames += 1
 
-    elapsed = (
-        time.time()
-        - fps_start
-    )
-
+    elapsed = time.time() - fps_start
 
     if elapsed >= 1:
 
-        display_fps = (
-            processed_frames
-            / elapsed
-        )
+        display_fps = processed_frames / elapsed
 
         processed_frames = 0
 
         fps_start = time.time()
-
 
     cv2.putText(
         frame,
@@ -669,28 +500,20 @@ while True:
         cv2.FONT_HERSHEY_SIMPLEX,
         0.7,
         (0, 255, 0),
-        2
+        2,
     )
-
 
     # ========================================================
     # Display
     # ========================================================
 
-    cv2.imshow(
-        "License Plate Recognition",
-        frame
-    )
-
+    cv2.imshow("License Plate Recognition", frame)
 
     # ========================================================
     # Exit
     # ========================================================
 
-    if (
-        cv2.waitKey(1) & 0xFF
-        == ord("x")
-    ):
+    if cv2.waitKey(1) & 0xFF == ord("x"):
 
         break
 
