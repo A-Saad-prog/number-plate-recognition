@@ -2,6 +2,9 @@ import os
 import re
 import base64
 import time
+import threading
+from datetime import datetime
+from uuid import uuid4
 
 import cv2
 import numpy as np
@@ -13,6 +16,13 @@ os.environ["FLAGS_enable_pir_api"] = "0"
 
 from ultralytics import YOLO
 from paddleocr import PaddleOCR
+
+try:
+    import boto3
+    from botocore.exceptions import BotoCoreError, ClientError
+except ImportError:
+    boto3 = None
+    BotoCoreError = ClientError = Exception
 
 # ============================================================
 # Configuration
@@ -374,6 +384,52 @@ def _vote_for_plate(metadata):
     return best
 
 
+def _upload_accepted_frame(frame, metadata):
+    """Upload only the frame that completed the OCR agreement vote."""
+    bucket = os.getenv("AWS_S3_BUCKET")
+    endpoint_url = os.getenv("AWS_ENDPOINT_URL_S3")
+    region = os.getenv("AWS_REGION")
+
+    if not boto3 or not bucket or not endpoint_url:
+        return
+
+    success, encoded_frame = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
+    if not success:
+        return
+
+    plate = re.sub(r"[^A-Z0-9-]", "", metadata["plate"])
+    captured_at = datetime.now()
+    object_key = (
+        f"{captured_at:%Y}/{captured_at:%m}/{captured_at:%d}/"
+        f"{plate}-{captured_at:%H%M%S}-{uuid4().hex[:8]}.jpg"
+    )
+
+    try:
+        client = boto3.client(
+            "s3",
+            endpoint_url=endpoint_url,
+            region_name=region,
+            aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+            aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+        )
+        client.put_object(
+            Bucket=bucket,
+            Key=object_key,
+            Body=encoded_frame.tobytes(),
+            ContentType="image/jpeg",
+        )
+    except (BotoCoreError, ClientError, OSError) as error:
+        print(f"Accepted-frame upload failed: {error.__class__.__name__}")
+
+
+def _upload_accepted_frame_in_background(frame, metadata):
+    threading.Thread(
+        target=_upload_accepted_frame,
+        args=(frame.copy(), metadata.copy()),
+        daemon=True,
+    ).start()
+
+
 # ============================================================
 # Decode Browser Image
 # ============================================================
@@ -691,11 +747,16 @@ def detect_plate(image_base64: str):
     # from your original plate_detector.py.
     # ========================================================
 
-    if accepted_plate_metadata is not None:
+    had_accepted_plate = accepted_plate_metadata is not None
+
+    if had_accepted_plate:
         plate_metadata = accepted_plate_metadata
     else:
         ocr_result = read_plate(plate_crop)
         plate_metadata = _vote_for_plate(ocr_result) if ocr_result else None
+
+        if plate_metadata is not None:
+            _upload_accepted_frame_in_background(frame, plate_metadata)
 
     recognized_plate = plate_metadata["plate"] if plate_metadata else None
 
