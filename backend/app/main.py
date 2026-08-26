@@ -6,6 +6,7 @@ from app.logging_config import configure_logging
 
 from app.api.vision import router as vision_router
 from app.api.admin import router as admin_router
+from app.api.storage_test import router as storage_test_router
 
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -48,10 +49,7 @@ cors_origins = [
 
 app = FastAPI(
     title="Parking Garage API",
-    description=(
-        "Backend API for the number plate recognition "
-        "parking system"
-    ),
+    description=("Backend API for the number plate recognition " "parking system"),
     version="2.0.0",
 )
 
@@ -70,42 +68,40 @@ app.add_middleware(
 
 app.include_router(vision_router)
 app.include_router(admin_router)
+app.include_router(storage_test_router)
 
 
 # ============================================================
 # Root
 # ============================================================
 
+
 @app.get("/")
 def root():
-    return {
-        "message": "Parking Garage API is running"
-    }
+    return {"message": "Parking Garage API is running"}
 
 
 # ============================================================
 # Health Check
 # ============================================================
 
+
 @app.get("/health")
 def health_check():
-    return {
-        "status": "healthy"
-    }
+    return {"status": "healthy"}
 
 
 # ============================================================
 # Database Test
 # ============================================================
 
+
 @app.get("/database-test")
 def database_test():
 
     with engine.connect() as connection:
 
-        result = connection.execute(
-            text("SELECT current_database()")
-        )
+        result = connection.execute(text("SELECT current_database()"))
 
         database_name = result.scalar()
 
@@ -118,6 +114,7 @@ def database_test():
 # ============================================================
 # Get All Parking Spaces
 # ============================================================
+
 
 @app.get("/parking/spaces")
 def parking_spaces(
@@ -141,6 +138,7 @@ def parking_spaces(
 # ============================================================
 # Vehicle Entry
 # ============================================================
+
 
 @app.post("/parking/entry")
 def vehicle_entry(
@@ -180,6 +178,7 @@ def vehicle_entry(
 # ============================================================
 # Vehicle Exit
 # ============================================================
+
 
 @app.post("/parking/exit")
 def vehicle_exit(
