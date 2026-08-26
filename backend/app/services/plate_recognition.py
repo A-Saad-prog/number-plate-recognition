@@ -229,6 +229,12 @@ def _correct_for_format(value, format_name):
     return "".join(corrected)
 
 
+def _display_plate(value):
+    """Add the visual separator between the letter and number sections."""
+    match = re.fullmatch(r"([A-Z]+)([0-9]+)", value)
+    return f"{match.group(1)}-{match.group(2)}" if match else value
+
+
 def classify_plate(text: str, confidence: float = 0.0) -> dict | None:
     """Normalize OCR text and match the supplied Pakistani plate formats."""
     raw_text = text or ""
@@ -247,6 +253,7 @@ def classify_plate(text: str, confidence: float = 0.0) -> dict | None:
                 re.sub(r"[\s\-./]+", "", candidate), format_name
             )
             if re.fullmatch(pattern, normalized):
+                display_plate = _display_plate(normalized)
                 matching_types = [
                     vehicle_type
                     for vehicle_type, formats in PLATE_FORMATS.get(province, {}).items()
@@ -257,7 +264,7 @@ def classify_plate(text: str, confidence: float = 0.0) -> dict | None:
                 ]
                 return {
                     "raw_text": raw_text,
-                    "plate": normalized,
+                    "plate": display_plate,
                     "province": province or "unknown",
                     "vehicle_type": (
                         matching_types[0] if len(matching_types) == 1 else "unknown"
