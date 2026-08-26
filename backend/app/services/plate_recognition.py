@@ -27,11 +27,18 @@ MODEL_PATH = os.path.abspath(
 
 CONFIDENCE_THRESHOLD = 0.30
 
-OCR_READINGS_REQUIRED = 1
+OCR_AGREEMENT_REQUIRED = 3
+OCR_BUFFER_SIZE = 8
+OCR_BUFFER_TTL_SECONDS = 2.0
 
 OCR_CONFIDENCE_THRESHOLD = 0.50
 
 PLATE_PADDING = 10
+
+ocr_reading_buffer = []
+accepted_plate_metadata = None
+accepted_plate_time = 0.0
+last_plate_detection_time = 0.0
 
 
 # ============================================================
@@ -289,6 +296,84 @@ def normalize_plate(text: str) -> str:
     return result["plate"] if result else ""
 
 
+def _comparison_plate(value: str) -> str:
+    return re.sub(r"[^A-Z0-9]", "", value.upper())
+
+
+def _plate_distance(first: str, second: str) -> int:
+    if abs(len(first) - len(second)) > 1:
+        return 2
+
+    previous = list(range(len(second) + 1))
+    for first_index, first_character in enumerate(first, 1):
+        current = [first_index]
+        for second_index, second_character in enumerate(second, 1):
+            current.append(
+                min(
+                    current[-1] + 1,
+                    previous[second_index] + 1,
+                    previous[second_index - 1] + (first_character != second_character),
+                )
+            )
+        previous = current
+    return previous[-1]
+
+
+def _clear_ocr_state():
+    global accepted_plate_metadata
+    global accepted_plate_time
+
+    ocr_reading_buffer.clear()
+    accepted_plate_metadata = None
+    accepted_plate_time = 0.0
+
+
+def _vote_for_plate(metadata):
+    """Add one OCR result and return a weighted agreement when established."""
+    global accepted_plate_metadata
+    global accepted_plate_time
+
+    now = time.monotonic()
+    ocr_reading_buffer[:] = [
+        reading
+        for reading in ocr_reading_buffer
+        if now - reading["time"] <= OCR_BUFFER_TTL_SECONDS
+    ]
+
+    normalized = _comparison_plate(metadata["plate"])
+    if ocr_reading_buffer and not any(
+        _plate_distance(normalized, item["normalized"]) <= 1
+        for item in ocr_reading_buffer
+    ):
+        # A new plate candidate starts a new vehicle vote window.
+        ocr_reading_buffer.clear()
+
+    reading = {"metadata": metadata, "normalized": normalized, "time": now}
+    ocr_reading_buffer.append(reading)
+    del ocr_reading_buffer[:-OCR_BUFFER_SIZE]
+
+    matching = [
+        item
+        for item in ocr_reading_buffer
+        if _plate_distance(normalized, item["normalized"]) <= 1
+    ]
+    weighted_confidence = sum(
+        float(item["metadata"].get("confidence", 0.0)) for item in matching
+    )
+
+    if len(matching) < OCR_AGREEMENT_REQUIRED or weighted_confidence < 1.5:
+        return None
+
+    best = max(
+        matching,
+        key=lambda item: float(item["metadata"].get("confidence", 0.0)),
+    )["metadata"]
+    accepted_plate_metadata = best
+    accepted_plate_time = now
+    ocr_reading_buffer.clear()
+    return best
+
+
 # ============================================================
 # Decode Browser Image
 # ============================================================
@@ -445,6 +530,7 @@ def read_plate(plate_crop):
 def detect_plate(image_base64: str):
 
     global current_fps
+    global last_plate_detection_time
 
     frame = decode_image(image_base64)
 
@@ -504,6 +590,13 @@ def detect_plate(image_base64: str):
 
     if best_box is None:
 
+        if (
+            last_plate_detection_time
+            and time.monotonic() - last_plate_detection_time > OCR_BUFFER_TTL_SECONDS
+        ):
+            _clear_ocr_state()
+            last_plate_detection_time = 0.0
+
         return {
             "detected": False,
             "license_plate": None,
@@ -517,6 +610,8 @@ def detect_plate(image_base64: str):
     # ========================================================
     # Bounding box
     # ========================================================
+
+    last_plate_detection_time = time.monotonic()
 
     x1, y1, x2, y2 = map(
         int,
@@ -596,31 +691,13 @@ def detect_plate(image_base64: str):
     # from your original plate_detector.py.
     # ========================================================
 
-    ocr_results = []
+    if accepted_plate_metadata is not None:
+        plate_metadata = accepted_plate_metadata
+    else:
+        ocr_result = read_plate(plate_crop)
+        plate_metadata = _vote_for_plate(ocr_result) if ocr_result else None
 
-    for _ in range(OCR_READINGS_REQUIRED):
-
-        plate = read_plate(plate_crop)
-
-        if plate:
-
-            ocr_results.append(plate)
-
-    # ========================================================
-    # Majority vote
-    # ========================================================
-
-    recognized_plate = None
-    plate_metadata = None
-
-    if ocr_results:
-
-        counts = Counter(result["plate"] for result in ocr_results)
-
-        recognized_plate = counts.most_common(1)[0][0]
-        plate_metadata = next(
-            result for result in ocr_results if result["plate"] == recognized_plate
-        )
+    recognized_plate = plate_metadata["plate"] if plate_metadata else None
 
     # ========================================================
     # Encode crop
