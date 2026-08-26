@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import cv2
 import numpy as np
+from dotenv import load_dotenv
 
 from collections import Counter
 
@@ -23,6 +24,8 @@ try:
 except ImportError:
     boto3 = None
     BotoCoreError = ClientError = Exception
+
+load_dotenv(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.env")))
 
 # ============================================================
 # Configuration
@@ -390,7 +393,12 @@ def _upload_accepted_frame(frame, metadata):
     endpoint_url = os.getenv("AWS_ENDPOINT_URL_S3")
     region = os.getenv("AWS_REGION")
 
-    if not boto3 or not bucket or not endpoint_url:
+    if not boto3:
+        print("Accepted-frame upload skipped: boto3 is not installed")
+        return
+
+    if not bucket or not endpoint_url:
+        print("Accepted-frame upload skipped: S3 configuration is incomplete")
         return
 
     success, encoded_frame = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
@@ -418,6 +426,7 @@ def _upload_accepted_frame(frame, metadata):
             Body=encoded_frame.tobytes(),
             ContentType="image/jpeg",
         )
+        print(f"Accepted frame uploaded: {object_key}")
     except (BotoCoreError, ClientError, OSError) as error:
         print(f"Accepted-frame upload failed: {error.__class__.__name__}")
 
