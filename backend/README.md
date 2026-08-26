@@ -68,27 +68,6 @@ You will be prompted for:
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-## Test S3 Image Storage
-
-Add the storage bucket name to `.env` before starting the backend:
-
-```env
-AWS_S3_BUCKET=your_bucket_name
-```
-
-Start the backend, open `http://localhost:8000/docs`, and call
-`POST /storage/test` with a small image file. The endpoint uploads the image,
-downloads it, compares the bytes, and deletes the temporary object.
-
-You can also call it from PowerShell:
-
-```powershell
-curl.exe -X POST http://localhost:8000/storage/test -F "image=@test_plate.jpg"
-```
-
-The successful response contains `bytes_match: true`. Credentials are not
-returned, and the temporary test object is deleted after the check.
-
 ## API Documentation
 
 Open the Swagger UI:

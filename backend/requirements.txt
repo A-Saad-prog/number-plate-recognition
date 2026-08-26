@@ -4,7 +4,6 @@ uvicorn==0.52.1
 SQLAlchemy==2.0.52
 psycopg2-binary==2.9.12
 python-dotenv==1.2.2
-boto3==1.42.35
 PyJWT==2.10.1
 pwdlib[argon2]==0.2.1
 
