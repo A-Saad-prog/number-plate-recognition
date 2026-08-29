@@ -29,6 +29,34 @@ function AdminPage() {
     const [whitelistLoading, setWhitelistLoading] = useState(false);
     const [whitelistError, setWhitelistError] = useState("");
     const [whitelistMessage, setWhitelistMessage] = useState("");
+    const [garageSettings, setGarageSettings] = useState(() => {
+        try {
+            const saved = localStorage.getItem("garage_settings");
+            return saved ? JSON.parse(saved) : {
+                garage_name: "Parking OS",
+                hourly_rate: 120,
+                grace_period_minutes: 15,
+                maintenance_mode: false,
+                operating_hours: "24/7",
+                levels: [],
+                spaces_per_level: "",
+            };
+        } catch {
+            return {
+                garage_name: "Parking OS",
+                hourly_rate: 120,
+                grace_period_minutes: 15,
+                maintenance_mode: false,
+                operating_hours: "24/7",
+                levels: [],
+                spaces_per_level: "",
+            };
+        }
+    });
+    const [garageSettingsMessage, setGarageSettingsMessage] = useState("");
+    const [garageSettingsMessageType, setGarageSettingsMessageType] = useState("success");
+    const [advancedGarageSettings, setAdvancedGarageSettings] = useState(false);
+    const [confirmationOpen, setConfirmationOpen] = useState(false);
 
     useEffect(() => {
         if (!token) return;
@@ -144,6 +172,108 @@ function AdminPage() {
         }
     }
 
+    useEffect(() => {
+        localStorage.setItem("garage_settings", JSON.stringify(garageSettings));
+    }, [garageSettings]);
+
+    function handleGarageSettingChange(field, value) {
+        setGarageSettings((current) => ({
+            ...current,
+            [field]: value,
+        }));
+    }
+
+    function updateLevelCount(nextLevelCount) {
+        const cleanedValue = nextLevelCount.replace(/[^\d]/g, "");
+
+        setGarageSettings((current) => {
+            if (!cleanedValue) {
+                return {
+                    ...current,
+                    levels: [],
+                };
+            }
+
+            const numericCount = Math.min(12, Math.max(1, Number(cleanedValue) || 1));
+            const existingLevels = current.levels || [];
+            const nextLevels = Array.from({ length: numericCount }, (_, index) => {
+                const levelNumber = index + 1;
+                const existingLevel = existingLevels[index] || existingLevels.find((level) => level.id === levelNumber);
+                const masterSpaces = current.spaces_per_level;
+                const resolvedSpaces = masterSpaces === "" ? (existingLevel?.spaces ?? "") : Number(masterSpaces) || existingLevel?.spaces || "";
+
+                return {
+                    id: levelNumber,
+                    name: existingLevel?.name || `Level ${levelNumber}`,
+                    spaces: resolvedSpaces,
+                };
+            });
+
+            return {
+                ...current,
+                levels: nextLevels,
+            };
+        });
+    }
+
+    function applySpacesToAllLevels(nextSpacesValue) {
+        const cleanedValue = nextSpacesValue.replace(/[^\d]/g, "");
+
+        setGarageSettings((current) => ({
+            ...current,
+            spaces_per_level: cleanedValue,
+            levels: (current.levels || []).map((level) => ({
+                ...level,
+                spaces: cleanedValue === "" ? "" : Number(cleanedValue),
+            })),
+        }));
+    }
+
+    function updateLevel(index, field, value) {
+        setGarageSettings((current) => ({
+            ...current,
+            levels: (current.levels || []).map((level, levelIndex) => {
+                if (levelIndex !== index) return level;
+                return {
+                    ...level,
+                    [field]: field === "spaces" ? (value === "" ? "" : Math.max(1, Number(value) || 1)) : value,
+                };
+            }),
+        }));
+    }
+
+    function handleGarageSettingsApply(event) {
+        event.preventDefault();
+        const spacesPerLevel = garageSettings.spaces_per_level;
+
+        if (!spacesPerLevel || Number(spacesPerLevel) <= 0) {
+            setGarageSettingsMessageType("warning");
+            setGarageSettingsMessage("Warning: enter a valid number of spaces per level before applying.");
+            setConfirmationOpen(false);
+            return;
+        }
+
+        setGarageSettingsMessageType("success");
+        setGarageSettingsMessage("");
+        setConfirmationOpen(true);
+    }
+
+    function confirmGarageSettings() {
+        const levelCount = garageSettings.levels?.length || 0;
+        const spacesPerLevel = garageSettings.spaces_per_level;
+
+        if (!levelCount || !spacesPerLevel || Number(spacesPerLevel) <= 0) {
+            setGarageSettingsMessageType("warning");
+            setGarageSettingsMessage("Warning: enter a valid number of spaces per level before applying.");
+            setConfirmationOpen(false);
+            return;
+        }
+
+        setGarageSettingsMessageType("success");
+        setGarageSettingsMessage("Garage layout applied successfully.");
+        setConfirmationOpen(false);
+    }
+
     if (loading) return <main className="admin-shell admin-loading">Checking session...</main>;
 
     if (token) {
@@ -159,13 +289,14 @@ function AdminPage() {
                         <button type="button" className={`sidebar-feature ${activeFeature === "whitelist" ? "active" : ""}`} onClick={() => { setActiveFeature(activeFeature === "whitelist" ? null : "whitelist"); setWhitelistError(""); }}>
                             <span className="feature-number">01</span><span>Whitelist</span><span className="feature-arrow">{activeFeature === "whitelist" ? "−" : "+"}</span>
                         </button>
-                        <div className="sidebar-muted"><span>02</span><span>Operations</span><small>Coming soon</small></div>
-                        <div className="sidebar-muted"><span>03</span><span>Reports</span><small>Coming soon</small></div>
+                        <button type="button" className={`sidebar-feature ${activeFeature === "garage-settings" ? "active" : ""}`} onClick={() => setActiveFeature(activeFeature === "garage-settings" ? null : "garage-settings")}>
+                            <span className="feature-number">02</span><span>Garage Settings</span><span className="feature-arrow">{activeFeature === "garage-settings" ? "−" : "+"}</span>
+                        </button>
+                        <div className="sidebar-muted"><span>03</span><span>Operations</span><small>Coming soon</small></div>
+                        <div className="sidebar-muted"><span>04</span><span>Reports</span><small>Coming soon</small></div>
                     </aside>
                     <section className="admin-dashboard">
-                        {activeFeature !== "whitelist" ? (
-                            <><p className="admin-label">Admin workspace</p><h1>Welcome back,<br /><span>{adminName}.</span></h1><div className="admin-status"><b /> System online</div><p className="admin-message">Select a feature from the sidebar to manage your garage.</p></>
-                        ) : (
+                        {activeFeature === "whitelist" ? (
                             <div className="whitelist-view">
                                 <p className="admin-label">Feature 01 / Access pricing</p>
                                 <h1>Vehicle<br /><span>whitelist.</span></h1>
@@ -179,6 +310,112 @@ function AdminPage() {
                                 <button type="button" className="show-list-button" onClick={showWhitelist} disabled={whitelistLoading}>{whitelistVisible ? "Hide list" : "Show list"} <span>{whitelistLoading ? "..." : whitelistVisible ? "↑" : "↓"}</span></button>
                                 {whitelistVisible && whitelist.length > 0 && <div className="whitelist-table-wrap"><table><thead><tr><th>Name</th><th>Number plate</th><th>Discount</th><th>Added</th></tr></thead><tbody>{whitelist.map((entry) => <tr key={entry.id}><td>{entry.vehicle_name}</td><td>{entry.license_plate}</td><td>{entry.discount_percent}%</td><td>{entry.created_at ? new Date(entry.created_at).toLocaleDateString("en-PK", { timeZone: "Asia/Karachi" }) : "-"}</td></tr>)}</tbody></table></div>}
                             </div>
+                        ) : activeFeature === "garage-settings" ? (
+                            <div className="garage-settings-view">
+                                <p className="admin-label">Feature 02 / Parking layout</p>
+                                <h1>Garage<br /><span>layout.</span></h1>
+                                <p className="admin-message">Set up the structure of your parking garage, then fine-tune each level with custom names and space counts.</p>
+
+                                <form className="garage-settings-form" onSubmit={handleGarageSettingsApply}>
+                                    <div className="level-config-block">
+                                        <div className="level-config-header">
+                                            <label className="level-count-field">
+                                                <span>Levels</span>
+                                                <input
+                                                    type="text"
+                                                    inputMode="numeric"
+                                                    pattern="[0-9]*"
+                                                    value={garageSettings.levels?.length ? String(garageSettings.levels.length) : ""}
+                                                    onChange={(event) => updateLevelCount(event.target.value)}
+                                                />
+                                            </label>
+                                            <span className="level-config-divider">•</span>
+                                            <label className="level-count-field">
+                                                <span>Spaces per level</span>
+                                                <input
+                                                    type="text"
+                                                    inputMode="numeric"
+                                                    pattern="[0-9]*"
+                                                    value={garageSettings.spaces_per_level}
+                                                    onChange={(event) => {
+                                                        const nextSpaces = event.target.value;
+                                                        if (advancedGarageSettings) {
+                                                            applySpacesToAllLevels(nextSpaces);
+                                                            return;
+                                                        }
+
+                                                        setGarageSettings((current) => ({
+                                                            ...current,
+                                                            spaces_per_level: nextSpaces.replace(/[^\d]/g, ""),
+                                                        }));
+                                                    }}
+                                                />
+                                            </label>
+                                        </div>
+                                    </div>
+
+                                    {advancedGarageSettings && (
+                                        <div className="advanced-level-editor">
+                                            <h4>Advanced floor editor</h4>
+                                            <p className="advanced-hint">Rename each floor and set the exact number of spaces for that level.</p>
+                                            {(garageSettings.levels || []).map((level, index) => (
+                                                <div key={level.id || index} className="advanced-level-row">
+                                                    <label>
+                                                        <span>Level name</span>
+                                                        <input value={level.name} onChange={(event) => updateLevel(index, "name", event.target.value)} />
+                                                    </label>
+                                                    <label>
+                                                        <span>Spaces</span>
+                                                        <input type="text" inputMode="numeric" pattern="[0-9]*" value={level.spaces ?? ""} onChange={(event) => updateLevel(index, "spaces", event.target.value.replace(/[^\d]/g, ""))} />
+                                                    </label>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+
+                                    {garageSettingsMessage && (
+                                        <p className={garageSettingsMessageType === "warning" ? "admin-error whitelist-feedback" : "whitelist-success"}>{garageSettingsMessage}</p>
+                                    )}
+
+                                    <div className="settings-actions">
+                                        <button type="submit" className="settings-save-button">Apply <span>→</span></button>
+                                        <button
+                                            type="button"
+                                            className="advanced-button"
+                                            onClick={() => {
+                                                setAdvancedGarageSettings((current) => {
+                                                    const nextState = !current;
+
+                                                    if (nextState) {
+                                                        const nextSpaces = garageSettings.spaces_per_level || "";
+                                                        applySpacesToAllLevels(nextSpaces);
+                                                    }
+
+                                                    return nextState;
+                                                });
+                                            }}
+                                        >
+                                            Advanced
+                                        </button>
+                                    </div>
+                                </form>
+
+                                {confirmationOpen && (
+                                    <div className="confirmation-overlay" onClick={() => setConfirmationOpen(false)}>
+                                        <div className="confirmation-dialog" onClick={(event) => event.stopPropagation()}>
+                                            <h3>Confirm garage layout</h3>
+                                            <p><strong>Levels:</strong> {garageSettings.levels?.length || 0}</p>
+                                            <p><strong>Spaces per level:</strong> {garageSettings.spaces_per_level || 0}</p>
+                                            <div className="confirmation-actions">
+                                                <button type="button" className="confirmation-cancel" onClick={() => setConfirmationOpen(false)}>Cancel</button>
+                                                <button type="button" className="confirmation-confirm" onClick={confirmGarageSettings}>Confirm</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        ) : (
+                            <><p className="admin-label">Admin workspace</p><h1>Welcome back,<br /><span>{adminName}.</span></h1><div className="admin-status"><b /> System online</div><p className="admin-message">Select a feature from the sidebar to manage your garage.</p></>
                         )}
                     </section>
                 </div>
