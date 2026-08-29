@@ -2,45 +2,21 @@ const API_BASE_URL =
     import.meta.env.VITE_API_BASE_URL ||
     "http://127.0.0.1:8000";
 
-function formatErrorDetail(detail) {
-    if (typeof detail === "string") {
-        return detail;
-    }
-
-    if (Array.isArray(detail)) {
-        return detail
-            .map((item) => {
-                if (typeof item === "string") {
-                    return item;
-                }
-
-                return item.msg || JSON.stringify(item);
-            })
-            .join("; ");
-    }
-
-    if (detail && typeof detail === "object") {
-        return detail.msg || JSON.stringify(detail);
-    }
-
-    return "";
-}
-
 
 // ============================================================
-// Parking
+// Get Available Parking Space
 // ============================================================
 
-export async function getParkingSpaces() {
+export async function getAvailableSpace() {
 
     const response = await fetch(
-        `${API_BASE_URL}/parking/spaces`
+        `${API_BASE_URL}/parking/available-space`
     );
 
     if (!response.ok) {
 
         throw new Error(
-            `Failed to get parking spaces: ${response.status}`
+            `Failed to get available parking space: ${response.status}`
         );
 
     }
@@ -49,19 +25,92 @@ export async function getParkingSpaces() {
 }
 
 
-export async function registerEntry(
-    licensePlate,
-    parkingSpaceId
-) {
-    const requestStartedAt = performance.now();
+// ============================================================
+// Get Latest Detected License Plate
+// ============================================================
 
-    const body = {
-        license_plate: licensePlate,
-    };
+export async function getDetectedPlate() {
 
-    if (parkingSpaceId !== null && parkingSpaceId !== undefined) {
-        body.parking_space_id = parkingSpaceId;
+    const response = await fetch(
+        `${API_BASE_URL}/parking/detected-plate`
+    );
+
+    if (!response.ok) {
+
+        throw new Error(
+            `Failed to get detected plate: ${response.status}`
+        );
+
     }
+
+    return await response.json();
+}
+
+
+// ============================================================
+// Get Parking Spaces
+// ============================================================
+
+export async function getParkingSpaces() {
+
+    const response = await fetch(
+        `${API_BASE_URL}/parking/spaces`
+    );
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+
+        throw new Error(
+            data.error || `Failed to get parking spaces: ${response.status}`
+        );
+
+    }
+
+    return data;
+}
+
+
+// ============================================================
+// Detect Plate from Camera Frame
+// ============================================================
+
+export async function detectPlateFromFrame(imageDataUrl) {
+
+    const response = await fetch(
+        `${API_BASE_URL}/vision/detect-plate`,
+        {
+            method: "POST",
+
+            headers: {
+                "Content-Type": "application/json",
+            },
+
+            body: JSON.stringify({
+                image: imageDataUrl,
+            }),
+        }
+    );
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+
+        throw new Error(
+            data.detail || `Failed to detect plate: ${response.status}`
+        );
+
+    }
+
+    return data;
+}
+
+
+// ============================================================
+// Register Vehicle Entry
+// ============================================================
+
+export async function registerEntry(licensePlate) {
 
     const response = await fetch(
         `${API_BASE_URL}/parking/entry`,
@@ -72,28 +121,16 @@ export async function registerEntry(
                 "Content-Type": "application/json",
             },
 
-            body: JSON.stringify(body),
+            body: JSON.stringify({
+                license_plate: licensePlate,
+            }),
         }
     );
 
-    const apiLatencyMs = performance.now() - requestStartedAt;
-    console.log("[API latency]", {
-        endpoint: "/parking/entry",
-        status: response.status,
-        durationMs: apiLatencyMs,
-    });
-
     if (!response.ok) {
 
-        const errorBody = await response.json().catch(() => ({}));
-        const detail = formatErrorDetail(
-            errorBody.detail || errorBody.error
-        );
-
         throw new Error(
-            detail
-                ? `Failed to register vehicle entry: ${detail}`
-                : `Failed to register vehicle entry: ${response.status}`
+            `Failed to register vehicle entry: ${response.status}`
         );
 
     }
@@ -102,14 +139,14 @@ export async function registerEntry(
 }
 
 
-export async function exitUsingPlate(
-    licensePlate,
-    paymentMethod
-) {
-    const requestStartedAt = performance.now();
+// ============================================================
+// Exit Using License Plate
+// ============================================================
+
+export async function exitUsingPlate(licensePlate) {
 
     const response = await fetch(
-        `${API_BASE_URL}/parking/exit`,
+        `${API_BASE_URL}/parking/exit/plate`,
         {
             method: "POST",
 
@@ -119,17 +156,9 @@ export async function exitUsingPlate(
 
             body: JSON.stringify({
                 license_plate: licensePlate,
-                payment_method: paymentMethod,
             }),
         }
     );
-
-    const apiLatencyMs = performance.now() - requestStartedAt;
-    console.log("[API latency]", {
-        endpoint: "/parking/exit",
-        status: response.status,
-        durationMs: apiLatencyMs,
-    });
 
     if (!response.ok) {
 
@@ -144,14 +173,13 @@ export async function exitUsingPlate(
 
 
 // ============================================================
-// Vision
+// Exit Using QR Code
 // ============================================================
 
-export async function detectPlateFromFrame(image) {
-    const requestStartedAt = performance.now();
+export async function exitUsingQR(qrCode) {
 
     const response = await fetch(
-        `${API_BASE_URL}/vision/detect-plate`,
+        `${API_BASE_URL}/parking/exit/qr`,
         {
             method: "POST",
 
@@ -160,22 +188,15 @@ export async function detectPlateFromFrame(image) {
             },
 
             body: JSON.stringify({
-                image,
+                qr_code: qrCode,
             }),
         }
     );
 
-    const apiLatencyMs = performance.now() - requestStartedAt;
-    console.log("[Vision API latency]", {
-        endpoint: "/vision/detect-plate",
-        status: response.status,
-        durationMs: apiLatencyMs,
-    });
-
     if (!response.ok) {
 
         throw new Error(
-            `Vision API returned ${response.status}`
+            `Failed to process QR exit: ${response.status}`
         );
 
     }
@@ -184,78 +205,94 @@ export async function detectPlateFromFrame(image) {
 }
 
 
-export async function loginAdmin(username, password) {
-    const response = await fetch(
-        `${API_BASE_URL}/admin/login`,
-        {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ username, password }),
-        }
-    );
+// ============================================================
+// Admin Authentication and Whitelist Management
+// ============================================================
 
-    const body = await response.json().catch(() => ({}));
+export async function loginAdmin(username, password) {
+    const response = await fetch(`${API_BASE_URL}/admin/login`, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ username, password }),
+    });
+
+    const data = await response.json().catch(() => ({}));
+
     if (!response.ok) {
-        throw new Error(formatErrorDetail(body.detail) || "Invalid username or password.");
+        throw new Error(data.detail || `Login failed: ${response.status}`);
     }
 
-    return body;
+    return data;
 }
-
 
 export async function getAdminSession(token) {
-    const response = await fetch(
-        `${API_BASE_URL}/admin/me`,
-        {
-            headers: {
-                Authorization: `Bearer ${token}`,
-            },
-        }
-    );
+    const response = await fetch(`${API_BASE_URL}/admin/me`, {
+        headers: {
+            Authorization: `Bearer ${token}`,
+        },
+    });
+
+    const data = await response.json().catch(() => ({}));
 
     if (!response.ok) {
-        throw new Error("Your admin session has expired.");
+        throw new Error(data.detail || `Failed to get admin session: ${response.status}`);
     }
 
-    return await response.json();
+    return data;
 }
 
+export async function getWhitelist(token) {
+    const response = await fetch(`${API_BASE_URL}/admin/whitelist`, {
+        headers: {
+            Authorization: `Bearer ${token}`,
+        },
+    });
 
-async function adminRequest(path, token, options = {}) {
-    const response = await fetch(`${API_BASE_URL}${path}`, {
-        ...options,
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+        throw new Error(data.detail || `Failed to get whitelist: ${response.status}`);
+    }
+
+    return data;
+}
+
+export async function addWhitelistEntry(token, entry) {
+    const response = await fetch(`${API_BASE_URL}/admin/whitelist`, {
+        method: "POST",
         headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${token}`,
-            ...(options.headers || {}),
         },
-    });
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) {
-        throw new Error(formatErrorDetail(body.detail) || "Admin request failed.");
-    }
-    return body;
-}
-
-
-export function getWhitelist(token) {
-    return adminRequest("/admin/whitelist", token);
-}
-
-
-export function addWhitelistEntry(token, entry) {
-    return adminRequest("/admin/whitelist", token, {
-        method: "POST",
         body: JSON.stringify(entry),
     });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+        throw new Error(data.detail || `Failed to add whitelist entry: ${response.status}`);
+    }
+
+    return data;
 }
 
-
-export function removeWhitelistEntry(token, search) {
-    return adminRequest("/admin/whitelist", token, {
+export async function removeWhitelistEntry(token, search) {
+    const response = await fetch(`${API_BASE_URL}/admin/whitelist`, {
         method: "DELETE",
+        headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({ search }),
     });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+        throw new Error(data.detail || `Failed to remove whitelist entry: ${response.status}`);
+    }
+
+    return data;
 }
