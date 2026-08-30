@@ -55,8 +55,49 @@ function AdminPage() {
     });
     const [garageSettingsMessage, setGarageSettingsMessage] = useState("");
     const [garageSettingsMessageType, setGarageSettingsMessageType] = useState("success");
+    const [garageErrors, setGarageErrors] = useState({
+        levels: "",
+        spaces_per_level: "",
+    });
+    const [cameraConfig, setCameraConfig] = useState(() => {
+        try {
+            const saved = localStorage.getItem("camera_config");
+            return saved ? JSON.parse(saved) : {
+                entry_lane_cameras: "",
+                exit_lane_cameras: "",
+            };
+        } catch {
+            return {
+                entry_lane_cameras: "",
+                exit_lane_cameras: "",
+            };
+        }
+    });
+    const [cameraErrors, setCameraErrors] = useState({
+        entry_lane_cameras: "",
+        exit_lane_cameras: "",
+    });
+    const [cameraMessage, setCameraMessage] = useState("");
+    const [cameraMessageType, setCameraMessageType] = useState("success");
     const [advancedGarageSettings, setAdvancedGarageSettings] = useState(false);
     const [confirmationOpen, setConfirmationOpen] = useState(false);
+    const [billingConfig, setBillingConfig] = useState(() => {
+        try {
+            const saved = localStorage.getItem("billing_config");
+            return saved ? JSON.parse(saved) : {
+                payments_enabled: false,
+                cash_enabled: false,
+                card_enabled: false,
+            };
+        } catch {
+            return {
+                payments_enabled: false,
+                cash_enabled: false,
+                card_enabled: false,
+            };
+        }
+    });
+    const [billingMessage, setBillingMessage] = useState("");
 
     useEffect(() => {
         if (!token) return;
@@ -176,6 +217,89 @@ function AdminPage() {
         localStorage.setItem("garage_settings", JSON.stringify(garageSettings));
     }, [garageSettings]);
 
+    useEffect(() => {
+        localStorage.setItem("camera_config", JSON.stringify(cameraConfig));
+    }, [cameraConfig]);
+
+    useEffect(() => {
+        localStorage.setItem("billing_config", JSON.stringify(billingConfig));
+    }, [billingConfig]);
+
+    function validateCameraField(field, value) {
+        if (value === "") {
+            return "This field is required.";
+        }
+
+        const numericValue = Number(value);
+        if (!Number.isInteger(numericValue) || numericValue < 1 || numericValue > 4) {
+            return "Please enter a value between 1 and 4.";
+        }
+
+        return "";
+    }
+
+    function handleCameraConfigChange(field, value) {
+        const nextValue = value.replace(/[^\d]/g, "");
+        setCameraConfig((current) => ({
+            ...current,
+            [field]: nextValue,
+        }));
+
+        const errorMessage = validateCameraField(field, nextValue);
+        setCameraErrors((current) => ({
+            ...current,
+            [field]: nextValue === "" ? "This field is required." : errorMessage,
+        }));
+
+        if (nextValue === "0") {
+            setCameraErrors((current) => ({
+                ...current,
+                [field]: "Please enter a value between 1 and 4.",
+            }));
+        }
+
+        if (errorMessage === "") {
+            setCameraMessage("");
+        }
+    }
+
+    function handleCameraConfigSubmit(event) {
+        event.preventDefault();
+        const nextErrors = {
+            entry_lane_cameras: validateCameraField("entry_lane_cameras", cameraConfig.entry_lane_cameras),
+            exit_lane_cameras: validateCameraField("exit_lane_cameras", cameraConfig.exit_lane_cameras),
+        };
+
+        setCameraErrors(nextErrors);
+
+        const hasError = Object.values(nextErrors).some((message) => Boolean(message));
+        if (hasError) {
+            setCameraMessageType("warning");
+            setCameraMessage("Please fix the camera lane errors before saving.");
+            return;
+        }
+
+        setCameraMessageType("success");
+        setCameraMessage("Camera allocation saved successfully.");
+    }
+
+    function handleBillingToggle(field) {
+        setBillingConfig((current) => {
+            const nextConfig = { ...current, [field]: !current[field] };
+            if (!nextConfig.payments_enabled) {
+                nextConfig.cash_enabled = false;
+                nextConfig.card_enabled = false;
+            }
+            return nextConfig;
+        });
+    }
+
+    function handleBillingApply(event) {
+        event.preventDefault();
+        setBillingMessage("Billing settings applied successfully.");
+        setTimeout(() => setBillingMessage(""), 3000);
+    }
+
     function handleGarageSettingChange(field, value) {
         setGarageSettings((current) => ({
             ...current,
@@ -183,8 +307,31 @@ function AdminPage() {
         }));
     }
 
+    function validateGarageField(field, value) {
+        if (value === "") {
+            return "This field is required.";
+        }
+
+        const numericValue = Number(value);
+        if (numericValue === 0) {
+            return "This field cannot be zero.";
+        }
+
+        if (!Number.isInteger(numericValue) || numericValue < 1) {
+            return "Please enter a valid positive number.";
+        }
+
+        return "";
+    }
+
     function updateLevelCount(nextLevelCount) {
         const cleanedValue = nextLevelCount.replace(/[^\d]/g, "");
+
+        const errorMessage = validateGarageField("levels", cleanedValue);
+        setGarageErrors((current) => ({
+            ...current,
+            levels: errorMessage,
+        }));
 
         setGarageSettings((current) => {
             if (!cleanedValue) {
@@ -219,6 +366,12 @@ function AdminPage() {
     function applySpacesToAllLevels(nextSpacesValue) {
         const cleanedValue = nextSpacesValue.replace(/[^\d]/g, "");
 
+        const errorMessage = validateGarageField("spaces_per_level", cleanedValue);
+        setGarageErrors((current) => ({
+            ...current,
+            spaces_per_level: errorMessage,
+        }));
+
         setGarageSettings((current) => ({
             ...current,
             spaces_per_level: cleanedValue,
@@ -244,11 +397,20 @@ function AdminPage() {
 
     function handleGarageSettingsApply(event) {
         event.preventDefault();
+        const levelCount = garageSettings.levels?.length || 0;
         const spacesPerLevel = garageSettings.spaces_per_level;
 
-        if (!spacesPerLevel || Number(spacesPerLevel) <= 0) {
+        const nextErrors = {
+            levels: validateGarageField("levels", levelCount ? String(levelCount) : ""),
+            spaces_per_level: validateGarageField("spaces_per_level", spacesPerLevel),
+        };
+
+        setGarageErrors(nextErrors);
+
+        const hasError = Object.values(nextErrors).some((message) => Boolean(message));
+        if (hasError) {
             setGarageSettingsMessageType("warning");
-            setGarageSettingsMessage("Warning: enter a valid number of spaces per level before applying.");
+            setGarageSettingsMessage("Please fix the errors before applying.");
             setConfirmationOpen(false);
             return;
         }
@@ -292,13 +454,16 @@ function AdminPage() {
                         <button type="button" className={`sidebar-feature ${activeFeature === "garage-settings" ? "active" : ""}`} onClick={() => setActiveFeature(activeFeature === "garage-settings" ? null : "garage-settings")}>
                             <span className="feature-number">02</span><span>Garage Settings</span><span className="feature-arrow">{activeFeature === "garage-settings" ? "−" : "+"}</span>
                         </button>
-                        <div className="sidebar-muted"><span>03</span><span>Operations</span><small>Coming soon</small></div>
-                        <div className="sidebar-muted"><span>04</span><span>Reports</span><small>Coming soon</small></div>
+                        <button type="button" className={`sidebar-feature ${activeFeature === "camera-config" ? "active" : ""}`} onClick={() => setActiveFeature(activeFeature === "camera-config" ? null : "camera-config")}>
+                            <span className="feature-number">03</span><span>Camera Setup</span><span className="feature-arrow">{activeFeature === "camera-config" ? "−" : "+"}</span>
+                        </button>
+                        <button type="button" className={`sidebar-feature ${activeFeature === "billing" ? "active" : ""}`} onClick={() => setActiveFeature(activeFeature === "billing" ? null : "billing")}>
+                            <span className="feature-number">04</span><span>Billing</span><span className="feature-arrow">{activeFeature === "billing" ? "−" : "+"}</span>
+                        </button>
                     </aside>
                     <section className="admin-dashboard">
                         {activeFeature === "whitelist" ? (
-                            <div className="whitelist-view">
-                                <p className="admin-label">Feature 01 / Access pricing</p>
+                            <div className="feature-view">
                                 <h1>Vehicle<br /><span>whitelist.</span></h1>
                                 <p className="admin-message">Give trusted vehicles a custom discount at checkout.</p>
                                 <div className="whitelist-actions">
@@ -311,15 +476,14 @@ function AdminPage() {
                                 {whitelistVisible && whitelist.length > 0 && <div className="whitelist-table-wrap"><table><thead><tr><th>Name</th><th>Number plate</th><th>Discount</th><th>Added</th></tr></thead><tbody>{whitelist.map((entry) => <tr key={entry.id}><td>{entry.vehicle_name}</td><td>{entry.license_plate}</td><td>{entry.discount_percent}%</td><td>{entry.created_at ? new Date(entry.created_at).toLocaleDateString("en-PK", { timeZone: "Asia/Karachi" }) : "-"}</td></tr>)}</tbody></table></div>}
                             </div>
                         ) : activeFeature === "garage-settings" ? (
-                            <div className="garage-settings-view">
-                                <p className="admin-label">Feature 02 / Parking layout</p>
+                            <div className="feature-view">
                                 <h1>Garage<br /><span>layout.</span></h1>
                                 <p className="admin-message">Set up the structure of your parking garage, then fine-tune each level with custom names and space counts.</p>
 
                                 <form className="garage-settings-form" onSubmit={handleGarageSettingsApply}>
                                     <div className="level-config-block">
                                         <div className="level-config-header">
-                                            <label className="level-count-field">
+                                            <label className="level-count-field garage-field-group">
                                                 <span>Levels</span>
                                                 <input
                                                     type="text"
@@ -328,9 +492,11 @@ function AdminPage() {
                                                     value={garageSettings.levels?.length ? String(garageSettings.levels.length) : ""}
                                                     onChange={(event) => updateLevelCount(event.target.value)}
                                                 />
+                                                <small className="admin-error whitelist-feedback error-space">
+                                                    {garageErrors.levels || "\u00A0"}
+                                                </small>
                                             </label>
-                                            <span className="level-config-divider">•</span>
-                                            <label className="level-count-field">
+                                            <label className="level-count-field garage-field-group">
                                                 <span>Spaces per level</span>
                                                 <input
                                                     type="text"
@@ -344,12 +510,21 @@ function AdminPage() {
                                                             return;
                                                         }
 
+                                                        const cleanedValue = nextSpaces.replace(/[^\d]/g, "");
+                                                        const errorMessage = validateGarageField("spaces_per_level", cleanedValue);
+                                                        setGarageErrors((current) => ({
+                                                            ...current,
+                                                            spaces_per_level: errorMessage,
+                                                        }));
                                                         setGarageSettings((current) => ({
                                                             ...current,
-                                                            spaces_per_level: nextSpaces.replace(/[^\d]/g, ""),
+                                                            spaces_per_level: cleanedValue,
                                                         }));
                                                     }}
                                                 />
+                                                <small className="admin-error whitelist-feedback error-space">
+                                                    {garageErrors.spaces_per_level || "\u00A0"}
+                                                </small>
                                             </label>
                                         </div>
                                     </div>
@@ -413,6 +588,92 @@ function AdminPage() {
                                         </div>
                                     </div>
                                 )}
+                            </div>
+                        ) : activeFeature === "camera-config" ? (
+                            <div className="feature-view">
+                                <h1>Entry & exit<br /><span>camera setup.</span></h1>
+                                <p className="admin-message">Set the number of cameras for each lane. Each lane must have 1–4 cameras.</p>
+
+                                <form className="garage-settings-form" onSubmit={handleCameraConfigSubmit}>
+                                    <div className="level-config-block">
+                                        <div className="level-config-header">
+                                            <label className="level-count-field camera-field-group">
+                                                <span>Entry lane cameras</span>
+                                                <input
+                                                    className="camera-input"
+                                                    type="text"
+                                                    inputMode="numeric"
+                                                    pattern="[0-9]*"
+                                                    value={cameraConfig.entry_lane_cameras}
+                                                    onChange={(event) => handleCameraConfigChange("entry_lane_cameras", event.target.value)}
+                                                    required
+                                                />
+                                                <small className="admin-error whitelist-feedback error-space">
+                                                    {cameraErrors.entry_lane_cameras || "\u00A0"}
+                                                </small>
+                                            </label>
+                                            <label className="level-count-field camera-field-group">
+                                                <span>Exit lane cameras</span>
+                                                <input
+                                                    className="camera-input"
+                                                    type="text"
+                                                    inputMode="numeric"
+                                                    pattern="[0-9]*"
+                                                    value={cameraConfig.exit_lane_cameras}
+                                                    onChange={(event) => handleCameraConfigChange("exit_lane_cameras", event.target.value)}
+                                                    required
+                                                />
+                                                <small className="admin-error whitelist-feedback error-space">
+                                                    {cameraErrors.exit_lane_cameras || "\u00A0"}
+                                                </small>
+                                            </label>
+                                        </div>
+                                    </div>
+
+                                    {cameraMessage && (
+                                        <p className={cameraMessageType === "warning" ? "admin-error whitelist-feedback" : "whitelist-success"}>{cameraMessage}</p>
+                                    )}
+
+                                    <div className="settings-actions">
+                                        <button type="submit" className="settings-save-button">Save cameras <span>→</span></button>
+                                    </div>
+                                </form>
+                            </div>
+                        ) : activeFeature === "billing" ? (
+                            <div className="feature-view">
+                                <h1>Payment<br /><span>settings.</span></h1>
+                                <p className="admin-message">Enable or disable payment options for your parking garage.</p>
+
+                                <form className="garage-settings-form" onSubmit={handleBillingApply}>
+                                    <div className="billing-toggle-section">
+                                        <label className="billing-toggle-label">
+                                            <input type="checkbox" className="billing-checkbox" checked={billingConfig.payments_enabled} onChange={() => handleBillingToggle("payments_enabled")} />
+                                            <span className="billing-toggle-text">Enable payment options</span>
+                                        </label>
+                                    </div>
+
+                                    {billingConfig.payments_enabled && (
+                                        <div className="billing-payment-methods">
+                                            <p className="billing-subtitle">Select accepted payment methods:</p>
+                                            <div className="payment-options">
+                                                <label className="payment-option">
+                                                    <input type="checkbox" className="payment-checkbox" checked={billingConfig.cash_enabled} onChange={() => handleBillingToggle("cash_enabled")} />
+                                                    <span className="payment-method-name">💵 Cash</span>
+                                                </label>
+                                                <label className="payment-option">
+                                                    <input type="checkbox" className="payment-checkbox" checked={billingConfig.card_enabled} onChange={() => handleBillingToggle("card_enabled")} />
+                                                    <span className="payment-method-name">💳 Card</span>
+                                                </label>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {billingMessage && <p className="whitelist-success">{billingMessage}</p>}
+
+                                    <div className="settings-actions">
+                                        <button type="submit" className="settings-save-button">Apply <span>→</span></button>
+                                    </div>
+                                </form>
                             </div>
                         ) : (
                             <><p className="admin-label">Admin workspace</p><h1>Welcome back,<br /><span>{adminName}.</span></h1><div className="admin-status"><b /> System online</div><p className="admin-message">Select a feature from the sidebar to manage your garage.</p></>
