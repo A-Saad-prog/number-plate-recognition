@@ -1,0 +1,48 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'backend/**'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy backend to AWS
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.AWS_HOST }}
+          username: ${{ secrets.AWS_USERNAME }}
+          key: ${{ secrets.AWS_SSH_KEY }}
+          script: |
+            set -e
+
+            echo "Starting backend deployment..."
+
+            cd /home/ubuntu/number-plate-recognition
+
+            echo "Pulling latest code..."
+            git pull origin main
+
+            echo "Activating virtual environment..."
+            source /home/ubuntu/number-plate-recognition/.venv/bin/activate
+
+            echo "Installing backend dependencies..."
+            pip install -r backend/requirements.txt
+
+            echo "Running database migrations..."
+            cd backend
+            alembic upgrade head
+
+            echo "Restarting backend..."
+            sudo systemctl restart parking-backend
+
+            echo "Checking backend status..."
+            sudo systemctl is-active --quiet parking-backend
+
+            echo "Backend deployment successful!"
