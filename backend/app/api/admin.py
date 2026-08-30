@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
 from app.database.database import get_db
 from app.models.whitelist_entry import WhitelistEntry
 from app.services.auth_service import authenticate_admin, create_access_token, get_current_admin
+from app.services.settings_service import get_admin_settings, settings_response
 
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -25,6 +26,45 @@ class WhitelistCreateRequest(BaseModel):
 
 class WhitelistRemoveRequest(BaseModel):
     search: str = Field(min_length=1, max_length=100)
+
+
+class GarageLevelRequest(BaseModel):
+    id: int = Field(ge=1, le=12)
+    name: str = Field(min_length=1, max_length=100)
+    spaces: int = Field(ge=1, le=1000)
+
+
+class GarageSettingsRequest(BaseModel):
+    level_count: int = Field(ge=1, le=12)
+    spaces_per_level: int = Field(ge=1, le=1000)
+    levels: list[GarageLevelRequest] = Field(min_length=1, max_length=12)
+
+    @model_validator(mode="after")
+    def validate_level_layout(self):
+        if len(self.levels) != self.level_count:
+            raise ValueError("The number of levels must match level_count.")
+        if len({level.id for level in self.levels}) != len(self.levels):
+            raise ValueError("Each level must have a unique id.")
+        return self
+
+
+class CameraConfigRequest(BaseModel):
+    entry_lane_cameras: int = Field(ge=1, le=4)
+    exit_lane_cameras: int = Field(ge=1, le=4)
+
+
+class BillingConfigRequest(BaseModel):
+    payments_enabled: bool
+    cash_enabled: bool
+    card_enabled: bool
+
+    @model_validator(mode="after")
+    def validate_payment_methods(self):
+        if not self.payments_enabled and (self.cash_enabled or self.card_enabled):
+            raise ValueError("Payment methods must be disabled when payments are disabled.")
+        if self.payments_enabled and not (self.cash_enabled or self.card_enabled):
+            raise ValueError("Select at least one payment method when payments are enabled.")
+        return self
 
 
 def current_admin(
@@ -56,6 +96,53 @@ def admin_session(
     token = credentials.credentials if credentials else None
     admin = get_current_admin(token, db)
     return {"authenticated": True, "username": admin.username}
+
+
+@router.get("/settings")
+def get_settings(
+    db: Session = Depends(get_db),
+    _admin=Depends(current_admin),
+):
+    return settings_response(get_admin_settings(db))
+
+
+@router.put("/settings/garage")
+def save_garage_settings(
+    request: GarageSettingsRequest,
+    db: Session = Depends(get_db),
+    _admin=Depends(current_admin),
+):
+    settings = get_admin_settings(db, create=True)
+    settings.garage_settings = request.model_dump()
+    db.commit()
+    db.refresh(settings)
+    return {"success": True, "garage_settings": settings.garage_settings}
+
+
+@router.put("/settings/cameras")
+def save_camera_config(
+    request: CameraConfigRequest,
+    db: Session = Depends(get_db),
+    _admin=Depends(current_admin),
+):
+    settings = get_admin_settings(db, create=True)
+    settings.camera_config = request.model_dump()
+    db.commit()
+    db.refresh(settings)
+    return {"success": True, "camera_config": settings.camera_config}
+
+
+@router.put("/settings/billing")
+def save_billing_config(
+    request: BillingConfigRequest,
+    db: Session = Depends(get_db),
+    _admin=Depends(current_admin),
+):
+    settings = get_admin_settings(db, create=True)
+    settings.billing_config = request.model_dump()
+    db.commit()
+    db.refresh(settings)
+    return {"success": True, "billing_config": settings.billing_config}
 
 
 @router.get("/whitelist")

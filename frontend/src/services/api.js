@@ -296,3 +296,36 @@ export async function removeWhitelistEntry(token, search) {
 
     return data;
 }
+
+async function adminSettingsRequest(token, path, method = "GET", body) {
+    const response = await fetch(`${API_BASE_URL}/admin/settings${path}`, {
+        method,
+        headers: {
+            Authorization: `Bearer ${token}`,
+            ...(body ? { "Content-Type": "application/json" } : {}),
+        },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(data.detail || `Unable to save admin settings: ${response.status}`);
+    }
+    return data;
+}
+
+export function getAdminSettings(token) {
+    return adminSettingsRequest(token, "");
+}
+
+export function saveGarageSettings(token, settings) {
+    return adminSettingsRequest(token, "/garage", "PUT", settings);
+}
+
+export function saveCameraConfig(token, config) {
+    return adminSettingsRequest(token, "/cameras", "PUT", config);
+}
+
+export function saveBillingConfig(token, config) {
+    return adminSettingsRequest(token, "/billing", "PUT", config);
+}
