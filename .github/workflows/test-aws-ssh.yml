@@ -1,0 +1,22 @@
+name: Test AWS SSH
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-ssh:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Test SSH connection to AWS
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.AWS_HOST }}
+          username: ${{ secrets.AWS_USERNAME }}
+          key: ${{ secrets.AWS_SSH_KEY }}
+          script: |
+            echo "SSH connection successful!"
+            echo "Connected to:"
+            hostname
+            echo "Current user:"
+            whoami
