@@ -5,6 +5,7 @@ import {
     registerEntry,
     exitUsingPlate,
     detectPlateFromFrame,
+    getAdminSettings,
 } from "../services/api";
 
 import VehicleInformation from "../components/VehicleInformation";
@@ -37,6 +38,7 @@ function GaragePage() {
     const [parkingLoading, setParkingLoading] = useState(false);
     const [parkingError, setParkingError] = useState("");
     const [openLevel, setOpenLevel] = useState(1);
+    const [adminSettings, setAdminSettings] = useState(null);
 
     const videoRef = useRef(null);
     const exitVideoRef = useRef(null);
@@ -500,6 +502,24 @@ function GaragePage() {
     }
 
 
+
+
+async function loadAdminSettings() {
+    try {
+        const result = await getAdminSettings();
+
+        if (result?.success) {
+            setAdminSettings(result);
+        }
+    } catch (error) {
+        console.error(
+            "Could not load admin settings:",
+            error
+        );
+    }
+}
+
+
     async function loadParkingSpaces() {
         try {
             setParkingLoading(true);
@@ -624,39 +644,40 @@ function GaragePage() {
     }, [exitCameraActive]);
 
 
-    useEffect(() => {
-        const initialLoad =
-            setTimeout(() => {
-                loadParkingSpaces();
-            }, 0);
+  useEffect(() => {
+    const initialLoad =
+        setTimeout(() => {
+            loadAdminSettings();
+            loadParkingSpaces();
+        }, 0);
 
-        const interval =
-            setInterval(() => {
-                loadParkingSpaces();
-            }, 3000);
+    const interval =
+        setInterval(() => {
+            loadAdminSettings();
+            loadParkingSpaces();
+        }, 3000);
 
-        return () => {
-            clearTimeout(initialLoad);
-            clearInterval(interval);
-        };
-    }, []);
+    return () => {
+        clearTimeout(initialLoad);
+        clearInterval(interval);
+    };
+}, []);
 
-    useEffect(() => {
-    const levels = [
-        ...new Set(
-            parkingSpaces.map(
-                (space) => Number(space.level)
-            )
-        ),
-    ].sort((a, b) => a - b);
+   useEffect(() => {
+    const levels =
+        adminSettings?.garage_settings?.levels || [];
+
+    const levelIds = levels.map(
+        (level) => Number(level.id)
+    );
 
     if (
-        levels.length > 0 &&
-        !levels.includes(openLevel)
+        levelIds.length > 0 &&
+        !levelIds.includes(openLevel)
     ) {
-        setOpenLevel(levels[0]);
+        setOpenLevel(levelIds[0]);
     }
-}, [parkingSpaces, openLevel]);
+}, [adminSettings, openLevel]);
 
 
 useEffect(() => {

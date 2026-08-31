@@ -542,13 +542,21 @@ function AdminPage() {
             setConfirmationOpen(false);
             return;
         }
+const count = Number(levelCountVal);
+const defaultSpaces = Number(spacesPerLevelVal);
 
-        try {
-            await saveGarageSettings(token, {
-                level_count: count,
-                spaces_per_level: defaultSpaces,
-                levels: payloadLevels,
-            });
+const payloadLevels = (garageSettings.levels || []).map((level, index) => ({
+    id: index + 1,
+    name: String(level.name).trim(),
+    spaces: Number(level.spaces),
+}));
+
+try {
+    await saveGarageSettings(token, {
+        level_count: count,
+        spaces_per_level: defaultSpaces,
+        levels: payloadLevels,
+    });
             setGarageSettings((current) => ({
                 ...current,
                 level_count: String(count),
