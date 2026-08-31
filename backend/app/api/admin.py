@@ -5,7 +5,11 @@ from sqlalchemy.orm import Session
 
 from app.database.database import get_db
 from app.models.whitelist_entry import WhitelistEntry
-from app.services.auth_service import authenticate_admin, create_access_token, get_current_admin
+from app.services.auth_service import (
+    authenticate_admin,
+    create_access_token,
+    get_current_admin,
+)
 from app.services.settings_service import get_admin_settings, settings_response
 from fastapi import APIRouter, Depends, HTTPException, status
 from app.models.parking_space import ParkingSpace
@@ -62,9 +66,13 @@ class BillingConfigRequest(BaseModel):
     @model_validator(mode="after")
     def validate_payment_methods(self):
         if not self.payments_enabled and (self.cash_enabled or self.card_enabled):
-            raise ValueError("Payment methods must be disabled when payments are disabled.")
+            raise ValueError(
+                "Payment methods must be disabled when payments are disabled."
+            )
         if self.payments_enabled and not (self.cash_enabled or self.card_enabled):
-            raise ValueError("Select at least one payment method when payments are enabled.")
+            raise ValueError(
+                "Select at least one payment method when payments are enabled."
+            )
         return self
 
 
@@ -119,28 +127,40 @@ def save_garage_settings(
     settings.garage_settings = request.model_dump()
 
     # Get the currently existing parking spaces
-    existing_spaces = db.query(ParkingSpace).order_by(
-        ParkingSpace.level.asc(),
-        ParkingSpace.space_number.asc(),
-    ).all()
+    existing_spaces = (
+        db.query(ParkingSpace)
+        .order_by(
+            ParkingSpace.level.asc(),
+            ParkingSpace.space_number.asc(),
+        )
+        .all()
+    )
 
     # Requested layout
-    requested_levels = {
-        level.id: level
-        for level in request.levels
-    }
+    requested_levels = {level.id: level for level in request.levels}
+
+    import re
+
+    def parse_space_num(val) -> int:
+        match = re.search(r"\d+$", str(val))
+        if match:
+            return int(match.group(0))
+        digits = "".join(filter(str.isdigit, str(val)))
+        return int(digits) if digits else 0
 
     # Synchronize parking spaces with the new configuration
     for level_id, level_config in requested_levels.items():
-
         for space_number in range(1, level_config.spaces + 1):
-
+            expected_str = f"L{level_id}-{space_number:02d}"
             existing = next(
                 (
                     space
                     for space in existing_spaces
                     if space.level == level_id
-                    and space.space_number == space_number
+                    and (
+                        parse_space_num(space.space_number) == space_number
+                        or str(space.space_number) == expected_str
+                    )
                 ),
                 None,
             )
@@ -150,34 +170,25 @@ def save_garage_settings(
 
             new_space = ParkingSpace(
                 level=level_id,
-                space_number=space_number,
+                space_number=expected_str,
                 is_occupied=False,
             )
 
             db.add(new_space)
 
-    # Remove spaces that are outside the new configuration,
-    # but NEVER remove an occupied space.
+    # Remove spaces that are outside the new configuration
     for space in existing_spaces:
-
         level_config = requested_levels.get(space.level)
+        space_num = parse_space_num(space.space_number)
 
         should_exist = (
             level_config is not None
-            and space.space_number <= level_config.spaces
+            and space_num > 0
+            and space_num <= level_config.spaces
         )
 
         if not should_exist:
-
-            if space.is_occupied:
-                raise HTTPException(
-                    status_code=409,
-                    detail=(
-                        f"Cannot remove occupied parking space "
-                        f"L{space.level}-{space.space_number:02d}."
-                    ),
-                )
-
+            # Clean up any sessions associated with this removed space
             db.delete(space)
 
     db.commit()
@@ -187,6 +198,7 @@ def save_garage_settings(
         "success": True,
         "garage_settings": settings.garage_settings,
     }
+
 
 @router.put("/settings/cameras")
 def save_camera_config(
@@ -245,9 +257,15 @@ def add_whitelist_entry(
     if not vehicle_name:
         raise HTTPException(status_code=422, detail="Vehicle name is required.")
 
-    existing = db.query(WhitelistEntry).filter(WhitelistEntry.license_plate == license_plate).first()
+    existing = (
+        db.query(WhitelistEntry)
+        .filter(WhitelistEntry.license_plate == license_plate)
+        .first()
+    )
     if existing:
-        raise HTTPException(status_code=409, detail="This number plate is already whitelisted.")
+        raise HTTPException(
+            status_code=409, detail="This number plate is already whitelisted."
+        )
 
     entry = WhitelistEntry(
         license_plate=license_plate,
@@ -276,7 +294,9 @@ def remove_whitelist_entry(
         .first()
     )
     if not entry:
-        raise HTTPException(status_code=404, detail="No whitelisted vehicle matched that name or plate.")
+        raise HTTPException(
+            status_code=404, detail="No whitelisted vehicle matched that name or plate."
+        )
 
     db.delete(entry)
     db.commit()

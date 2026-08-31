@@ -309,7 +309,15 @@ async function adminSettingsRequest(token, path, method = "GET", body) {
 
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-        throw new Error(data.detail || `Unable to save admin settings: ${response.status}`);
+        let message = `Unable to save admin settings: ${response.status}`;
+        if (typeof data.detail === "string") {
+            message = data.detail;
+        } else if (Array.isArray(data.detail) && data.detail.length > 0) {
+            message = data.detail.map((e) => e.msg || e.detail || JSON.stringify(e)).join("; ");
+        } else if (data.message) {
+            message = data.message;
+        }
+        throw new Error(message);
     }
     return data;
 }

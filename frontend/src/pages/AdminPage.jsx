@@ -543,22 +543,38 @@ function AdminPage() {
             return;
         }
 
+        const count = Number(levelCountVal);
+        const defaultSpaces = Number(spacesPerLevelVal);
+        const payloadLevels = Array.from({ length: count }, (_, index) => {
+            const levelNum = index + 1;
+            const existing = (garageSettings.levels || [])[index];
+            const spacesNum = existing?.spaces !== undefined && existing?.spaces !== "" ? Number(existing.spaces) : defaultSpaces;
+            const nameVal = (existing?.name || `${t.levels} ${levelNum}`).trim() || `${t.levels} ${levelNum}`;
+            return {
+                id: levelNum,
+                name: nameVal,
+                spaces: isNaN(spacesNum) || spacesNum <= 0 ? defaultSpaces : spacesNum,
+            };
+        });
+
         try {
             await saveGarageSettings(token, {
-                level_count: Number(levelCountVal),
-                spaces_per_level: Number(spacesPerLevelVal),
-                levels: garageSettings.levels.map((level) => ({
-                    id: Number(level.id),
-                    name: level.name.trim(),
-                    spaces: Number(level.spaces),
-                })),
+                level_count: count,
+                spaces_per_level: defaultSpaces,
+                levels: payloadLevels,
             });
+            setGarageSettings((current) => ({
+                ...current,
+                level_count: String(count),
+                spaces_per_level: String(defaultSpaces),
+                levels: payloadLevels.map((l) => ({ ...l, spaces: String(l.spaces) })),
+            }));
             setGarageSettingsMessageType("success");
             setGarageSettingsMessage(t.garageApplied);
             setConfirmationOpen(false);
-        } catch {
+        } catch (err) {
             setGarageSettingsMessageType("warning");
-            setGarageSettingsMessage(t.requestFailed);
+            setGarageSettingsMessage(err?.message || t.requestFailed);
             setConfirmationOpen(false);
         }
     }
