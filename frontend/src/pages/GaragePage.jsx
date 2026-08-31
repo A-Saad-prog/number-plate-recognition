@@ -641,6 +641,36 @@ function GaragePage() {
         };
     }, []);
 
+    useEffect(() => {
+    const levels = [
+        ...new Set(
+            parkingSpaces.map(
+                (space) => Number(space.level)
+            )
+        ),
+    ].sort((a, b) => a - b);
+
+    if (
+        levels.length > 0 &&
+        !levels.includes(openLevel)
+    ) {
+        setOpenLevel(levels[0]);
+    }
+}, [parkingSpaces, openLevel]);
+
+
+useEffect(() => {
+    startCamera(
+        videoRef,
+        setCameraActive,
+        setCameraError
+    );
+
+    return () => {
+        // ...
+    };
+}, []);
+
 
     useEffect(() => {
         startCamera(
@@ -1381,25 +1411,32 @@ function GaragePage() {
                                 </div>
                             </div>
 
-
-                            <div className="level-tabs" role="tablist">
-                                {[1, 2].map((level) => (
-                                    <button
-                                        key={level}
-                                        type="button"
-                                        className={`level-toggle ${
-                                            openLevel === level
-                                                ? "active"
-                                                : ""
-                                        }`}
-                                        onClick={() => setOpenLevel(level)}
-                                        role="tab"
-                                        aria-selected={openLevel === level}
-                                    >
-                                        Level {level}
-                                    </button>
-                                ))}
-                            </div>
+<div className="level-tabs" role="tablist">
+    {[
+        ...new Set(
+            parkingSpaces.map(
+                (space) => Number(space.level)
+            )
+        ),
+    ]
+        .sort((a, b) => a - b)
+        .map((level) => (
+            <button
+                key={level}
+                type="button"
+                className={`level-toggle ${
+                    openLevel === level
+                        ? "active"
+                        : ""
+                }`}
+                onClick={() => setOpenLevel(level)}
+                role="tab"
+                aria-selected={openLevel === level}
+            >
+                Level {level}
+            </button>
+        ))}
+</div>
 
                             {openLevel && renderLevel(openLevel)}
                         </>
