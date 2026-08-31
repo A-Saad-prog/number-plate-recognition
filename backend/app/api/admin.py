@@ -7,7 +7,8 @@ from app.database.database import get_db
 from app.models.whitelist_entry import WhitelistEntry
 from app.services.auth_service import authenticate_admin, create_access_token, get_current_admin
 from app.services.settings_service import get_admin_settings, settings_response
-
+from fastapi import APIRouter, Depends, HTTPException, status
+from app.models.parking_space import ParkingSpace
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -113,11 +114,79 @@ def save_garage_settings(
     _admin=Depends(current_admin),
 ):
     settings = get_admin_settings(db, create=True)
+
+    # Save the admin configuration
     settings.garage_settings = request.model_dump()
+
+    # Get the currently existing parking spaces
+    existing_spaces = db.query(ParkingSpace).order_by(
+        ParkingSpace.level.asc(),
+        ParkingSpace.space_number.asc(),
+    ).all()
+
+    # Requested layout
+    requested_levels = {
+        level.id: level
+        for level in request.levels
+    }
+
+    # Synchronize parking spaces with the new configuration
+    for level_id, level_config in requested_levels.items():
+
+        for space_number in range(1, level_config.spaces + 1):
+
+            existing = next(
+                (
+                    space
+                    for space in existing_spaces
+                    if space.level == level_id
+                    and space.space_number == space_number
+                ),
+                None,
+            )
+
+            if existing:
+                continue
+
+            new_space = ParkingSpace(
+                level=level_id,
+                space_number=space_number,
+                is_occupied=False,
+            )
+
+            db.add(new_space)
+
+    # Remove spaces that are outside the new configuration,
+    # but NEVER remove an occupied space.
+    for space in existing_spaces:
+
+        level_config = requested_levels.get(space.level)
+
+        should_exist = (
+            level_config is not None
+            and space.space_number <= level_config.spaces
+        )
+
+        if not should_exist:
+
+            if space.is_occupied:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Cannot remove occupied parking space "
+                        f"L{space.level}-{space.space_number:02d}."
+                    ),
+                )
+
+            db.delete(space)
+
     db.commit()
     db.refresh(settings)
-    return {"success": True, "garage_settings": settings.garage_settings}
 
+    return {
+        "success": True,
+        "garage_settings": settings.garage_settings,
+    }
 
 @router.put("/settings/cameras")
 def save_camera_config(
