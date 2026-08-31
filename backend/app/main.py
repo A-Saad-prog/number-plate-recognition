@@ -19,6 +19,7 @@ from app.database.database import get_db
 from app.services.parking_service import (
     get_all_spaces,
 )
+from app.services.settings_service import get_admin_settings, settings_response
 
 from app.schemas.parking import (
     VehicleEntryRequest,
@@ -113,6 +114,17 @@ def database_test():
 # Get All Parking Spaces
 # ============================================================
 
+
+@app.get("/garage/settings")
+def garage_settings(
+    db: Session = Depends(get_db),
+):
+    return {
+        "success": True,
+        "garage_settings": settings_response(
+            get_admin_settings(db)
+        )["garage_settings"],
+    }
 
 @app.get("/parking/spaces")
 def parking_spaces(

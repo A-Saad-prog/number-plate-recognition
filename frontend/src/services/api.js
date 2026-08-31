@@ -71,11 +71,31 @@ export async function getParkingSpaces() {
 }
 
 
+export async function getGarageSettings() {
+
+    const response = await fetch(
+        `${API_BASE_URL}/garage/settings`
+    );
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+
+        throw new Error(
+            data.detail || `Failed to get garage settings: ${response.status}`
+        );
+
+    }
+
+    return data;
+}
+
+
 // ============================================================
 // Detect Plate from Camera Frame
 // ============================================================
 
-export async function detectPlateFromFrame(imageDataUrl) {
+export async function detectPlateFromFrame(imageDataUrl, source) {
 
     const response = await fetch(
         `${API_BASE_URL}/vision/detect-plate`,
@@ -88,6 +108,7 @@ export async function detectPlateFromFrame(imageDataUrl) {
 
             body: JSON.stringify({
                 image: imageDataUrl,
+                source,
             }),
         }
     );
@@ -110,7 +131,7 @@ export async function detectPlateFromFrame(imageDataUrl) {
 // Register Vehicle Entry
 // ============================================================
 
-export async function registerEntry(licensePlate) {
+export async function registerEntry(licensePlate, parkingSpaceId) {
 
     const response = await fetch(
         `${API_BASE_URL}/parking/entry`,
@@ -123,6 +144,7 @@ export async function registerEntry(licensePlate) {
 
             body: JSON.stringify({
                 license_plate: licensePlate,
+                parking_space_id: parkingSpaceId,
             }),
         }
     );
@@ -143,10 +165,10 @@ export async function registerEntry(licensePlate) {
 // Exit Using License Plate
 // ============================================================
 
-export async function exitUsingPlate(licensePlate) {
+export async function exitUsingPlate(licensePlate, paymentMethod) {
 
     const response = await fetch(
-        `${API_BASE_URL}/parking/exit/plate`,
+        `${API_BASE_URL}/parking/exit`,
         {
             method: "POST",
 
@@ -156,6 +178,7 @@ export async function exitUsingPlate(licensePlate) {
 
             body: JSON.stringify({
                 license_plate: licensePlate,
+                payment_method: paymentMethod,
             }),
         }
     );

@@ -19,6 +19,7 @@ router = APIRouter(
 
 class PlateDetectionRequest(BaseModel):
     image: str
+    source: str | None = None
 
 
 # ============================================================
@@ -32,7 +33,8 @@ def detect_license_plate(
     try:
 
         result = detect_plate(
-            request.image
+            request.image,
+            request.source,
         )
 
         return {

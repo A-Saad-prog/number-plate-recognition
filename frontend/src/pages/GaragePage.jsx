@@ -5,7 +5,7 @@ import {
     registerEntry,
     exitUsingPlate,
     detectPlateFromFrame,
-    getAdminSettings,
+    getGarageSettings,
 } from "../services/api";
 
 import VehicleInformation from "../components/VehicleInformation";
@@ -22,6 +22,7 @@ function GaragePage() {
     const lastCompletedPlateRef = useRef("");
     const plateCandidateRef = useRef("");
     const plateCandidateCountRef = useRef(0);
+    const activeDetectionSourceRef = useRef("entry");
 
     const [selectedSpaceId, setSelectedSpaceId] = useState(null);
     const [entryLoading, setEntryLoading] = useState(false);
@@ -65,6 +66,7 @@ function GaragePage() {
         source
     ) {
         if (
+            source !== activeDetectionSourceRef.current ||
             !videoRefToProcess.current ||
             !canvasRef.current ||
             !cameraIsActive ||
@@ -107,7 +109,11 @@ function GaragePage() {
             visionProcessingRef.current = true;
 
             const result =
-                await detectPlateFromFrame(image);
+                await detectPlateFromFrame(image, source);
+
+            if (source !== activeDetectionSourceRef.current) {
+                return;
+            }
 
             const detectionLatencyMs =
                 // eslint-disable-next-line react-hooks/purity
@@ -353,6 +359,8 @@ function GaragePage() {
 
 
     async function openExitCamera() {
+        activeDetectionSourceRef.current = "exit";
+
         const entryStream =
             videoRef.current?.srcObject;
 
@@ -381,6 +389,8 @@ function GaragePage() {
 
 
     function closeExitCamera() {
+        activeDetectionSourceRef.current = "entry";
+
         const stream =
             exitVideoRef.current?.srcObject ||
             exitStreamRef.current;
@@ -506,7 +516,7 @@ function GaragePage() {
 
 async function loadAdminSettings() {
     try {
-        const result = await getAdminSettings();
+        const result = await getGarageSettings();
 
         if (result?.success) {
             setAdminSettings(result);

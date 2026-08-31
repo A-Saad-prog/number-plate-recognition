@@ -52,6 +52,7 @@ ocr_reading_buffer = []
 accepted_plate_metadata = None
 accepted_plate_time = 0.0
 last_plate_detection_time = 0.0
+active_detection_source = None
 
 
 # ============================================================
@@ -592,10 +593,15 @@ def read_plate(plate_crop):
 # ============================================================
 
 
-def detect_plate(image_base64: str):
+def detect_plate(image_base64: str, source: str | None = None):
 
     global current_fps
     global last_plate_detection_time
+    global active_detection_source
+
+    if source != active_detection_source:
+        _clear_ocr_state()
+        active_detection_source = source
 
     frame = decode_image(image_base64)
 
@@ -756,13 +762,21 @@ def detect_plate(image_base64: str):
     # from your original plate_detector.py.
     # ========================================================
 
-    had_accepted_plate = accepted_plate_metadata is not None
-
-    if had_accepted_plate:
+    if accepted_plate_metadata is not None:
         plate_metadata = accepted_plate_metadata
     else:
-        ocr_result = read_plate(plate_crop)
-        plate_metadata = _vote_for_plate(ocr_result) if ocr_result else None
+        plate_metadata = None
+
+        for _ in range(OCR_AGREEMENT_REQUIRED):
+            ocr_result = read_plate(plate_crop)
+
+            if not ocr_result:
+                break
+
+            plate_metadata = _vote_for_plate(ocr_result)
+
+            if plate_metadata is not None:
+                break
 
         if plate_metadata is not None:
             _upload_accepted_frame_in_background(frame, plate_metadata)
