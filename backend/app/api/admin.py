@@ -176,10 +176,7 @@ def save_garage_settings(
 
             db.add(new_space)
 
-      # Remove spaces that are outside the new configuration
-    # and remove duplicate spaces within the requested layout.
-    seen_spaces = set()
-
+    # Remove spaces that are outside the new configuration
     for space in existing_spaces:
         level_config = requested_levels.get(space.level)
         space_num = parse_space_num(space.space_number)
@@ -190,15 +187,9 @@ def save_garage_settings(
             and space_num <= level_config.spaces
         )
 
-        space_key = (space.level, space_num)
-
-        if not should_exist or space_key in seen_spaces:
+        if not should_exist:
             # Clean up any sessions associated with this removed space
             db.delete(space)
-            continue
-
-        seen_spaces.add(space_key)
-
     db.commit()
     db.refresh(settings)
 
