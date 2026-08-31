@@ -88,6 +88,8 @@ function AdminPage() {
     const [whitelistMessage, setWhitelistMessage] = useState("");
     const [garageSettings, setGarageSettings] = useState({ level_count: "", levels: [], spaces_per_level: "" });
     const [garageSettingsMessage, setGarageSettingsMessage] = useState("");
+    const [garageSettingsAlreadyApplied, setGarageSettingsAlreadyApplied] = useState(false);
+    const [savedGarageSettings, setSavedGarageSettings] = useState(null);
     const [garageSettingsMessageType, setGarageSettingsMessageType] = useState("success");
     const [garageErrors, setGarageErrors] = useState({
         levels: "",
@@ -128,14 +130,17 @@ function AdminPage() {
             .then((settings) => {
                 const garage = settings.garage_settings;
                 if (garage?.level_count > 0) {
-                    setGarageSettings({
+                    const normalizedGarageSettings = {
                         level_count: String(garage.level_count),
                         spaces_per_level: String(garage.spaces_per_level),
                         levels: (garage.levels || []).map((level) => ({
                             ...level,
                             spaces: String(level.spaces),
                         })),
-                    });
+                    };
+
+                    setGarageSettings(normalizedGarageSettings);
+                    setSavedGarageSettings(normalizedGarageSettings);
                 }
                 if (settings.camera_config) {
                     setCameraConfig({
@@ -147,8 +152,16 @@ function AdminPage() {
                     setBillingConfig(settings.billing_config);
                 }
             })
-            .catch(() => {});
+            .catch(() => { });
     }, [token]);
+    useEffect(() => {
+        setGarageSettingsAlreadyApplied(
+            isGarageSettingsAlreadyApplied(
+                garageSettings,
+                savedGarageSettings
+            )
+        );
+    }, [garageSettings, savedGarageSettings]);
 
     async function handleSubmit(event) {
         event.preventDefault();
@@ -341,6 +354,35 @@ function AdminPage() {
             setBillingMessage(t.requestFailed);
         }
     }
+    function isGarageSettingsAlreadyApplied(currentSettings, savedSettings) {
+        if (!currentSettings || !savedSettings) {
+            return false;
+        }
+
+        const currentLevels = currentSettings.levels || [];
+        const savedLevels = savedSettings.levels || [];
+
+        if (currentLevels.length !== savedLevels.length) {
+            return false;
+        }
+
+        if (Number(currentSettings.level_count) !== Number(savedSettings.level_count)) {
+            return false;
+        }
+
+        if (Number(currentSettings.spaces_per_level) !== Number(savedSettings.spaces_per_level)) {
+            return false;
+        }
+
+        return currentLevels.every((currentLevel, index) => {
+            const savedLevel = savedLevels[index];
+
+            return (
+                String(currentLevel.name).trim() === String(savedLevel.name).trim() &&
+                Number(currentLevel.spaces) === Number(savedLevel.spaces)
+            );
+        });
+    }
 
     function validateGarageField(field, value) {
         const stringVal = String(value).trim();
@@ -484,6 +526,12 @@ function AdminPage() {
 
     function handleGarageSettingsApply(event) {
         event.preventDefault();
+        if (garageSettingsAlreadyApplied) {
+            setGarageSettingsMessageType("warning");
+            setGarageSettingsMessage("These garage settings are already applied.");
+            setConfirmationOpen(false);
+            return;
+        }
         const levelCountValue = garageSettings.level_count !== undefined
             ? garageSettings.level_count
             : (garageSettings.levels?.length ? String(garageSettings.levels.length) : "");
@@ -542,21 +590,29 @@ function AdminPage() {
             setConfirmationOpen(false);
             return;
         }
-const count = Number(levelCountVal);
-const defaultSpaces = Number(spacesPerLevelVal);
+        const count = Number(levelCountVal);
+        const defaultSpaces = Number(spacesPerLevelVal);
 
-const payloadLevels = (garageSettings.levels || []).map((level, index) => ({
-    id: index + 1,
-    name: String(level.name).trim(),
-    spaces: Number(level.spaces),
-}));
+        const payloadLevels = (garageSettings.levels || []).map((level, index) => ({
+            id: index + 1,
+            name: String(level.name).trim(),
+            spaces: Number(level.spaces),
+        }));
 
-try {
-    await saveGarageSettings(token, {
-        level_count: count,
-        spaces_per_level: defaultSpaces,
-        levels: payloadLevels,
-    });
+        try {
+            await saveGarageSettings(token, {
+                level_count: count,
+                spaces_per_level: defaultSpaces,
+                levels: payloadLevels,
+            });
+            setSavedGarageSettings({
+                level_count: String(count),
+                spaces_per_level: String(defaultSpaces),
+                levels: payloadLevels.map((level) => ({
+                    ...level,
+                    spaces: String(level.spaces),
+                })),
+            });
             setGarageSettings((current) => ({
                 ...current,
                 level_count: String(count),
@@ -696,7 +752,14 @@ try {
                                     )}
 
                                     <div className="settings-actions">
-                                        <button type="submit" className="settings-save-button">{t.apply} <span>→</span></button>
+                                        <button
+                                            type="submit"
+                                            className="settings-save-button"
+                                            disabled={garageSettingsAlreadyApplied}
+                                        >
+                                            {garageSettingsAlreadyApplied ? "Already Applied" : t.apply}
+                                            {!garageSettingsAlreadyApplied && <span>→</span>}
+                                        </button>
                                         <button
                                             type="button"
                                             className="advanced-button"
