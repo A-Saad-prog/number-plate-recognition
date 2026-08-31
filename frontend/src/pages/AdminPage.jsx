@@ -543,20 +543,6 @@ function AdminPage() {
             return;
         }
 
-        const count = Number(levelCountVal);
-        const defaultSpaces = Number(spacesPerLevelVal);
-        const payloadLevels = Array.from({ length: count }, (_, index) => {
-            const levelNum = index + 1;
-            const existing = (garageSettings.levels || [])[index];
-            const spacesNum = existing?.spaces !== undefined && existing?.spaces !== "" ? Number(existing.spaces) : defaultSpaces;
-            const nameVal = (existing?.name || `${t.levels} ${levelNum}`).trim() || `${t.levels} ${levelNum}`;
-            return {
-                id: levelNum,
-                name: nameVal,
-                spaces: isNaN(spacesNum) || spacesNum <= 0 ? defaultSpaces : spacesNum,
-            };
-        });
-
         try {
             await saveGarageSettings(token, {
                 level_count: count,
