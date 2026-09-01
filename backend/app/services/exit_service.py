@@ -12,10 +12,34 @@ from app.services.billing_service import (
 from app.services.time_service import pakistan_now
 
 
+def payment_required_for_exit(db: Session, license_plate: str, billing_enabled: bool) -> bool:
+    if not billing_enabled:
+        return False
+
+    vehicle = db.query(Vehicle).filter(Vehicle.license_plate == license_plate.strip().upper()).first()
+    if vehicle is None:
+        raise ValueError("Vehicle not found")
+
+    session = db.query(ParkingSession).filter(
+        ParkingSession.vehicle_id == vehicle.id,
+        ParkingSession.status == "active",
+    ).first()
+    if session is None:
+        raise ValueError("No active parking session found")
+
+    amount, _ = calculate_parking_fee(session.entry_time, pakistan_now())
+    whitelist_entry = db.query(WhitelistEntry).filter(
+        WhitelistEntry.license_plate == vehicle.license_plate
+    ).first()
+    discount_percent = whitelist_entry.discount_percent if whitelist_entry else 0
+    return apply_discount(amount, discount_percent) > 0
+
+
 def process_vehicle_exit_by_plate(
     db: Session,
     license_plate: str,
-    payment_method: str,
+    payment_method: str | None,
+    billing_enabled: bool = True,
 ):
     """
     Complete the active parking session for a license
@@ -49,6 +73,7 @@ def process_vehicle_exit_by_plate(
         session=session,
         vehicle=vehicle,
         payment_method=payment_method,
+        billing_enabled=billing_enabled,
     )
 
 
@@ -56,7 +81,8 @@ def complete_parking_session(
     db: Session,
     session: ParkingSession,
     vehicle: Vehicle,
-    payment_method: str,
+    payment_method: str | None,
+    billing_enabled: bool = True,
 ):
     """
     Complete an active parking session.
@@ -66,18 +92,23 @@ def complete_parking_session(
 
     exit_time = pakistan_now()
 
-    amount, billed_minutes = calculate_parking_fee(
-        session.entry_time,
-        exit_time,
-    )
+    if billing_enabled:
+        amount, billed_minutes = calculate_parking_fee(
+            session.entry_time,
+            exit_time,
+        )
 
-    whitelist_entry = (
-        db.query(WhitelistEntry)
-        .filter(WhitelistEntry.license_plate == vehicle.license_plate)
-        .first()
-    )
-    discount_percent = whitelist_entry.discount_percent if whitelist_entry else 0
-    amount = apply_discount(amount, discount_percent)
+        whitelist_entry = (
+            db.query(WhitelistEntry)
+            .filter(WhitelistEntry.license_plate == vehicle.license_plate)
+            .first()
+        )
+        discount_percent = whitelist_entry.discount_percent if whitelist_entry else 0
+        amount = apply_discount(amount, discount_percent)
+    else:
+        amount = 0.0
+        billed_minutes = 0
+        discount_percent = 0
 
     session.exit_time = exit_time
     session.amount = amount
@@ -114,6 +145,7 @@ def complete_parking_session(
         "amount": session.amount,
         "discount_percent": discount_percent,
         "payment_method": session.payment_method,
+        "billing_enabled": billing_enabled,
         "level": parking_space.level,
         "space": parking_space.space_number,
         "status": session.status,

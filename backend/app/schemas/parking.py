@@ -21,4 +21,4 @@ class VehicleExitRequest(BaseModel):
         max_length=20,
     )
 
-    payment_method: Literal["cash", "card"]
+    payment_method: Optional[Literal["cash", "card"]] = None

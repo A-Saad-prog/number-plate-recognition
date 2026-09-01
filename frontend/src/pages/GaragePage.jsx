@@ -4,6 +4,7 @@ import {
     getParkingSpaces,
     registerEntry,
     exitUsingPlate,
+    getExitPaymentRequired,
     detectPlateFromFrame,
     getGarageSettings,
 } from "../services/api";
@@ -12,8 +13,18 @@ import VehicleInformation from "../components/VehicleInformation";
 
 import "../styles/App.css";
 
+const MAX_INFERENCE_FRAME_WIDTH = 960;
+const VISION_DEBUG = import.meta.env.DEV && import.meta.env.VITE_VISION_DEBUG === "true";
+
 
 function GaragePage() {
+    const [cameraAssignments] = useState(() => {
+        try {
+            return JSON.parse(localStorage.getItem("parking_camera_assignments")) || {};
+        } catch {
+            return {};
+        }
+    });
     const [detectedPlate, setDetectedPlate] = useState("");
     const [vehicleAction, setVehicleAction] = useState(null);
     const [detectionSource, setDetectionSource] = useState(null);
@@ -22,7 +33,9 @@ function GaragePage() {
     const lastCompletedPlateRef = useRef("");
     const plateCandidateRef = useRef("");
     const plateCandidateCountRef = useRef(0);
-    const activeDetectionSourceRef = useRef("entry");
+    const activeDetectionSourceRef = useRef("entry-1");
+    const entrySubmittingRef = useRef(false);
+    const exitSubmittingRef = useRef(false);
 
     const [selectedSpaceId, setSelectedSpaceId] = useState(null);
     const [entryLoading, setEntryLoading] = useState(false);
@@ -33,6 +46,7 @@ function GaragePage() {
     const [exitError, setExitError] = useState("");
     const [exitResult, setExitResult] = useState(null);
     const [paymentMethod, setPaymentMethod] = useState(null);
+    const [exitPaymentRequired, setExitPaymentRequired] = useState(false);
 
     const [parkingSpaces, setParkingSpaces] = useState([]);
     const parkingSpacesRef = useRef([]);
@@ -72,7 +86,7 @@ function GaragePage() {
             !cameraIsActive ||
             visionProcessingRef.current
         ) {
-            return;
+            return false;
         }
 
         const video = videoRefToProcess.current;
@@ -82,13 +96,14 @@ function GaragePage() {
             video.readyState <
             HTMLMediaElement.HAVE_CURRENT_DATA
         ) {
-            return;
+            return false;
         }
 
+        const captureStart = performance.now();
         const context = canvas.getContext("2d");
-
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
+        const scale = Math.min(1, MAX_INFERENCE_FRAME_WIDTH / video.videoWidth);
+        canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+        canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
 
         context.drawImage(
             video,
@@ -100,36 +115,31 @@ function GaragePage() {
 
         const image = canvas.toDataURL(
             "image/jpeg",
-            0.8
+            0.82
         );
 
         try {
-            // eslint-disable-next-line react-hooks/purity
-            const captureStart = performance.now();
             visionProcessingRef.current = true;
-
+            const requestStart = performance.now();
             const result =
                 await detectPlateFromFrame(image, source);
 
             if (source !== activeDetectionSourceRef.current) {
-                return;
+                return false;
             }
 
-            const detectionLatencyMs =
-                // eslint-disable-next-line react-hooks/purity
-                performance.now() - captureStart;
-
-            console.log(
-                "[Vision latency]",
-                {
+            if (VISION_DEBUG) {
+                console.debug("[Vision timing]", {
                     source,
-                    durationMs: detectionLatencyMs,
+                    captureMs: Math.round(requestStart - captureStart),
+                    roundTripMs: Math.round(performance.now() - requestStart),
+                    frame: `${canvas.width}x${canvas.height}`,
                     detected: result?.detected,
                     plate: result?.license_plate || null,
-                }
-            );
+                });
+            }
 
-            if (source === "entry") {
+            if (source.startsWith("entry-")) {
                 setEntryDetectionBox(result.box || null);
             } else {
                 setExitDetectionBox(result.box || null);
@@ -180,15 +190,9 @@ function GaragePage() {
                     plateCandidateRef.current = "";
                     plateCandidateCountRef.current = 0;
 
-                    console.log(
-                        "[Plate accepted]",
-                        {
-                            source,
-                            plate,
-                            detectionSource: source,
-                            detectedAt: new Date().toISOString(),
-                        }
-                    );
+                    if (VISION_DEBUG) {
+                        console.debug("[Plate accepted]", { source, plate });
+                    }
 
                     setDetectedPlate(plate);
                     setDetectionSource(source);
@@ -198,7 +202,7 @@ function GaragePage() {
                     // AUTOMATIC ENTRY PARKING SPACE ASSIGNMENT
                     // ====================================================
 
-                    if (source === "entry") {
+                    if (source.startsWith("entry-")) {
                         const automaticSpace =
                             getAutomaticParkingSpace();
 
@@ -225,13 +229,15 @@ function GaragePage() {
             }
 
         } catch (error) {
-            console.error(
-                "Vision processing error:",
-                error
-            );
+            if (VISION_DEBUG) {
+                console.debug("Vision processing error:", error);
+            }
+            return false;
         } finally {
             visionProcessingRef.current = false;
         }
+
+        return true;
     }
 
 
@@ -266,7 +272,8 @@ function GaragePage() {
     async function startCamera(
         videoRefToStart,
         setActive,
-        setError
+        setError,
+        cameraId
     ) {
         if (cameraStartingRef.current) {
             return;
@@ -284,11 +291,13 @@ function GaragePage() {
 
             try {
                 stream = await navigator.mediaDevices.getUserMedia({
-                    video: {
-                        width: { ideal: 640 },
-                        height: { ideal: 480 },
-                        facingMode: { ideal: "environment" },
-                    },
+                    video: cameraAssignments[cameraId]
+                        ? { deviceId: { exact: cameraAssignments[cameraId] } }
+                        : {
+                            width: { ideal: 640 },
+                            height: { ideal: 480 },
+                            facingMode: { ideal: "environment" },
+                        },
                     audio: false,
                 });
             } catch (constraintError) {
@@ -359,7 +368,7 @@ function GaragePage() {
 
 
     async function openExitCamera() {
-        activeDetectionSourceRef.current = "exit";
+        activeDetectionSourceRef.current = "exit-1";
 
         const entryStream =
             videoRef.current?.srcObject;
@@ -383,13 +392,14 @@ function GaragePage() {
         await startCamera(
             exitVideoRef,
             setExitCameraActive,
-            setExitCameraError
+            setExitCameraError,
+            "exit-1"
         );
     }
 
 
     function closeExitCamera() {
-        activeDetectionSourceRef.current = "entry";
+        activeDetectionSourceRef.current = "entry-1";
 
         const stream =
             exitVideoRef.current?.srcObject ||
@@ -415,7 +425,8 @@ function GaragePage() {
         startCamera(
             videoRef,
             setCameraActive,
-            setCameraError
+            setCameraError,
+            "entry-1"
         );
     }
 
@@ -500,6 +511,10 @@ function GaragePage() {
 
 
     function formatPaymentMethod(value) {
+        if (!value) {
+            return "Not required";
+        }
+
         if (value === "card") {
             return "Card";
         }
@@ -508,7 +523,7 @@ function GaragePage() {
             return "Cash";
         }
 
-        return value || "Unknown";
+        return value;
     }
 
 
@@ -609,16 +624,20 @@ async function loadAdminSettings() {
             return;
         }
 
-        const interval = setInterval(() => {
-            processCameraFrame(
-                videoRef,
-                cameraActive,
-                "entry"
-            );
-        }, 200);
+        let cancelled = false;
+        let nextFrameTimer;
+        const processLatestFrame = async () => {
+            const processed = await processCameraFrame(videoRef, true, "entry-1");
+            if (!cancelled) {
+                nextFrameTimer = window.setTimeout(processLatestFrame, processed ? 0 : 100);
+            }
+        };
+
+        void processLatestFrame();
 
         return () => {
-            clearInterval(interval);
+            cancelled = true;
+            window.clearTimeout(nextFrameTimer);
         };
     }, [cameraActive]);
 
@@ -640,37 +659,32 @@ async function loadAdminSettings() {
                 .catch(() => {});
         }
 
-        const interval = setInterval(() => {
-            processCameraFrame(
-                exitVideoRef,
-                exitCameraActive,
-                "exit"
-            );
-        }, 200);
+        let cancelled = false;
+        let nextFrameTimer;
+        const processLatestFrame = async () => {
+            const processed = await processCameraFrame(exitVideoRef, true, "exit-1");
+            if (!cancelled) {
+                nextFrameTimer = window.setTimeout(processLatestFrame, processed ? 0 : 100);
+            }
+        };
+
+        void processLatestFrame();
 
         return () => {
-            clearInterval(interval);
+            cancelled = true;
+            window.clearTimeout(nextFrameTimer);
         };
     }, [exitCameraActive]);
 
 
   useEffect(() => {
-    const initialLoad =
-        setTimeout(() => {
-            loadAdminSettings();
-            loadParkingSpaces();
-        }, 0);
+    void Promise.all([loadAdminSettings(), loadParkingSpaces()]);
 
-    const interval =
-        setInterval(() => {
-            loadAdminSettings();
-            loadParkingSpaces();
-        }, 3000);
+    const interval = window.setInterval(() => {
+        void loadParkingSpaces();
+    }, 5000);
 
-    return () => {
-        clearTimeout(initialLoad);
-        clearInterval(interval);
-    };
+    return () => window.clearInterval(interval);
 }, []);
 
    useEffect(() => {
@@ -690,24 +704,12 @@ async function loadAdminSettings() {
 }, [adminSettings, openLevel]);
 
 
-useEffect(() => {
-    startCamera(
-        videoRef,
-        setCameraActive,
-        setCameraError
-    );
-
-    return () => {
-        // ...
-    };
-}, []);
-
-
     useEffect(() => {
         startCamera(
             videoRef,
             setCameraActive,
-            setCameraError
+            setCameraError,
+            "entry-1"
         );
 
         return () => {
@@ -765,7 +767,7 @@ useEffect(() => {
     }
 
 
-    function handleSelectExit() {
+    async function handleSelectExit() {
         setVehicleAction("exit");
         setEntryError("");
         setExitError("");
@@ -773,6 +775,12 @@ useEffect(() => {
         setExitResult(null);
         setSelectedSpaceId(null);
         setPaymentMethod(null);
+        try {
+            const result = await getExitPaymentRequired(detectedPlate);
+            setExitPaymentRequired(Boolean(result.payment_required));
+        } catch (error) {
+            setExitError(error.message || "Could not check exit payment.");
+        }
     }
 
 
@@ -792,6 +800,7 @@ useEffect(() => {
 
 
     async function handleConfirmEntry() {
+        if (entrySubmittingRef.current) return;
         if (!detectedPlate) {
             setEntryError(
                 "No vehicle license plate has been detected."
@@ -806,6 +815,7 @@ useEffect(() => {
             return;
         }
 
+        entrySubmittingRef.current = true;
         setEntryLoading(true);
         setEntryError("");
         setEntryResult(null);
@@ -879,14 +889,14 @@ useEffect(() => {
             );
 
         } finally {
-            if (!entryResult) {
-                setEntryLoading(false);
-            }
+            entrySubmittingRef.current = false;
+            setEntryLoading(false);
         }
     }
 
 
     async function handleConfirmExit() {
+        if (exitSubmittingRef.current) return;
         if (!detectedPlate) {
             setExitError(
                 "No vehicle license plate has been detected."
@@ -894,13 +904,14 @@ useEffect(() => {
             return;
         }
 
-        if (!paymentMethod) {
+        if (exitPaymentRequired && !paymentMethod) {
             setExitError(
                 "Please select cash or card payment."
             );
             return;
         }
 
+        exitSubmittingRef.current = true;
         setExitLoading(true);
         setExitError("");
         setExitResult(null);
@@ -909,7 +920,7 @@ useEffect(() => {
             const result =
                 await exitUsingPlate(
                     detectedPlate,
-                    paymentMethod
+                    exitPaymentRequired ? paymentMethod : null
                 );
 
             if (!result.success) {
@@ -975,9 +986,8 @@ useEffect(() => {
             );
 
         } finally {
-            if (!exitResult) {
-                setExitLoading(false);
-            }
+            exitSubmittingRef.current = false;
+            setExitLoading(false);
         }
     }
 
@@ -1350,6 +1360,50 @@ useEffect(() => {
 
     void renderVehicleInformation;
 
+    const entryCameraCount = Math.max(
+        1,
+        Number(adminSettings?.camera_config?.entry_lane_cameras) || 1
+    );
+    const exitCameraCount = Math.max(
+        1,
+        Number(adminSettings?.camera_config?.exit_lane_cameras) || 1
+    );
+    function renderSharedCamera(cameraId, label, streamRef, isActive) {
+        return (
+            <div className="camera-panel" key={cameraId} data-camera-id={cameraId}>
+                <div className="camera-panel-header">
+                    <div>
+                        <span className="camera-kicker">{cameraId}</span>
+                        <strong>{label}</strong>
+                    </div>
+                </div>
+                <div className="camera-preview">
+                    <span className={`camera-feed-status camera-status ${
+                        isActive ? "active" : "standby"
+                    }`}>
+                        {isActive ? "Live" : "Standby"}
+                    </span>
+                    {isActive ? (
+                        <video
+                            autoPlay
+                            playsInline
+                            muted
+                            ref={(node) => {
+                                if (node && streamRef.current?.srcObject) {
+                                    node.srcObject = streamRef.current.srcObject;
+                                }
+                            }}
+                        />
+                    ) : (
+                        <div className="camera-standby">
+                            <strong>Camera is closed</strong>
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
+    }
+
 
     return (
         <div className="app">
@@ -1500,7 +1554,7 @@ useEffect(() => {
                                         </span>
 
                                         <strong>
-                                            Entry camera
+                                            Entry Camera 1
                                         </strong>
                                     </div>
 
@@ -1555,6 +1609,15 @@ useEffect(() => {
 
                             </div>
 
+                            {Array.from({ length: entryCameraCount - 1 }, (_, index) =>
+                                renderSharedCamera(
+                                    `entry-${index + 2}`,
+                                    `Entry Camera ${index + 2}`,
+                                    videoRef,
+                                    cameraActive && !exitCameraActive
+                                )
+                            )}
+
 
                             <div className="camera-panel">
 
@@ -1565,7 +1628,7 @@ useEffect(() => {
                                         </span>
 
                                         <strong>
-                                            Exit camera
+                                            Exit Camera 1
                                         </strong>
                                     </div>
 
@@ -1660,6 +1723,15 @@ useEffect(() => {
 
                             </div>
 
+                            {Array.from({ length: exitCameraCount - 1 }, (_, index) =>
+                                renderSharedCamera(
+                                    `exit-${index + 2}`,
+                                    `Exit Camera ${index + 2}`,
+                                    exitVideoRef,
+                                    exitCameraActive
+                                )
+                            )}
+
                         </div>
 
 
@@ -1746,8 +1818,9 @@ useEffect(() => {
                                     <div className="action-selection">
 
                                         <p className="action-title">
-                                            {detectionSource ===
-                                            "exit"
+                                            {detectionSource?.startsWith(
+                                            "exit-"
+                                            )
                                                 ? "Confirm vehicle exit"
                                                 : "Confirm vehicle entry"}
                                         </p>
@@ -1755,8 +1828,9 @@ useEffect(() => {
 
                                         <div className="vehicle-action-buttons">
 
-                                            {detectionSource ===
-                                                "entry" && (
+                                            {detectionSource?.startsWith(
+                                                "entry-"
+                                            ) && (
                                                 <button
                                                     className="confirm-button"
                                                     onClick={
@@ -1775,8 +1849,9 @@ useEffect(() => {
                                             )}
 
 
-                                            {detectionSource ===
-                                                "exit" && (
+                                            {detectionSource?.startsWith(
+                                                "exit-"
+                                            ) && (
                                                 <button
                                                     className="exit-button"
                                                     onClick={
@@ -1795,8 +1870,9 @@ useEffect(() => {
 
 
                                         {garageFull &&
-                                            detectionSource ===
-                                                "entry" && (
+                                            detectionSource?.startsWith(
+                                                "entry-"
+                                            ) && (
                                                 <p className="description">
                                                     The garage is currently
                                                     full. Entry is unavailable.
@@ -1903,10 +1979,9 @@ useEffect(() => {
 
 
                                         <p className="description">
-                                            Select a payment method,
-                                            then confirm exit. Parking
-                                            is billed at Rs 1.67 per
-                                            minute.
+                                            {exitPaymentRequired
+                                                ? "Select a payment method, then confirm exit. Parking is billed at Rs 1.67 per minute."
+                                                : "Confirm exit to complete the parking session."}
                                         </p>
 
 
@@ -1923,12 +1998,14 @@ useEffect(() => {
                                         </div>
 
 
-                                        <p className="action-title">
-                                            Payment method
-                                        </p>
+                                        {exitPaymentRequired && (
+                                            <>
+                                                <p className="action-title">
+                                                    Payment method
+                                                </p>
 
 
-                                        <div className="payment-options">
+                                                <div className="payment-options">
 
                                             <button
                                                 type="button"
@@ -1983,7 +2060,9 @@ useEffect(() => {
                                                 Card
                                             </button>
 
-                                        </div>
+                                                </div>
+                                            </>
+                                        )}
 
 
                                         {exitError && (
@@ -2002,7 +2081,7 @@ useEffect(() => {
                                                 }
                                                 disabled={
                                                     exitLoading ||
-                                                    !paymentMethod
+                                                    (exitPaymentRequired && !paymentMethod)
                                                 }
                                             >
                                                 {exitLoading
@@ -2046,8 +2125,9 @@ useEffect(() => {
 
                     {exitCameraActive &&
                         (
-                            detectionSource ===
-                                "exit" ||
+                            detectionSource?.startsWith(
+                                "exit-"
+                            ) ||
                             exitResult
                         ) && (
                             <section className="card vehicle-information-card">

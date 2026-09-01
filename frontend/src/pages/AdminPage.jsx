@@ -16,11 +16,12 @@ import "../styles/AdminPage.css";
 const TOKEN_KEY = "parking_admin_token";
 const LANGUAGE_KEY = "parking_admin_language";
 const THEME_KEY = "parking_admin_theme";
+const CAMERA_ASSIGNMENTS_KEY = "parking_camera_assignments";
 
 const TRANSLATIONS = {
     en: {
         language: "اردو", theme: "Dark mode", lightTheme: "Light mode", signOut: "Sign out",
-        controlCenter: "Control center", whitelist: "Whitelist", garageSettings: "Garage Settings", cameraSetup: "Camera Setup", billing: "Billing",
+        controlCenter: "Control center", whitelist: "Whitelist", garageSettings: "Garage Setup", cameraSetup: "Camera Setup", billing: "Billing",
         vehicleTitle: "Vehicle", whitelistTitle: "whitelist.", vehicleIntro: "Give trusted vehicles a custom discount at checkout.",
         addVehicle: "Add vehicle", numberPlate: "Number plate", name: "Name", discountPercentage: "Discount percentage", addToWhitelist: "Add to whitelist",
         removeVehicle: "Remove vehicle", nameOrPlate: "Name or number plate", searchList: "Search the list", removeHint: "Enter either the assigned name or the exact number plate.", removeFromList: "Remove from list",
@@ -103,14 +104,34 @@ function AdminPage() {
     });
     const [cameraMessage, setCameraMessage] = useState("");
     const [cameraMessageType, setCameraMessageType] = useState("success");
+    const [savedCameraSetup, setSavedCameraSetup] = useState(null);
+    const [cameraDevices, setCameraDevices] = useState([]);
+    const [cameraDevicesLoading, setCameraDevicesLoading] = useState(false);
+    const [cameraAssignments, setCameraAssignments] = useState(() => {
+        try {
+            return JSON.parse(localStorage.getItem(CAMERA_ASSIGNMENTS_KEY)) || {};
+        } catch {
+            return {};
+        }
+    });
     const [advancedGarageSettings, setAdvancedGarageSettings] = useState(false);
     const [confirmationOpen, setConfirmationOpen] = useState(false);
+    const [confirmationSection, setConfirmationSection] = useState(null);
+    const [settingsSubmitting, setSettingsSubmitting] = useState(null);
     const [billingConfig, setBillingConfig] = useState({ payments_enabled: false, cash_enabled: false, card_enabled: false });
     const [billingMessage, setBillingMessage] = useState("");
+    const [savedBillingConfig, setSavedBillingConfig] = useState(null);
 
     useEffect(() => {
         localStorage.setItem(LANGUAGE_KEY, language);
     }, [language]);
+
+    useEffect(() => {
+        localStorage.setItem(
+            CAMERA_ASSIGNMENTS_KEY,
+            JSON.stringify(cameraAssignments)
+        );
+    }, [cameraAssignments]);
 
     useEffect(() => {
         localStorage.setItem(THEME_KEY, theme);
@@ -143,13 +164,16 @@ function AdminPage() {
                     setSavedGarageSettings(normalizedGarageSettings);
                 }
                 if (settings.camera_config) {
-                    setCameraConfig({
+                    const normalizedCameraConfig = {
                         entry_lane_cameras: String(settings.camera_config.entry_lane_cameras),
                         exit_lane_cameras: String(settings.camera_config.exit_lane_cameras),
-                    });
+                    };
+                    setCameraConfig(normalizedCameraConfig);
+                    setSavedCameraSetup(normalizeCameraSetup(normalizedCameraConfig, cameraAssignments));
                 }
                 if (settings.billing_config) {
                     setBillingConfig(settings.billing_config);
+                    setSavedBillingConfig(normalizeBillingConfig(settings.billing_config));
                 }
             })
             .catch(() => { });
@@ -306,6 +330,7 @@ function AdminPage() {
 
     async function handleCameraConfigSubmit(event) {
         event.preventDefault();
+        if (settingsSubmitting === "camera") return;
         const nextErrors = {
             entry_lane_cameras: validateCameraField("entry_lane_cameras", cameraConfig.entry_lane_cameras),
             exit_lane_cameras: validateCameraField("exit_lane_cameras", cameraConfig.exit_lane_cameras),
@@ -320,18 +345,61 @@ function AdminPage() {
             return;
         }
 
-        try {
-            await saveCameraConfig(token, {
-                entry_lane_cameras: Number(cameraConfig.entry_lane_cameras),
-                exit_lane_cameras: Number(cameraConfig.exit_lane_cameras),
-            });
-            setCameraMessageType("success");
-            setCameraMessage(t.camerasSaved);
-        } catch {
+        if (isCameraSetupAlreadyApplied(cameraConfig, cameraAssignments, savedCameraSetup)) {
             setCameraMessageType("warning");
-            setCameraMessage(t.requestFailed);
+            setCameraMessage("These camera settings are already applied.");
+            return;
+        }
+
+        openSettingsConfirmation("camera");
+    }
+
+    async function refreshCameraDevices() {
+        if (cameraDevicesLoading) return;
+        setCameraDevicesLoading(true);
+        try {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                stream.getTracks().forEach((track) => track.stop());
+            } catch {
+                // Device labels may remain unavailable until the browser grants access.
+            }
+
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            setCameraDevices(
+                devices.filter((device) => device.kind === "videoinput")
+            );
+        } finally {
+            setCameraDevicesLoading(false);
         }
     }
+
+    function setCameraAssignment(cameraId, deviceId) {
+        setCameraAssignments((current) => ({
+            ...current,
+            [cameraId]: deviceId,
+        }));
+    }
+
+    const cameraSlots = [
+        ...Array.from(
+            { length: Number(cameraConfig.entry_lane_cameras) || 1 },
+            (_, index) => ({ id: `entry-${index + 1}`, label: `Entry Camera ${index + 1}` })
+        ),
+        ...Array.from(
+            { length: Number(cameraConfig.exit_lane_cameras) || 1 },
+            (_, index) => ({ id: `exit-${index + 1}`, label: `Exit Camera ${index + 1}` })
+        ),
+    ];
+    const cameraSetupAlreadyApplied = isCameraSetupAlreadyApplied(
+        cameraConfig,
+        cameraAssignments,
+        savedCameraSetup
+    );
+    const billingAlreadyApplied = isBillingConfigAlreadyApplied(
+        billingConfig,
+        savedBillingConfig
+    );
 
     function handleBillingToggle(field) {
         setBillingConfig((current) => {
@@ -346,12 +414,92 @@ function AdminPage() {
 
     async function handleBillingApply(event) {
         event.preventDefault();
+        if (settingsSubmitting === "billing") return;
+        if (isBillingConfigAlreadyApplied(billingConfig, savedBillingConfig)) {
+            setBillingMessage("These billing settings are already applied.");
+            return;
+        }
+        openSettingsConfirmation("billing");
+    }
+
+    function normalizeCameraSetup(config, assignments) {
+        return JSON.stringify({
+            entry_lane_cameras: Number(config?.entry_lane_cameras) || 0,
+            exit_lane_cameras: Number(config?.exit_lane_cameras) || 0,
+            assignments: Object.entries(assignments || {}).sort(([first], [second]) => first.localeCompare(second)),
+        });
+    }
+
+    function normalizeBillingConfig(config) {
+        return JSON.stringify({
+            payments_enabled: Boolean(config?.payments_enabled),
+            cash_enabled: Boolean(config?.cash_enabled),
+            card_enabled: Boolean(config?.card_enabled),
+        });
+    }
+
+    function isCameraSetupAlreadyApplied(config, assignments, savedSetup) {
+        return Boolean(savedSetup) && normalizeCameraSetup(config, assignments) === savedSetup;
+    }
+
+    function isBillingConfigAlreadyApplied(config, savedConfig) {
+        return Boolean(savedConfig) && normalizeBillingConfig(config) === savedConfig;
+    }
+
+    function openSettingsConfirmation(section) {
+        setConfirmationSection(section);
+        setConfirmationOpen(true);
+    }
+
+    function closeSettingsConfirmation() {
+        if (settingsSubmitting) return;
+        setConfirmationOpen(false);
+        setConfirmationSection(null);
+    }
+
+    async function confirmCameraSettings() {
+        if (settingsSubmitting) return;
+        setSettingsSubmitting("camera");
         try {
-            await saveBillingConfig(token, billingConfig);
+            const payload = {
+                entry_lane_cameras: Number(cameraConfig.entry_lane_cameras),
+                exit_lane_cameras: Number(cameraConfig.exit_lane_cameras),
+            };
+            const result = await saveCameraConfig(token, payload);
+            const savedConfig = result?.camera_config || payload;
+            const normalizedConfig = {
+                entry_lane_cameras: String(savedConfig.entry_lane_cameras),
+                exit_lane_cameras: String(savedConfig.exit_lane_cameras),
+            };
+            setCameraConfig(normalizedConfig);
+            setSavedCameraSetup(normalizeCameraSetup(normalizedConfig, cameraAssignments));
+            setCameraMessageType("success");
+            setCameraMessage(t.camerasSaved);
+            setConfirmationOpen(false);
+            setConfirmationSection(null);
+        } catch {
+            setCameraMessageType("warning");
+            setCameraMessage(t.requestFailed);
+        } finally {
+            setSettingsSubmitting(null);
+        }
+    }
+
+    async function confirmBillingSettings() {
+        if (settingsSubmitting) return;
+        setSettingsSubmitting("billing");
+        try {
+            const result = await saveBillingConfig(token, billingConfig);
+            const savedConfig = result?.billing_config || billingConfig;
+            setBillingConfig(savedConfig);
+            setSavedBillingConfig(normalizeBillingConfig(savedConfig));
             setBillingMessage(t.billingApplied);
-            setTimeout(() => setBillingMessage(""), 3000);
+            setConfirmationOpen(false);
+            setConfirmationSection(null);
         } catch {
             setBillingMessage(t.requestFailed);
+        } finally {
+            setSettingsSubmitting(null);
         }
     }
     function isGarageSettingsAlreadyApplied(currentSettings, savedSettings) {
@@ -526,6 +674,7 @@ function AdminPage() {
 
     function handleGarageSettingsApply(event) {
         event.preventDefault();
+        if (settingsSubmitting === "garage") return;
         if (garageSettingsAlreadyApplied) {
             setGarageSettingsMessageType("warning");
             setGarageSettingsMessage("These garage settings are already applied.");
@@ -564,10 +713,11 @@ function AdminPage() {
 
         setGarageSettingsMessageType("success");
         setGarageSettingsMessage("");
-        setConfirmationOpen(true);
+        openSettingsConfirmation("garage");
     }
 
     async function confirmGarageSettings() {
+        if (settingsSubmitting) return;
         const levelCountVal = garageSettings.level_count !== undefined
             ? garageSettings.level_count
             : (garageSettings.levels?.length ? String(garageSettings.levels.length) : "");
@@ -599,16 +749,22 @@ function AdminPage() {
             spaces: Number(level.spaces),
         }));
 
+        setSettingsSubmitting("garage");
         try {
-            await saveGarageSettings(token, {
+            const result = await saveGarageSettings(token, {
                 level_count: count,
                 spaces_per_level: defaultSpaces,
                 levels: payloadLevels,
             });
+            const savedSettings = result?.garage_settings || {
+                level_count: count,
+                spaces_per_level: defaultSpaces,
+                levels: payloadLevels,
+            };
             setSavedGarageSettings({
-                level_count: String(count),
-                spaces_per_level: String(defaultSpaces),
-                levels: payloadLevels.map((level) => ({
+                level_count: String(savedSettings.level_count),
+                spaces_per_level: String(savedSettings.spaces_per_level),
+                levels: (savedSettings.levels || payloadLevels).map((level) => ({
                     ...level,
                     spaces: String(level.spaces),
                 })),
@@ -622,10 +778,14 @@ function AdminPage() {
             setGarageSettingsMessageType("success");
             setGarageSettingsMessage(t.garageApplied);
             setConfirmationOpen(false);
+            setConfirmationSection(null);
         } catch (err) {
             setGarageSettingsMessageType("warning");
             setGarageSettingsMessage(err?.message || t.requestFailed);
             setConfirmationOpen(false);
+            setConfirmationSection(null);
+        } finally {
+            setSettingsSubmitting(null);
         }
     }
 
@@ -755,7 +915,7 @@ function AdminPage() {
                                         <button
                                             type="submit"
                                             className="settings-save-button"
-                                            disabled={garageSettingsAlreadyApplied}
+                                            disabled={garageSettingsAlreadyApplied || settingsSubmitting === "garage"}
                                         >
                                             {garageSettingsAlreadyApplied ? "Already Applied" : t.apply}
                                             {!garageSettingsAlreadyApplied && <span>→</span>}
@@ -779,19 +939,6 @@ function AdminPage() {
                                     </div>
                                 </form>
 
-                                {confirmationOpen && (
-                                    <div className="confirmation-overlay" onClick={() => setConfirmationOpen(false)}>
-                                        <div className="confirmation-dialog" onClick={(event) => event.stopPropagation()}>
-                                            <h3>{t.confirmLayout}</h3>
-                                            <p><strong>{t.levels}:</strong> {garageSettings.level_count || garageSettings.levels?.length || 0}</p>
-                                            <p><strong>{t.spacesPerLevel}:</strong> {garageSettings.spaces_per_level || 0}</p>
-                                            <div className="confirmation-actions">
-                                                <button type="button" className="confirmation-cancel" onClick={() => setConfirmationOpen(false)}>{t.cancel}</button>
-                                                <button type="button" className="confirmation-confirm" onClick={confirmGarageSettings}>{t.confirm}</button>
-                                            </div>
-                                        </div>
-                                    </div>
-                                )}
                             </div>
                         ) : activeFeature === "camera-config" ? (
                             <div className="feature-view">
@@ -834,12 +981,60 @@ function AdminPage() {
                                         </div>
                                     </div>
 
+                                    <div className="camera-assignments">
+                                        <div className="camera-assignments-header">
+                                            <div>
+                                                <p className="camera-assignments-eyebrow">Browser devices</p>
+                                                <strong>Browser camera assignments</strong>
+                                            </div>
+                                            <button type="button" className="camera-refresh-button" onClick={refreshCameraDevices} disabled={cameraDevicesLoading}>
+                                                {cameraDevicesLoading ? "Refreshing..." : "Refresh cameras"}
+                                            </button>
+                                        </div>
+                                        <div className="camera-assignment-list">
+                                            {cameraSlots.map((slot) => {
+                                                const assigned = cameraAssignments[slot.id] || "";
+                                                const lane = slot.id.startsWith("entry-") ? "Entry" : "Exit";
+
+                                                return (
+                                                    <div key={slot.id} className="camera-assignment-card">
+                                                        <div className="camera-assignment-title">
+                                                            <span className={`camera-lane-badge ${lane.toLowerCase()}`}>{lane}</span>
+                                                            <strong>{slot.label}</strong>
+                                                            <code>{slot.id}</code>
+                                                        </div>
+                                                        <label className="camera-device-field">
+                                                            <span>Device source</span>
+                                                            <select
+                                                                value={assigned}
+                                                                onChange={(event) => setCameraAssignment(slot.id, event.target.value)}
+                                                            >
+                                                                <option value="">Not assigned</option>
+                                                                {cameraDevices.map((device, index) => (
+                                                                    <option key={device.deviceId} value={device.deviceId}>
+                                                                        {device.label || `Camera ${index + 1}`}
+                                                                    </option>
+                                                                ))}
+                                                            </select>
+                                                        </label>
+                                                        <span className={`camera-assignment-status ${assigned ? "assigned" : "unassigned"}`}>
+                                                            {assigned ? "Assigned" : "Not assigned"}
+                                                        </span>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+
                                     {cameraMessage && (
                                         <p className={cameraMessageType === "warning" ? "admin-error whitelist-feedback" : "whitelist-success"}>{cameraMessage}</p>
                                     )}
 
                                     <div className="settings-actions">
-                                        <button type="submit" className="settings-save-button">{t.saveCameras} <span>→</span></button>
+                                        <button type="submit" className="settings-save-button" disabled={cameraSetupAlreadyApplied || settingsSubmitting === "camera"}>
+                                            {cameraSetupAlreadyApplied ? "Already Applied" : t.apply}
+                                            {!cameraSetupAlreadyApplied && <span>→</span>}
+                                        </button>
                                     </div>
                                 </form>
                             </div>
@@ -875,7 +1070,10 @@ function AdminPage() {
                                     {billingMessage && <p className="whitelist-success">{billingMessage}</p>}
 
                                     <div className="settings-actions">
-                                        <button type="submit" className="settings-save-button">{t.apply} <span>→</span></button>
+                                        <button type="submit" className="settings-save-button" disabled={billingAlreadyApplied || settingsSubmitting === "billing"}>
+                                            {billingAlreadyApplied ? "Already Applied" : t.apply}
+                                            {!billingAlreadyApplied && <span>→</span>}
+                                        </button>
                                     </div>
                                 </form>
                             </div>
@@ -888,6 +1086,31 @@ function AdminPage() {
                             </div>
                         )}
                     </section>
+                    {confirmationOpen && (
+                        <div className="confirmation-overlay" onClick={closeSettingsConfirmation}>
+                            <div className="confirmation-dialog" onClick={(event) => event.stopPropagation()}>
+                                <h3>{confirmationSection === "garage" ? t.confirmLayout : confirmationSection === "camera" ? "Confirm camera setup" : "Confirm billing setup"}</h3>
+                                {confirmationSection === "garage" ? (
+                                    <>
+                                        <p><strong>{t.levels}:</strong> {garageSettings.level_count || garageSettings.levels?.length || 0}</p>
+                                        <p><strong>{t.spacesPerLevel}:</strong> {garageSettings.spaces_per_level || 0}</p>
+                                    </>
+                                ) : confirmationSection === "camera" ? (
+                                    <>
+                                        <p>Apply the selected entry and exit camera counts.</p>
+                                        <p><strong>{t.entryCameras}:</strong> {cameraConfig.entry_lane_cameras}</p>
+                                        <p><strong>{t.exitCameras}:</strong> {cameraConfig.exit_lane_cameras}</p>
+                                    </>
+                                ) : (
+                                    <p>Apply the selected billing and payment method settings.</p>
+                                )}
+                                <div className="confirmation-actions">
+                                    <button type="button" className="confirmation-cancel" onClick={closeSettingsConfirmation} disabled={Boolean(settingsSubmitting)}>{t.cancel}</button>
+                                    <button type="button" className="confirmation-confirm" disabled={Boolean(settingsSubmitting)} onClick={confirmationSection === "garage" ? confirmGarageSettings : confirmationSection === "camera" ? confirmCameraSettings : confirmBillingSettings}>{settingsSubmitting ? "Applying..." : t.confirm}</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
                 </div>
             </main>
         );

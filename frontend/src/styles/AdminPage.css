@@ -91,6 +91,32 @@
 .camera-input { width: 88px; max-width: 88px; min-width: 88px; text-align: center; color: #10231c; }
 .camera-input::-webkit-outer-spin-button, .camera-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .camera-input[type="number"] { appearance: textfield; -moz-appearance: textfield; }
+.camera-assignments { background: #edf2ee; border: 1px solid #d3ded4; margin-top: 28px; padding: 18px; }
+.camera-assignments-header { align-items: center; display: flex; justify-content: space-between; gap: 18px; margin-bottom: 16px; }
+.camera-assignments-header strong { color: #10231c; display: block; font: 700 15px 'Manrope', sans-serif; }
+.camera-assignments-eyebrow { color: #587066; font: 700 9px 'DM Mono', monospace; letter-spacing: .1em; margin: 0 0 4px; text-transform: uppercase; }
+.camera-refresh-button { background: transparent; border: 1px solid #bdcbc0; border-radius: 7px; color: #10231c; cursor: pointer; font: 700 11px 'Manrope', sans-serif; padding: 9px 12px; white-space: nowrap; }
+.camera-refresh-button:hover { border-color: #e05b35; color: #b8482c; }
+.camera-refresh-button:focus-visible, .camera-device-field select:focus-visible { box-shadow: 0 0 0 3px rgba(224, 91, 53, .16); outline: 0; }
+.camera-assignment-list { display: grid; gap: 10px; }
+.camera-assignment-card { align-items: end; background: #fff; border: 1px solid #d3ded4; border-radius: 9px; display: grid; gap: 14px; grid-template-columns: minmax(160px, 1fr) minmax(210px, 1.35fr) auto; padding: 14px; }
+.camera-assignment-title { align-items: center; display: flex; flex-wrap: wrap; gap: 7px; }
+.camera-assignment-title strong { color: #10231c; font: 700 13px 'Manrope', sans-serif; }
+.camera-assignment-title code { background: #edf2ee; border-radius: 4px; color: #587066; font: 700 9px 'DM Mono', monospace; padding: 3px 5px; }
+.camera-lane-badge { border-radius: 99px; font: 700 9px 'DM Mono', monospace; letter-spacing: .06em; padding: 4px 7px; text-transform: uppercase; }
+.camera-lane-badge.entry { background: #dcefe2; color: #247047; }
+.camera-lane-badge.exit { background: #fff0e6; color: #b8482c; }
+.camera-device-field { display: flex; flex-direction: column; gap: 6px; }
+.camera-device-field > span { color: #587066; font: 700 9px 'DM Mono', monospace; letter-spacing: .08em; text-transform: uppercase; }
+.camera-device-field select { appearance: auto; background: #f8faf7; border: 1px solid #bdcbc0; border-radius: 7px; color: #10231c; font: 600 12px 'Manrope', sans-serif; min-height: 38px; padding: 8px 10px; width: 100%; }
+.camera-assignment-status { align-self: center; border-radius: 99px; font: 700 10px 'Manrope', sans-serif; padding: 6px 9px; white-space: nowrap; }
+.camera-assignment-status.assigned { background: #dcefe2; color: #247047; }
+.camera-assignment-status.unassigned { background: #e8edeb; color: #587066; }
+.admin-theme-dark .camera-assignments { background: rgba(44, 82, 67, .58); border-color: rgba(145, 199, 174, .26); }
+.admin-theme-dark .camera-assignment-card { background: rgba(5, 17, 13, .35); border-color: rgba(145, 199, 174, .22); }
+.admin-theme-dark .camera-assignments-header strong, .admin-theme-dark .camera-assignment-title strong { color: #edf2ee; }
+.admin-theme-dark .camera-device-field select { background: rgba(5, 17, 13, .52); border-color: rgba(145, 199, 174, .3); color: #edf2ee; }
+.admin-theme-dark .camera-refresh-button { border-color: rgba(145, 199, 174, .35); color: #edf2ee; }
 .error-space { display: block; min-height: 18px; }
 .advanced-level-editor { border-top: 1px solid #d3ded4; margin-top: 24px; padding-top: 20px; }
 .advanced-level-editor h4 { font-size: 18px; margin: 0 0 8px; }
@@ -152,5 +178,5 @@
 [dir="rtl"] .whitelist-card button, [dir="rtl"] .show-list-button, [dir="rtl"] .settings-save-button { text-align: right; }
 [dir="rtl"] .whitelist-card button span, [dir="rtl"] .show-list-button span, [dir="rtl"] .settings-save-button span { float: left; }
 [dir="rtl"] .whitelist-table-wrap th, [dir="rtl"] .whitelist-table-wrap td { text-align: right; }
-@media (max-width: 720px) { .admin-login-shell { grid-template-columns: 1fr; } .admin-welcome { min-height: 390px; padding: 30px; } .admin-form-panel { padding: 52px 30px 40px; } .admin-dashboard { padding-top: 70px; } .admin-header { align-items: flex-start; gap: 16px; } .admin-header-actions { align-items: flex-end; flex-direction: column; } .level-config-header { align-items: stretch; flex-direction: column; } .garage-field-group, .camera-field-group { max-width: none; min-width: 0; } }
+@media (max-width: 720px) { .admin-login-shell { grid-template-columns: 1fr; } .admin-welcome { min-height: 390px; padding: 30px; } .admin-form-panel { padding: 52px 30px 40px; } .admin-dashboard { padding-top: 70px; } .admin-header { align-items: flex-start; gap: 16px; } .admin-header-actions { align-items: flex-end; flex-direction: column; } .level-config-header, .camera-assignments-header { align-items: stretch; flex-direction: column; } .garage-field-group, .camera-field-group { max-width: none; min-width: 0; } .camera-assignment-card { align-items: stretch; grid-template-columns: 1fr; } .camera-assignment-status { justify-self: start; } }
 @media (max-width: 800px) { .admin-app-body { grid-template-columns: 1fr; } .admin-sidebar { border-bottom: 1px solid rgba(16,35,28,.14); border-right: 0; padding: 25px 28px; } .sidebar-muted { display: none; } .whitelist-actions { grid-template-columns: 1fr; margin-top: 38px; } }

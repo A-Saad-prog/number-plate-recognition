@@ -32,6 +32,7 @@ from app.services.entry_service import (
 
 from app.services.exit_service import (
     process_vehicle_exit_by_plate,
+    payment_required_for_exit,
 )
 
 configure_logging()
@@ -119,11 +120,13 @@ def database_test():
 def garage_settings(
     db: Session = Depends(get_db),
 ):
+    settings = settings_response(get_admin_settings(db))
+
     return {
         "success": True,
-        "garage_settings": settings_response(
-            get_admin_settings(db)
-        )["garage_settings"],
+        "garage_settings": settings["garage_settings"],
+        "camera_config": settings["camera_config"],
+        "billing_config": settings["billing_config"],
     }
 
 @app.get("/parking/spaces")
@@ -190,6 +193,24 @@ def vehicle_entry(
 # ============================================================
 
 
+@app.get("/parking/exit/payment-required")
+def exit_payment_required(
+    license_plate: str,
+    db: Session = Depends(get_db),
+):
+    billing_enabled = bool(
+        settings_response(get_admin_settings(db))["billing_config"].get("payments_enabled")
+    )
+    return {
+        "success": True,
+        "payment_required": payment_required_for_exit(
+            db,
+            license_plate,
+            billing_enabled,
+        ),
+    }
+
+
 @app.post("/parking/exit")
 def vehicle_exit(
     request: VehicleExitRequest,
@@ -203,11 +224,28 @@ def vehicle_exit(
     """
 
     try:
+        billing_config = settings_response(
+            get_admin_settings(db)
+        )["billing_config"]
+
+        payment_required = payment_required_for_exit(
+            db,
+            request.license_plate,
+            bool(billing_config.get("payments_enabled")),
+        )
+
+        if payment_required and not request.payment_method:
+            raise ValueError("Select a payment method before exiting.")
 
         result = process_vehicle_exit_by_plate(
             db=db,
             license_plate=request.license_plate,
-            payment_method=request.payment_method,
+            payment_method=(
+                request.payment_method
+                if billing_config.get("payments_enabled")
+                else None
+            ),
+            billing_enabled=bool(billing_config.get("payments_enabled")),
         )
 
         return {

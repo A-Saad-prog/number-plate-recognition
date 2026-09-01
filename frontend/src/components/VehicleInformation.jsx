@@ -21,13 +21,17 @@ function VehicleInformation({
                 <div className="vehicle-info-row"><strong>Entry Time</strong><span>{formatDateTime(exitResult.entry_time)}</span></div>
                 <div className="vehicle-info-row"><strong>Exit Time</strong><span>{formatDateTime(exitResult.exit_time)}</span></div>
                 <div className="vehicle-info-row"><strong>Duration</strong><span>{formatDuration(exitResult.entry_time, exitResult.exit_time)}</span></div>
-                <div className="vehicle-info-row"><strong>Rate</strong><span>{formatRupees(exitResult.rate_per_minute ?? 1.67)} / minute</span></div>
                 <div className="vehicle-info-row"><strong>Parking Space</strong><span>Level {exitResult.level} — {exitResult.space}</span></div>
-                <div className="vehicle-info-row"><strong>Payment</strong><span>{formatPaymentMethod(exitResult.payment_method)}</span></div>
-                {Number(exitResult.discount_percent) > 0 && (
-                    <div className="vehicle-info-row"><strong>Whitelist Discount</strong><span>{exitResult.discount_percent}%</span></div>
+                {exitResult.billing_enabled !== false && (
+                    <>
+                        <div className="vehicle-info-row"><strong>Rate</strong><span>{formatRupees(exitResult.rate_per_minute ?? 1.67)} / minute</span></div>
+                        <div className="vehicle-info-row"><strong>Payment</strong><span>{formatPaymentMethod(exitResult.payment_method)}</span></div>
+                        {Number(exitResult.discount_percent) > 0 && (
+                            <div className="vehicle-info-row"><strong>Whitelist Discount</strong><span>{exitResult.discount_percent}%</span></div>
+                        )}
+                        <div className="vehicle-info-amount"><span>Amount Owed</span><strong>{formatRupees(exitResult.amount)}</strong></div>
+                    </>
                 )}
-                <div className="vehicle-info-amount"><span>Amount Owed</span><strong>{formatRupees(exitResult.amount)}</strong></div>
                 <button type="button" className="cancel-button receipt-done-button" onClick={onReceiptDone}>Done</button>
             </div>
         );

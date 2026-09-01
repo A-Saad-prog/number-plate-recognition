@@ -165,6 +165,18 @@ export async function registerEntry(licensePlate, parkingSpaceId) {
 // Exit Using License Plate
 // ============================================================
 
+export async function getExitPaymentRequired(licensePlate) {
+    const response = await fetch(
+        `${API_BASE_URL}/parking/exit/payment-required?license_plate=${encodeURIComponent(licensePlate)}`
+    );
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(data.detail || `Failed to check exit payment: ${response.status}`);
+    }
+    return data;
+}
+
 export async function exitUsingPlate(licensePlate, paymentMethod) {
 
     const response = await fetch(

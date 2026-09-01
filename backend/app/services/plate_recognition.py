@@ -3,6 +3,7 @@ import re
 import base64
 import time
 import threading
+import logging
 from datetime import datetime
 from uuid import uuid4
 
@@ -39,6 +40,9 @@ MODEL_PATH = os.path.abspath(
 )
 
 CONFIDENCE_THRESHOLD = 0.30
+YOLO_IMGSZ = int(os.getenv("YOLO_IMGSZ", "640"))
+YOLO_DEVICE = os.getenv("YOLO_DEVICE") or None
+VISION_DEBUG = os.getenv("VISION_DEBUG", "").lower() in {"1", "true", "yes"}
 
 OCR_AGREEMENT_REQUIRED = 3
 OCR_BUFFER_SIZE = 8
@@ -48,11 +52,14 @@ OCR_CONFIDENCE_THRESHOLD = 0.50
 
 PLATE_PADDING = 10
 
-ocr_reading_buffer = []
-accepted_plate_metadata = None
-accepted_plate_time = 0.0
-last_plate_detection_time = 0.0
-active_detection_source = None
+ocr_states = {}
+ocr_lock = threading.Lock()
+vision_logger = logging.getLogger(__name__)
+
+
+def _vision_debug(message, *args):
+    if VISION_DEBUG:
+        vision_logger.info(message, *args)
 
 
 # ============================================================
@@ -333,42 +340,57 @@ def _plate_distance(first: str, second: str) -> int:
     return previous[-1]
 
 
-def _clear_ocr_state():
-    global accepted_plate_metadata
-    global accepted_plate_time
+def _ocr_state(source):
+    return ocr_states.setdefault(
+        source,
+        {
+            "buffer": [],
+            "accepted": None,
+            "last_detection_time": 0.0,
+            "latest_crop": None,
+            "ocr_in_flight": False,
+            "generation": 0,
+            "lock": threading.RLock(),
+        },
+    )
 
-    ocr_reading_buffer.clear()
-    accepted_plate_metadata = None
-    accepted_plate_time = 0.0
+
+def _clear_ocr_state(source):
+    state = _ocr_state(source)
+    with state["lock"]:
+        state["buffer"].clear()
+        state["accepted"] = None
+        state["latest_crop"] = None
+        state["generation"] += 1
 
 
-def _vote_for_plate(metadata):
+def _vote_for_plate(metadata, source):
     """Add one OCR result and return a weighted agreement when established."""
-    global accepted_plate_metadata
-    global accepted_plate_time
+    state = _ocr_state(source)
+    buffer = state["buffer"]
 
     now = time.monotonic()
-    ocr_reading_buffer[:] = [
+    buffer[:] = [
         reading
-        for reading in ocr_reading_buffer
+        for reading in buffer
         if now - reading["time"] <= OCR_BUFFER_TTL_SECONDS
     ]
 
     normalized = _comparison_plate(metadata["plate"])
-    if ocr_reading_buffer and not any(
+    if buffer and not any(
         _plate_distance(normalized, item["normalized"]) <= 1
-        for item in ocr_reading_buffer
+        for item in buffer
     ):
         # A new plate candidate starts a new vehicle vote window.
-        ocr_reading_buffer.clear()
+        buffer.clear()
 
     reading = {"metadata": metadata, "normalized": normalized, "time": now}
-    ocr_reading_buffer.append(reading)
-    del ocr_reading_buffer[:-OCR_BUFFER_SIZE]
+    buffer.append(reading)
+    del buffer[:-OCR_BUFFER_SIZE]
 
     matching = [
         item
-        for item in ocr_reading_buffer
+        for item in buffer
         if _plate_distance(normalized, item["normalized"]) <= 1
     ]
     weighted_confidence = sum(
@@ -382,9 +404,8 @@ def _vote_for_plate(metadata):
         matching,
         key=lambda item: float(item["metadata"].get("confidence", 0.0)),
     )["metadata"]
-    accepted_plate_metadata = best
-    accepted_plate_time = now
-    ocr_reading_buffer.clear()
+    state["accepted"] = best
+    buffer.clear()
     return best
 
 
@@ -556,12 +577,15 @@ def read_plate(plate_crop):
         result = classify_plate("\n".join(texts), max(scores))
 
         if result is None:
-
-            print(f"OCR rejected: {' '.join(texts)}")
+            _vision_debug("OCR rejected: %s", " ".join(texts))
 
             return None
 
-        print(f"OCR: {result['plate']} (confidence: {result['confidence']:.2f})")
+        _vision_debug(
+            "OCR accepted candidate %s (confidence: %.2f)",
+            result["plate"],
+            result["confidence"],
+        )
 
         return result
 
@@ -570,6 +594,49 @@ def read_plate(plate_crop):
         print(f"OCR error: {error}")
 
         return None
+
+
+def _run_ocr_vote(source: str, frame_for_upload, generation: int):
+    """Run the existing strict vote off the latency-sensitive YOLO response."""
+    state = _ocr_state(source)
+    started_at = time.perf_counter()
+
+    try:
+        for _ in range(OCR_AGREEMENT_REQUIRED):
+            with state["lock"]:
+                if state["generation"] != generation or state["accepted"] is not None:
+                    return
+                plate_crop = state["latest_crop"]
+                if plate_crop is not None:
+                    plate_crop = plate_crop.copy()
+
+            if plate_crop is None or plate_crop.size == 0:
+                return
+
+            # PaddleOCR is shared by every source; serialize access while
+            # retaining isolated source buffers and non-blocking YOLO replies.
+            with ocr_lock:
+                ocr_result = read_plate(plate_crop)
+
+            if not ocr_result:
+                return
+
+            with state["lock"]:
+                if state["generation"] != generation:
+                    return
+                plate_metadata = _vote_for_plate(ocr_result, source)
+
+            if plate_metadata is not None:
+                _upload_accepted_frame_in_background(frame_for_upload, plate_metadata)
+                return
+    finally:
+        with state["lock"]:
+            state["ocr_in_flight"] = False
+        _vision_debug(
+            "Vision OCR timing source=%s ocr_ms=%.1f",
+            source,
+            (time.perf_counter() - started_at) * 1000,
+        )
 
 
 # ============================================================
@@ -596,14 +663,12 @@ def read_plate(plate_crop):
 def detect_plate(image_base64: str, source: str | None = None):
 
     global current_fps
-    global last_plate_detection_time
-    global active_detection_source
-
-    if source != active_detection_source:
-        _clear_ocr_state()
-        active_detection_source = source
+    source = source or "default"
+    state = _ocr_state(source)
+    request_started_at = time.perf_counter()
 
     frame = decode_image(image_base64)
+    decoded_at = time.perf_counter()
 
     if frame is None:
 
@@ -625,12 +690,17 @@ def detect_plate(image_base64: str, source: str | None = None):
     # YOLO
     # ========================================================
 
-    results = yolo.predict(
-        source=frame,
-        conf=CONFIDENCE_THRESHOLD,
-        device="cpu",
-        verbose=False,
-    )
+    inference_options = {
+        "source": frame,
+        "conf": CONFIDENCE_THRESHOLD,
+        "verbose": False,
+        "imgsz": YOLO_IMGSZ,
+    }
+    if YOLO_DEVICE:
+        inference_options["device"] = YOLO_DEVICE
+
+    results = yolo.predict(**inference_options)
+    yolo_finished_at = time.perf_counter()
 
     # ========================================================
     # Find strongest plate
@@ -662,11 +732,19 @@ def detect_plate(image_base64: str, source: str | None = None):
     if best_box is None:
 
         if (
-            last_plate_detection_time
-            and time.monotonic() - last_plate_detection_time > OCR_BUFFER_TTL_SECONDS
+            state["last_detection_time"]
+            and time.monotonic() - state["last_detection_time"] > OCR_BUFFER_TTL_SECONDS
         ):
-            _clear_ocr_state()
-            last_plate_detection_time = 0.0
+            _clear_ocr_state(source)
+            state["last_detection_time"] = 0.0
+
+        _vision_debug(
+            "Vision timing source=%s decode_ms=%.1f yolo_ms=%.1f total_ms=%.1f detected=false",
+            source,
+            (decoded_at - request_started_at) * 1000,
+            (yolo_finished_at - decoded_at) * 1000,
+            (time.perf_counter() - request_started_at) * 1000,
+        )
 
         return {
             "detected": False,
@@ -682,7 +760,8 @@ def detect_plate(image_base64: str, source: str | None = None):
     # Bounding box
     # ========================================================
 
-    last_plate_detection_time = time.monotonic()
+    with state["lock"]:
+        state["last_detection_time"] = time.monotonic()
 
     x1, y1, x2, y2 = map(
         int,
@@ -755,39 +834,31 @@ def detect_plate(image_base64: str, source: str | None = None):
             "fps": current_fps,
         }
 
-    # ========================================================
-    # OCR
-    #
-    # Same 3-reading majority voting logic
-    # from your original plate_detector.py.
-    # ========================================================
-
-    if accepted_plate_metadata is not None:
-        plate_metadata = accepted_plate_metadata
-    else:
-        plate_metadata = None
-
-        for _ in range(OCR_AGREEMENT_REQUIRED):
-            ocr_result = read_plate(plate_crop)
-
-            if not ocr_result:
-                break
-
-            plate_metadata = _vote_for_plate(ocr_result)
-
-            if plate_metadata is not None:
-                break
-
-        if plate_metadata is not None:
-            _upload_accepted_frame_in_background(frame, plate_metadata)
+    # Keep the fast path bounded by decode + YOLO. The current strict
+    # three-read OCR vote runs once per source in a lightweight thread, so
+    # the client can render the detected box without waiting for OCR.
+    with state["lock"]:
+        plate_metadata = state["accepted"]
+        if plate_metadata is None:
+            state["latest_crop"] = plate_crop.copy()
+            if not state["ocr_in_flight"]:
+                state["ocr_in_flight"] = True
+                threading.Thread(
+                    target=_run_ocr_vote,
+                    args=(source, frame, state["generation"]),
+                    daemon=True,
+                ).start()
 
     recognized_plate = plate_metadata["plate"] if plate_metadata else None
-
-    # ========================================================
-    # Encode crop
-    # ========================================================
-
-    plate_image_base64 = encode_plate_image(plate_crop)
+    _vision_debug(
+        "Vision timing source=%s decode_ms=%.1f yolo_ms=%.1f box_ms=%.1f total_ms=%.1f ocr_pending=%s",
+        source,
+        (decoded_at - request_started_at) * 1000,
+        (yolo_finished_at - decoded_at) * 1000,
+        (time.perf_counter() - yolo_finished_at) * 1000,
+        (time.perf_counter() - request_started_at) * 1000,
+        recognized_plate is None,
+    )
 
     # ========================================================
     # Return everything to React
@@ -797,7 +868,7 @@ def detect_plate(image_base64: str, source: str | None = None):
         "detected": True,
         "license_plate": recognized_plate,
         "plate_metadata": plate_metadata,
-        "plate_image": plate_image_base64,
+        "plate_image": None,
         "confidence": best_confidence,
         "box": {
             "x1": x1,

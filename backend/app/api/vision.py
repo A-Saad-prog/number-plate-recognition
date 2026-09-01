@@ -1,4 +1,6 @@
 import logging
+import os
+import time
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -6,6 +8,7 @@ from pydantic import BaseModel
 from app.services.plate_recognition import detect_plate
 
 logger = logging.getLogger(__name__)
+VISION_DEBUG = os.getenv("VISION_DEBUG", "").lower() in {"1", "true", "yes"}
 
 router = APIRouter(
     prefix="/vision",
@@ -32,10 +35,21 @@ def detect_license_plate(
 ):
     try:
 
+        started_at = time.perf_counter()
+
         result = detect_plate(
             request.image,
             request.source,
         )
+
+        if VISION_DEBUG:
+            logger.info(
+                "Vision endpoint timing source=%s total_ms=%.1f detected=%s accepted=%s",
+                request.source or "default",
+                (time.perf_counter() - started_at) * 1000,
+                result.get("detected"),
+                bool(result.get("license_plate")),
+            )
 
         return {
             "success": True,
