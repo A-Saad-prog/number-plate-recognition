@@ -100,6 +100,7 @@ function GaragePage() {
     const [parkingError, setParkingError] = useState("");
     const [openLevel, setOpenLevel] = useState(1);
     const [adminSettings, setAdminSettings] = useState(null);
+    const automaticEntryRef = useRef(false);
     const [garageAuthFailed, setGarageAuthFailed] = useState(false);
     const garageAuthFailedRef = useRef(false);
     const [showSettingsReloadNotice, setShowSettingsReloadNotice] = useState(false);
@@ -325,7 +326,7 @@ function GaragePage() {
                             setSelectedSpaceId(null);
                         }
 
-                        if (adminSettings?.garage_settings?.automatic_entry && automaticSpace) {
+                        if (automaticEntryRef.current && automaticSpace) {
                             setVehicleAction("entry");
                             void handleConfirmEntry(plate, automaticSpace.id, source);
                         }
@@ -653,6 +654,7 @@ function GaragePage() {
             const result = await getGarageSettings();
 
             if (result?.success) {
+                automaticEntryRef.current = Boolean(result.garage_settings?.automatic_entry);
                 setAdminSettings(result);
                 return true;
             }
@@ -836,6 +838,7 @@ function GaragePage() {
     useEffect(() => {
         const handleSettingsUpdate = (event) => {
             if (event.key === GARAGE_SETTINGS_UPDATED_KEY && event.newValue) {
+                void loadAdminSettings();
                 setShowSettingsReloadNotice(true);
             }
         };
@@ -1643,7 +1646,7 @@ function GaragePage() {
                             const automaticSpace = getAutomaticParkingSpace();
                             if (automaticSpace) {
                                 setSelectedSpaceId(automaticSpace.id);
-                                if (adminSettings?.garage_settings?.automatic_entry) {
+                                if (automaticEntryRef.current) {
                                     setVehicleAction("entry");
                                     void handleConfirmEntry(plate, automaticSpace.id, cameraId);
                                 }

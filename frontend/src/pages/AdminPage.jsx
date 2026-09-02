@@ -95,6 +95,9 @@ function AdminPage() {
     const [whitelist, setWhitelist] = useState([]);
     const [whitelistVisible, setWhitelistVisible] = useState(false);
     const [whitelistLoading, setWhitelistLoading] = useState(false);
+    const [whitelistLoaded, setWhitelistLoaded] = useState(false);
+    const [whitelistListLoading, setWhitelistListLoading] = useState(false);
+    const whitelistFetchInFlightRef = useRef(false);
     const [whitelistError, setWhitelistError] = useState("");
     const [whitelistMessage, setWhitelistMessage] = useState("");
     const [garageSettings, setGarageSettings] = useState({ level_count: "", levels: [], spaces_per_level: "" });
@@ -292,6 +295,7 @@ function AdminPage() {
                 return exists ? currentEntries : [nextEntry, ...currentEntries];
             });
             setWhitelistVisible(true);
+            if (!whitelistLoaded) void loadWhitelist();
             setPlate("");
             setVehicleName("");
             setDiscount("");
@@ -320,6 +324,7 @@ function AdminPage() {
             );
             setRemoveSearch("");
             setWhitelistVisible(true);
+            if (!whitelistLoaded) void loadWhitelist();
             setWhitelistMessage(t.vehicleRemoved);
         } catch {
             setWhitelistError(t.requestFailed);
@@ -328,23 +333,32 @@ function AdminPage() {
         }
     }
 
-    async function showWhitelist() {
+    async function loadWhitelist() {
+        if (whitelistLoaded || whitelistFetchInFlightRef.current) return;
+
+        whitelistFetchInFlightRef.current = true;
+        setWhitelistListLoading(true);
+        setWhitelistError("");
+        try {
+            const result = await getWhitelist(token);
+            setWhitelist(result.entries || []);
+            setWhitelistLoaded(true);
+        } catch {
+            setWhitelistError(t.requestFailed);
+        } finally {
+            whitelistFetchInFlightRef.current = false;
+            setWhitelistListLoading(false);
+        }
+    }
+
+    function showWhitelist() {
         if (whitelistVisible) {
             setWhitelistVisible(false);
             return;
         }
 
-        setWhitelistLoading(true);
-        setWhitelistError("");
-        try {
-            const result = await getWhitelist(token);
-            setWhitelist(result.entries || []);
-            setWhitelistVisible(true);
-        } catch {
-            setWhitelistError(t.requestFailed);
-        } finally {
-            setWhitelistLoading(false);
-        }
+        setWhitelistVisible(true);
+        if (!whitelistLoaded) void loadWhitelist();
     }
 
     function validateCameraField(field, value) {
@@ -847,10 +861,12 @@ function AdminPage() {
                 level_count: count,
                 spaces_per_level: defaultSpaces,
                 levels: payloadLevels,
+                automatic_entry: Boolean(garageSettings.automatic_entry),
             };
             setSavedGarageSettings({
                 level_count: String(savedSettings.level_count),
                 spaces_per_level: String(savedSettings.spaces_per_level),
+                automatic_entry: Boolean(savedSettings.automatic_entry),
                 levels: (savedSettings.levels || payloadLevels).map((level) => ({
                     ...level,
                     spaces: String(level.spaces),
@@ -862,7 +878,6 @@ function AdminPage() {
                 spaces_per_level: String(defaultSpaces),
                 automatic_entry: Boolean(savedSettings.automatic_entry),
                 levels: payloadLevels.map((l) => ({ ...l, spaces: String(l.spaces) })),
-                automatic_entry: Boolean(savedSettings.automatic_entry),
             }));
             setGarageSettingsMessageType("success");
             setGarageSettingsMessage(t.garageApplied);
@@ -932,8 +947,8 @@ function AdminPage() {
                                 </div>
                                 {whitelistError && <p className="admin-error whitelist-feedback">{whitelistError}</p>}
                                 {whitelistMessage && <p className="whitelist-success">{whitelistMessage}</p>}
-                                <button type="button" className="show-list-button" onClick={showWhitelist} disabled={whitelistLoading}>{whitelistVisible ? t.hideList : t.showList} <span>{whitelistLoading ? "..." : whitelistVisible ? "↑" : "↓"}</span></button>
-                                {whitelistVisible && whitelist.length > 0 && <div className="whitelist-table-wrap"><table><thead><tr><th>{t.name}</th><th>{t.numberPlate}</th><th>{t.discount}</th><th>{t.added}</th></tr></thead><tbody>{whitelist.map((entry) => <tr key={entry.id}><td>{entry.vehicle_name}</td><td>{entry.license_plate}</td><td>{entry.discount_percent}%</td><td>{entry.created_at ? new Date(entry.created_at).toLocaleDateString(language === "ur" ? "ur-PK" : "en-PK", { timeZone: "Asia/Karachi" }) : "-"}</td></tr>)}</tbody></table></div>}
+                                <button type="button" className="show-list-button" onClick={showWhitelist}>{whitelistVisible ? t.hideList : t.showList} <span>{whitelistListLoading ? "..." : whitelistVisible ? "↑" : "↓"}</span></button>
+                                {whitelistVisible && <div className={`whitelist-table-wrap${whitelistListLoading || whitelist.length === 0 ? " admin-loading" : ""}`}>{whitelistListLoading ? "Loading list..." : whitelist.length > 0 ? <table><thead><tr><th>{t.name}</th><th>{t.numberPlate}</th><th>{t.discount}</th><th>{t.added}</th></tr></thead><tbody>{whitelist.map((entry) => <tr key={entry.id}><td>{entry.vehicle_name}</td><td>{entry.license_plate}</td><td>{entry.discount_percent}%</td><td>{entry.created_at ? new Date(entry.created_at).toLocaleDateString(language === "ur" ? "ur-PK" : "en-PK", { timeZone: "Asia/Karachi" }) : "-"}</td></tr>)}</tbody></table> : "No whitelist entries."}</div>}
                             </div>
                         ) : activeFeature === "garage-settings" ? (
                             <div className="feature-view">

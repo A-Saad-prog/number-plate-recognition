@@ -178,6 +178,11 @@
 .admin-theme-dark .confirmation-cancel, .admin-theme-dark .admin-display-controls button, .admin-theme-dark .language-select { border-color: rgba(145, 199, 174, .35); }
 .admin-theme-dark .admin-display-controls button, .admin-theme-dark .language-select { color: #edf7f2; }
 .admin-theme-dark .language-select option { background: #10251d; color: #edf7f2; }
+.admin-theme-dark .whitelist-card label, .admin-theme-dark .billing-rate-field > label, .admin-theme-dark .billing-rate-field > div > span, .admin-theme-dark .advanced-level-editor h4, .admin-theme-dark .confirmation-dialog h3, .admin-theme-dark .whitelist-table-wrap td { color: #edf2ee; }
+.admin-theme-dark .billing-rate-field input { background: rgba(5, 17, 13, .52); border-color: rgba(145, 199, 174, .3); color: #edf7f2; }
+.admin-theme-dark .admin-form-wrap input::placeholder, .admin-theme-dark .garage-settings-form input::placeholder, .admin-theme-dark .whitelist-card input::placeholder, .admin-theme-dark .billing-rate-field input::placeholder { color: #afc1b5; opacity: 1; }
+.admin-theme-dark .camera-assignments-eyebrow, .admin-theme-dark .camera-device-field > span, .admin-theme-dark .camera-assignment-title code { color: #afc1b5; }
+.admin-theme-dark .camera-assignment-title code { background: rgba(44, 82, 67, .58); }
 [dir="rtl"] .admin-sidebar { border-left: 1px solid rgba(16,35,28,.14); border-right: 0; }
 .admin-theme-dark[dir="rtl"] .admin-sidebar { border-color: #385247; }
 [dir="rtl"] .sidebar-feature { text-align: right; }
