@@ -510,6 +510,8 @@ def read_plate(plate_crop, source=None, request_id=None):
 
         texts = []
         scores = []
+        raw_texts = []
+        raw_scores = []
 
         for result in results:
 
@@ -526,6 +528,8 @@ def read_plate(plate_crop, source=None, request_id=None):
             ):
 
                 score = float(score)
+                raw_texts.append(text)
+                raw_scores.append(score)
 
                 if score < OCR_CONFIDENCE_THRESHOLD:
                     continue
@@ -538,10 +542,36 @@ def read_plate(plate_crop, source=None, request_id=None):
                 texts.append(text)
                 scores.append(score)
 
+        joined_raw_text = "\n".join(str(text) for text in raw_texts)
+        vision_logger.info(
+            "Vision OCR extraction source=%s texts=%s scores=%s joined_raw_text=%s",
+            source or "default",
+            raw_texts,
+            raw_scores,
+            joined_raw_text,
+        )
+
         if not texts:
+            vision_logger.info(
+                "Vision OCR result source=%s texts=%s scores=%s joined_raw_text=%s classified=NONE accepted=NONE",
+                source or "default",
+                raw_texts,
+                raw_scores,
+                joined_raw_text,
+            )
             return None
 
         result = classify_plate("\n".join(texts), max(scores))
+
+        vision_logger.info(
+            "Vision OCR result source=%s texts=%s scores=%s joined_raw_text=%s classified=%s accepted=%s",
+            source or "default",
+            raw_texts,
+            raw_scores,
+            joined_raw_text,
+            result["plate"] if result else "NONE",
+            result["plate"] if result else "NONE",
+        )
 
         if result is None:
             _vision_debug("OCR rejected: %s", " ".join(texts))
