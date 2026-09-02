@@ -17,6 +17,28 @@ button {
     min-height: 100vh;
 }
 
+.settings-reload-notice {
+    align-items: center;
+    background: #fff7ed;
+    border-bottom: 1px solid #fed7aa;
+    color: #9a3412;
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    padding: 10px 20px;
+}
+
+.settings-reload-notice button {
+    background: white;
+    border: 1px solid #fdba74;
+    border-radius: 5px;
+    color: #9a3412;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: bold;
+    padding: 6px 10px;
+}
+
 /* ============================================================
    HEADER
 ============================================================ */
@@ -1824,4 +1846,16 @@ body {
 
 .entry-card {
     grid-column: 1 / -1;
+}
+
+.camera-lane-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 20px; }
+.camera-slot-grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
+.legacy-camera-grid { display: none; }
+.lane-switch-button { margin-top: 14px; border: 1px solid #b8dfc8; border-radius: 999px; background: var(--green-soft); color: var(--green-dark); cursor: pointer; font: 700 12px 'Manrope', sans-serif; padding: 9px 14px; }
+.garage-admin-link { position: absolute; right: clamp(20px, 5vw, 76px); top: 24px; z-index: 2; border: 1px solid rgba(231, 244, 237, .38); border-radius: 999px; background: transparent; color: #f8fbf6; cursor: pointer; font-size: 12px; font-weight: 700; padding: 8px 13px; }
+
+@media (max-width: 720px) {
+    .camera-lane-groups {
+        grid-template-columns: 1fr;
+    }
 }

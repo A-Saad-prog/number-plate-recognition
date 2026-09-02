@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
+from sqlalchemy import Integer, func
 
 from app.database.database import get_db
 from app.models.whitelist_entry import WhitelistEntry
@@ -11,6 +12,11 @@ from app.services.auth_service import (
     get_current_admin,
 )
 from app.services.settings_service import get_admin_settings, settings_response
+from app.services.activity_service import log_admin_activity
+from app.services.garage_service import sync_parking_spaces
+from app.models.parking_session import ParkingSession
+from app.models.vehicle import Vehicle
+from app.services.time_service import pakistan_now
 from fastapi import APIRouter, Depends, HTTPException, status
 from app.models.parking_space import ParkingSpace
 
@@ -43,6 +49,7 @@ class GarageSettingsRequest(BaseModel):
     level_count: int = Field(ge=1, le=12)
     spaces_per_level: int = Field(ge=1, le=1000)
     levels: list[GarageLevelRequest] = Field(min_length=1, max_length=12)
+    automatic_entry: bool = False
 
     @model_validator(mode="after")
     def validate_level_layout(self):
@@ -110,86 +117,25 @@ def admin_session(
 @router.get("/settings")
 def get_settings(
     db: Session = Depends(get_db),
-    _admin=Depends(current_admin),
+    admin=Depends(current_admin),
 ):
-    return settings_response(get_admin_settings(db))
+    return settings_response(get_admin_settings(db, admin.tenant_id))
 
 
 @router.put("/settings/garage")
 def save_garage_settings(
     request: GarageSettingsRequest,
     db: Session = Depends(get_db),
-    _admin=Depends(current_admin),
+    admin=Depends(current_admin),
 ):
-    settings = get_admin_settings(db, create=True)
+    settings = get_admin_settings(db, admin.tenant_id, create=True)
+    old_value = dict(settings.garage_settings)
 
     # Save the admin configuration
     settings.garage_settings = request.model_dump()
 
-    # Get the currently existing parking spaces
-    existing_spaces = (
-        db.query(ParkingSpace)
-        .order_by(
-            ParkingSpace.level.asc(),
-            ParkingSpace.space_number.asc(),
-        )
-        .all()
-    )
-
-    # Requested layout
-    requested_levels = {level.id: level for level in request.levels}
-
-    import re
-
-    def parse_space_num(val) -> int:
-        match = re.search(r"\d+$", str(val))
-        if match:
-            return int(match.group(0))
-        digits = "".join(filter(str.isdigit, str(val)))
-        return int(digits) if digits else 0
-
-    # Synchronize parking spaces with the new configuration
-    for level_id, level_config in requested_levels.items():
-        for space_number in range(1, level_config.spaces + 1):
-            expected_str = f"L{level_id}-{space_number:02d}"
-            existing = next(
-                (
-                    space
-                    for space in existing_spaces
-                    if space.level == level_id
-                    and (
-                        parse_space_num(space.space_number) == space_number
-                        or str(space.space_number) == expected_str
-                    )
-                ),
-                None,
-            )
-
-            if existing:
-                continue
-
-            new_space = ParkingSpace(
-                level=level_id,
-                space_number=expected_str,
-                is_occupied=False,
-            )
-
-            db.add(new_space)
-
-    # Remove spaces that are outside the new configuration
-    for space in existing_spaces:
-        level_config = requested_levels.get(space.level)
-        space_num = parse_space_num(space.space_number)
-
-        should_exist = (
-            level_config is not None
-            and space_num > 0
-            and space_num <= level_config.spaces
-        )
-
-        if not should_exist:
-            # Clean up any sessions associated with this removed space
-            db.delete(space)
+    sync_parking_spaces(db, admin.tenant_id, settings.garage_settings["levels"])
+    log_admin_activity(db, admin, "garage_settings.updated", old_value, settings.garage_settings)
     db.commit()
     db.refresh(settings)
 
@@ -203,10 +149,12 @@ def save_garage_settings(
 def save_camera_config(
     request: CameraConfigRequest,
     db: Session = Depends(get_db),
-    _admin=Depends(current_admin),
+    admin=Depends(current_admin),
 ):
-    settings = get_admin_settings(db, create=True)
+    settings = get_admin_settings(db, admin.tenant_id, create=True)
+    old_value = dict(settings.camera_config)
     settings.camera_config = request.model_dump()
+    log_admin_activity(db, admin, "camera_config.updated", old_value, settings.camera_config)
     db.commit()
     db.refresh(settings)
     return {"success": True, "camera_config": settings.camera_config}
@@ -216,10 +164,12 @@ def save_camera_config(
 def save_billing_config(
     request: BillingConfigRequest,
     db: Session = Depends(get_db),
-    _admin=Depends(current_admin),
+    admin=Depends(current_admin),
 ):
-    settings = get_admin_settings(db, create=True)
+    settings = get_admin_settings(db, admin.tenant_id, create=True)
+    old_value = dict(settings.billing_config)
     settings.billing_config = request.model_dump()
+    log_admin_activity(db, admin, "billing_config.updated", old_value, settings.billing_config)
     db.commit()
     db.refresh(settings)
     return {"success": True, "billing_config": settings.billing_config}
@@ -228,9 +178,9 @@ def save_billing_config(
 @router.get("/whitelist")
 def get_whitelist(
     db: Session = Depends(get_db),
-    _admin=Depends(current_admin),
+    admin=Depends(current_admin),
 ):
-    entries = db.query(WhitelistEntry).order_by(WhitelistEntry.vehicle_name.asc()).all()
+    entries = db.query(WhitelistEntry).filter(WhitelistEntry.tenant_id == admin.tenant_id).order_by(WhitelistEntry.vehicle_name.asc()).all()
     return {
         "entries": [
             {
@@ -249,7 +199,7 @@ def get_whitelist(
 def add_whitelist_entry(
     request: WhitelistCreateRequest,
     db: Session = Depends(get_db),
-    _admin=Depends(current_admin),
+    admin=Depends(current_admin),
 ):
     license_plate = request.license_plate.strip().upper()
     vehicle_name = request.vehicle_name.strip()
@@ -258,7 +208,7 @@ def add_whitelist_entry(
 
     existing = (
         db.query(WhitelistEntry)
-        .filter(WhitelistEntry.license_plate == license_plate)
+        .filter(WhitelistEntry.tenant_id == admin.tenant_id, WhitelistEntry.license_plate == license_plate)
         .first()
     )
     if existing:
@@ -267,6 +217,7 @@ def add_whitelist_entry(
         )
 
     entry = WhitelistEntry(
+        tenant_id=admin.tenant_id,
         license_plate=license_plate,
         vehicle_name=vehicle_name,
         discount_percent=request.discount_percent,
@@ -281,12 +232,13 @@ def add_whitelist_entry(
 def remove_whitelist_entry(
     request: WhitelistRemoveRequest,
     db: Session = Depends(get_db),
-    _admin=Depends(current_admin),
+    admin=Depends(current_admin),
 ):
     search = request.search.strip()
     entry = (
         db.query(WhitelistEntry)
         .filter(
+            WhitelistEntry.tenant_id == admin.tenant_id,
             (WhitelistEntry.license_plate == search.upper())
             | (WhitelistEntry.vehicle_name.ilike(search))
         )
@@ -300,3 +252,37 @@ def remove_whitelist_entry(
     db.delete(entry)
     db.commit()
     return {"success": True, "removed": search}
+
+
+@router.get("/activity")
+def parking_activity(db: Session = Depends(get_db), admin=Depends(current_admin)):
+    tenant_id = admin.tenant_id
+    settings = settings_response(get_admin_settings(db, tenant_id))
+    all_spaces = db.query(ParkingSpace).filter(ParkingSpace.tenant_id == tenant_id).order_by(ParkingSpace.level, func.cast(func.substring(ParkingSpace.space_number, r"\d+$"), Integer)).all()
+    spaces = [space for space in all_spaces if space.is_active]
+    sessions = db.query(ParkingSession).filter(ParkingSession.tenant_id == tenant_id).order_by(ParkingSession.entry_time.desc()).all()
+    vehicles = {vehicle.id: vehicle for vehicle in db.query(Vehicle).filter(Vehicle.tenant_id == tenant_id).all()}
+    whitelist = {entry.license_plate: entry for entry in db.query(WhitelistEntry).filter(WhitelistEntry.tenant_id == tenant_id).all()}
+    active_by_space = {session.parking_space_id: session for session in sessions if session.status == "active"}
+    live_sessions = [
+        {"plate": vehicles[session.vehicle_id].license_plate, "space": next((space.space_number for space in all_spaces if space.id == session.parking_space_id), None), "entry_time": session.entry_time, "duration_minutes": int((pakistan_now() - session.entry_time).total_seconds() // 60)}
+        for session in sessions if session.status == "active" and session.vehicle_id in vehicles
+    ]
+    history = [
+        {"plate": vehicles[session.vehicle_id].license_plate, "entry_time": session.entry_time, "exit_time": session.exit_time, "duration_minutes": int((session.exit_time - session.entry_time).total_seconds() // 60) if session.exit_time else 0, "space": next((space.space_number for space in all_spaces if space.id == session.parking_space_id), None), "payment_method": session.payment_method, "amount": session.amount, "discount_percent": session.discount_percent if session.discount_percent is not None else (whitelist.get(vehicles[session.vehicle_id].license_plate).discount_percent if vehicles[session.vehicle_id].license_plate in whitelist else 0)}
+        for session in sessions if session.status == "completed" and session.vehicle_id in vehicles
+    ]
+    vehicle_rows = []
+    for vehicle in vehicles.values():
+        vehicle_sessions = [session for session in sessions if session.vehicle_id == vehicle.id]
+        active = next((session for session in vehicle_sessions if session.status == "active"), None)
+        completed = [session for session in vehicle_sessions if session.exit_time]
+        vehicle_rows.append({"plate": vehicle.license_plate, "total_visits": len(vehicle_sessions), "last_entry": max((session.entry_time for session in vehicle_sessions), default=None), "last_exit": max((session.exit_time for session in completed), default=None), "currently_parked": bool(active), "whitelisted": vehicle.license_plate in whitelist})
+    return {"live_sessions": live_sessions, "history": history, "space_status": {"total_active_capacity": len(spaces), "occupied": sum(space.is_occupied for space in spaces), "available": sum(not space.is_occupied for space in spaces), "spaces": [{"level": space.level, "space": space.space_number, "is_occupied": space.is_occupied, "plate": vehicles.get(active_by_space[space.id].vehicle_id).license_plate if space.id in active_by_space and active_by_space[space.id].vehicle_id in vehicles else None} for space in spaces]}, "vehicles": vehicle_rows, "billing_enabled": bool(settings["billing_config"].get("payments_enabled"))}
+
+
+@router.get("/activity/log")
+def admin_activity_log(db: Session = Depends(get_db), admin=Depends(current_admin)):
+    from app.models.admin_activity import AdminActivity
+    entries = db.query(AdminActivity).filter(AdminActivity.tenant_id == admin.tenant_id).order_by(AdminActivity.created_at.desc()).limit(100).all()
+    return {"entries": [{"action": entry.action, "old_value": entry.old_value, "new_value": entry.new_value, "created_at": entry.created_at} for entry in entries]}

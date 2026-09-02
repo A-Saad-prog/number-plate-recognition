@@ -7,9 +7,11 @@ from pwdlib import PasswordHash
 from sqlalchemy.orm import Session
 
 from app.models.admin_user import AdminUser
+from app.models.tenant import Tenant
 
 
 password_hash = PasswordHash.recommended()
+ADMIN_SESSION_MINUTES = max(5, int(os.getenv("ADMIN_SESSION_MINUTES", "480")))
 
 
 def authenticate_admin(db: Session, username: str, password: str) -> AdminUser | None:
@@ -29,7 +31,7 @@ def create_access_token(admin: AdminUser) -> str:
         "sub": str(admin.id),
         "username": admin.username,
         "iat": now,
-        "exp": now + timedelta(minutes=30),
+        "exp": now + timedelta(minutes=ADMIN_SESSION_MINUTES),
     }
     return jwt.encode(payload, secret, algorithm="HS256")
 
@@ -52,6 +54,7 @@ def get_current_admin(token: str | None, db: Session) -> AdminUser:
         raise unauthorized from None
 
     admin = db.get(AdminUser, admin_id)
-    if not admin:
+    tenant = db.get(Tenant, admin.tenant_id) if admin else None
+    if not admin or not tenant or not tenant.is_active:
         raise unauthorized
     return admin

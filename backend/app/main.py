@@ -5,9 +5,9 @@ from dotenv import load_dotenv
 from app.logging_config import configure_logging
 
 from app.api.vision import router as vision_router
-from app.api.admin import router as admin_router
+from app.api.admin import router as admin_router, current_admin
 
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from sqlalchemy import text
@@ -119,8 +119,9 @@ def database_test():
 @app.get("/garage/settings")
 def garage_settings(
     db: Session = Depends(get_db),
+    admin=Depends(current_admin),
 ):
-    settings = settings_response(get_admin_settings(db))
+    settings = settings_response(get_admin_settings(db, admin.tenant_id))
 
     return {
         "success": True,
@@ -132,6 +133,7 @@ def garage_settings(
 @app.get("/parking/spaces")
 def parking_spaces(
     db: Session = Depends(get_db),
+    admin=Depends(current_admin),
 ):
     """
     Return all parking spaces.
@@ -140,7 +142,7 @@ def parking_spaces(
     vehicle's license plate and entry time.
     """
 
-    spaces = get_all_spaces(db)
+    spaces = get_all_spaces(db, admin.tenant_id)
 
     return {
         "success": True,
@@ -157,6 +159,7 @@ def parking_spaces(
 def vehicle_entry(
     request: VehicleEntryRequest,
     db: Session = Depends(get_db),
+    admin=Depends(current_admin),
 ):
     """
     Register a vehicle entering the garage.
@@ -173,6 +176,7 @@ def vehicle_entry(
             db=db,
             license_plate=request.license_plate,
             parking_space_id=request.parking_space_id,
+            tenant_id=admin.tenant_id,
         )
 
         return {
@@ -197,24 +201,32 @@ def vehicle_entry(
 def exit_payment_required(
     license_plate: str,
     db: Session = Depends(get_db),
+    admin=Depends(current_admin),
 ):
     billing_enabled = bool(
-        settings_response(get_admin_settings(db))["billing_config"].get("payments_enabled")
+        settings_response(get_admin_settings(db, admin.tenant_id))["billing_config"].get("payments_enabled")
     )
-    return {
-        "success": True,
-        "payment_required": payment_required_for_exit(
+    try:
+        payment_required = payment_required_for_exit(
             db,
             license_plate,
             billing_enabled,
-        ),
-    }
+            admin.tenant_id,
+        )
+    except ValueError:
+        raise HTTPException(
+            status_code=404,
+            detail="Car is not entered in the garage.",
+        ) from None
+
+    return {"success": True, "payment_required": payment_required}
 
 
 @app.post("/parking/exit")
 def vehicle_exit(
     request: VehicleExitRequest,
     db: Session = Depends(get_db),
+    admin=Depends(current_admin),
 ):
     """
     Complete a vehicle's parking session.
@@ -225,17 +237,21 @@ def vehicle_exit(
 
     try:
         billing_config = settings_response(
-            get_admin_settings(db)
+            get_admin_settings(db, admin.tenant_id)
         )["billing_config"]
 
         payment_required = payment_required_for_exit(
             db,
             request.license_plate,
             bool(billing_config.get("payments_enabled")),
+            admin.tenant_id,
         )
 
         if payment_required and not request.payment_method:
             raise ValueError("Select a payment method before exiting.")
+
+        if payment_required and not billing_config.get(f"{request.payment_method}_enabled"):
+            raise ValueError("Selected payment method is not enabled.")
 
         result = process_vehicle_exit_by_plate(
             db=db,
@@ -246,6 +262,7 @@ def vehicle_exit(
                 else None
             ),
             billing_enabled=bool(billing_config.get("payments_enabled")),
+            tenant_id=admin.tenant_id,
         )
 
         return {

@@ -1,3 +1,4 @@
+from sqlalchemy import Integer, func
 from sqlalchemy.orm import Session
 
 from app.models.parking_space import ParkingSpace
@@ -7,6 +8,7 @@ from app.models.vehicle import Vehicle
 
 def get_available_spaces(
     db: Session,
+    tenant_id: int,
 ) -> list[ParkingSpace]:
     """
     Return all available parking spaces.
@@ -15,11 +17,13 @@ def get_available_spaces(
     return (
         db.query(ParkingSpace)
         .filter(
-            ParkingSpace.is_occupied == False
+            ParkingSpace.is_occupied == False,
+            ParkingSpace.is_active == True,
+            ParkingSpace.tenant_id == tenant_id,
         )
         .order_by(
             ParkingSpace.level.asc(),
-            ParkingSpace.id.asc(),
+            func.cast(func.substring(ParkingSpace.space_number, r"\d+$"), Integer).asc(),
         )
         .all()
     )
@@ -27,6 +31,7 @@ def get_available_spaces(
 
 def get_all_spaces(
     db: Session,
+    tenant_id: int,
 ):
     """
     Return all parking spaces with active vehicle
@@ -35,9 +40,10 @@ def get_all_spaces(
 
     spaces = (
         db.query(ParkingSpace)
+        .filter(ParkingSpace.tenant_id == tenant_id, ParkingSpace.is_active == True)
         .order_by(
             ParkingSpace.level.asc(),
-            ParkingSpace.id.asc(),
+            func.cast(func.substring(ParkingSpace.space_number, r"\d+$"), Integer).asc(),
         )
         .all()
     )
@@ -55,6 +61,7 @@ def get_all_spaces(
                 db.query(ParkingSession)
                 .filter(
                     ParkingSession.parking_space_id == space.id,
+                    ParkingSession.tenant_id == tenant_id,
                     ParkingSession.status == "active",
                     ParkingSession.exit_time == None,
                 )
@@ -66,7 +73,8 @@ def get_all_spaces(
                 vehicle = (
                     db.query(Vehicle)
                     .filter(
-                        Vehicle.id == session.vehicle_id
+                        Vehicle.id == session.vehicle_id,
+                        Vehicle.tenant_id == tenant_id,
                     )
                     .first()
                 )
@@ -93,12 +101,15 @@ def get_all_spaces(
 def validate_available_space(
     db: Session,
     space_id: int,
+    tenant_id: int,
 ) -> ParkingSpace:
 
     space = (
         db.query(ParkingSpace)
         .filter(
-            ParkingSpace.id == space_id
+            ParkingSpace.id == space_id,
+            ParkingSpace.tenant_id == tenant_id,
+            ParkingSpace.is_active == True,
         )
         .first()
     )

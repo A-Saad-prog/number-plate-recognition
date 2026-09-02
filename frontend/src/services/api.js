@@ -2,6 +2,17 @@ const API_BASE_URL =
     import.meta.env.VITE_API_BASE_URL ||
     "http://127.0.0.1:8000";
 
+function garageAuthHeaders() {
+    const token = localStorage.getItem("parking_admin_token");
+    return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+function requestError(response, data, fallback) {
+    const error = new Error(data.detail || data.error || fallback);
+    error.status = response.status;
+    return error;
+}
+
 
 // ============================================================
 // Get Available Parking Space
@@ -54,16 +65,14 @@ export async function getDetectedPlate() {
 export async function getParkingSpaces() {
 
     const response = await fetch(
-        `${API_BASE_URL}/parking/spaces`
+        `${API_BASE_URL}/parking/spaces`, { headers: garageAuthHeaders() }
     );
 
     const data = await response.json().catch(() => ({}));
 
     if (!response.ok) {
 
-        throw new Error(
-            data.error || `Failed to get parking spaces: ${response.status}`
-        );
+        throw requestError(response, data, `Failed to get parking spaces: ${response.status}`);
 
     }
 
@@ -74,16 +83,14 @@ export async function getParkingSpaces() {
 export async function getGarageSettings() {
 
     const response = await fetch(
-        `${API_BASE_URL}/garage/settings`
+        `${API_BASE_URL}/garage/settings`, { headers: garageAuthHeaders() }
     );
 
     const data = await response.json().catch(() => ({}));
 
     if (!response.ok) {
 
-        throw new Error(
-            data.detail || `Failed to get garage settings: ${response.status}`
-        );
+        throw requestError(response, data, `Failed to get garage settings: ${response.status}`);
 
     }
 
@@ -140,6 +147,7 @@ export async function registerEntry(licensePlate, parkingSpaceId) {
 
             headers: {
                 "Content-Type": "application/json",
+                ...garageAuthHeaders(),
             },
 
             body: JSON.stringify({
@@ -167,7 +175,8 @@ export async function registerEntry(licensePlate, parkingSpaceId) {
 
 export async function getExitPaymentRequired(licensePlate) {
     const response = await fetch(
-        `${API_BASE_URL}/parking/exit/payment-required?license_plate=${encodeURIComponent(licensePlate)}`
+        `${API_BASE_URL}/parking/exit/payment-required?license_plate=${encodeURIComponent(licensePlate)}`,
+        { headers: garageAuthHeaders() }
     );
 
     const data = await response.json().catch(() => ({}));
@@ -186,6 +195,7 @@ export async function exitUsingPlate(licensePlate, paymentMethod) {
 
             headers: {
                 "Content-Type": "application/json",
+                ...garageAuthHeaders(),
             },
 
             body: JSON.stringify({
@@ -272,7 +282,9 @@ export async function getAdminSession(token) {
     const data = await response.json().catch(() => ({}));
 
     if (!response.ok) {
-        throw new Error(data.detail || `Failed to get admin session: ${response.status}`);
+        const error = new Error(data.detail || `Failed to get admin session: ${response.status}`);
+        error.status = response.status;
+        throw error;
     }
 
     return data;
@@ -371,4 +383,11 @@ export function saveCameraConfig(token, config) {
 
 export function saveBillingConfig(token, config) {
     return adminSettingsRequest(token, "/billing", "PUT", config);
+}
+
+export async function getParkingActivity(token) {
+    const response = await fetch(`${API_BASE_URL}/admin/activity`, { headers: { Authorization: `Bearer ${token}` } });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.detail || `Failed to load parking activity: ${response.status}`);
+    return data;
 }

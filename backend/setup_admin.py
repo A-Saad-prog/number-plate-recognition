@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 from pwdlib import PasswordHash
 from app.database.database import SessionLocal
 from app.models.admin_user import AdminUser
+from app.models.tenant import Tenant
 
 load_dotenv()
 
@@ -23,6 +24,7 @@ print("✓ Setup key verified\n")
 
 # Get admin credentials
 username = input("Admin username: ").strip()
+tenant_name = input("Tenant name: ").strip()
 password = input("Password: ").strip()
 
 if not username or not password:
@@ -39,7 +41,10 @@ try:
     
     # Hash and create admin
     hashed = password_hash.hash(password)
-    admin = AdminUser(username=username, password_hash=hashed)
+    tenant = db.query(Tenant).filter(Tenant.name == tenant_name).first()
+    if tenant is None:
+        raise ValueError("Tenant does not exist. Use create_tenant_admin.py first.")
+    admin = AdminUser(tenant_id=tenant.id, username=username, password_hash=hashed)
     db.add(admin)
     db.commit()
     print(f"✓ Admin '{username}' created successfully!")

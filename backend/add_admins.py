@@ -7,6 +7,7 @@ load_dotenv()
 from pwdlib import PasswordHash
 from app.database.database import SessionLocal
 from app.models.admin_user import AdminUser
+from app.models.tenant import Tenant
 
 password_hash = PasswordHash.recommended()
 
@@ -16,6 +17,7 @@ print("=" * 60)
 print("Type 'exit' as username to stop\n")
 
 count = 0
+tenant_name = input("Existing tenant name: ").strip()
 
 while True:
     username = input("Admin username (or 'exit' to stop): ").strip()
@@ -49,7 +51,11 @@ while True:
         
         # Add admin to database
         try:
+            tenant = db.query(Tenant).filter(Tenant.name == tenant_name).first()
+            if tenant is None:
+                raise ValueError("Tenant does not exist. Use create_tenant_admin.py first.")
             admin = AdminUser(
+                tenant_id=tenant.id,
                 username=username,
                 password_hash=password_hash.hash(password)
             )

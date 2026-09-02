@@ -50,7 +50,8 @@ OCR_BUFFER_TTL_SECONDS = 5.0
 
 OCR_CONFIDENCE_THRESHOLD = 0.50
 
-PLATE_PADDING = 10
+PLATE_HORIZONTAL_PADDING_RATIO = 0.12
+PLATE_VERTICAL_PADDING_RATIO = 0.25
 
 ocr_states = {}
 ocr_lock = threading.Lock()
@@ -534,6 +535,14 @@ def encode_plate_image(plate_crop):
 def read_plate(plate_crop):
 
     try:
+        height, width = plate_crop.shape[:2]
+        if width < 160 or height < 32:
+            scale = min(3.0, max(160 / width, 32 / height))
+            plate_crop = cv2.resize(
+                plate_crop,
+                (round(width * scale), round(height * scale)),
+                interpolation=cv2.INTER_CUBIC,
+            )
 
         results = ocr.predict(plate_crop)
 
@@ -571,7 +580,6 @@ def read_plate(plate_crop):
                 scores.append(score)
 
         if not texts:
-
             return None
 
         result = classify_plate("\n".join(texts), max(scores))
@@ -792,25 +800,15 @@ def detect_plate(image_base64: str, source: str | None = None):
     # Crop with padding
     # ========================================================
 
-    crop_x1 = max(
-        0,
-        x1 - PLATE_PADDING,
-    )
+    box_width = x2 - x1
+    box_height = y2 - y1
+    horizontal_padding = max(4, min(18, round(box_width * PLATE_HORIZONTAL_PADDING_RATIO)))
+    vertical_padding = max(3, min(12, round(box_height * PLATE_VERTICAL_PADDING_RATIO)))
 
-    crop_y1 = max(
-        0,
-        y1 - PLATE_PADDING,
-    )
-
-    crop_x2 = min(
-        width,
-        x2 + PLATE_PADDING,
-    )
-
-    crop_y2 = min(
-        height,
-        y2 + PLATE_PADDING,
-    )
+    crop_x1 = max(0, x1 - horizontal_padding)
+    crop_y1 = max(0, y1 - vertical_padding)
+    crop_x2 = min(width, x2 + horizontal_padding)
+    crop_y2 = min(height, y2 + vertical_padding)
 
     plate_crop = frame[
         crop_y1:crop_y2,

@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
     addWhitelistEntry,
     getAdminSession,
     getAdminSettings,
+    getParkingActivity,
     getWhitelist,
     loginAdmin,
     removeWhitelistEntry,
@@ -17,6 +18,7 @@ const TOKEN_KEY = "parking_admin_token";
 const LANGUAGE_KEY = "parking_admin_language";
 const THEME_KEY = "parking_admin_theme";
 const CAMERA_ASSIGNMENTS_KEY = "parking_camera_assignments";
+const GARAGE_SETTINGS_UPDATED_KEY = "parking_garage_settings_updated";
 
 const TRANSLATIONS = {
     en: {
@@ -53,27 +55,35 @@ const TRANSLATIONS = {
     },
 };
 
-function DisplayControls({ t, theme, language, onLanguageChange, onThemeToggle }) {
+function DisplayControls({ theme, language, onLanguageChange, onThemeChange }) {
     return (
         <div className="admin-display-controls">
             <select className="language-select" value={language} onChange={(event) => onLanguageChange(event.target.value)} aria-label="Select language">
                 <option value="en">English</option>
                 <option value="ur">اردو</option>
             </select>
-            <button type="button" className="theme-toggle" onClick={onThemeToggle}><span aria-hidden="true">{theme === "light" ? "◐" : "☀"}</span>{theme === "light" ? t.theme : t.lightTheme}</button>
+            <select className="language-select" value={theme} onChange={(event) => onThemeChange(event.target.value)} aria-label="Select theme">
+                <option value="system">System Default</option>
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+            </select>
         </div>
     );
 }
 
 function AdminPage() {
     const [language, setLanguage] = useState(() => localStorage.getItem(LANGUAGE_KEY) === "ur" ? "ur" : "en");
-    const [theme, setTheme] = useState(() => localStorage.getItem(THEME_KEY) === "dark" ? "dark" : "light");
+    const [theme, setTheme] = useState(() => ["system", "light", "dark"].includes(localStorage.getItem(THEME_KEY)) ? localStorage.getItem(THEME_KEY) : "light");
+    const [systemDark, setSystemDark] = useState(() => window.matchMedia?.("(prefers-color-scheme: dark)")?.matches || false);
+    const appliedTheme = theme === "system" ? (systemDark ? "dark" : "light") : theme;
     const t = TRANSLATIONS[language];
     const isUrdu = language === "ur";
     const [username, setUsername] = useState("");
     const [password, setPassword] = useState("");
     const [adminName, setAdminName] = useState("");
-    const [token, setToken] = useState(() => sessionStorage.getItem(TOKEN_KEY));
+    const [token, setToken] = useState(() => {
+        return localStorage.getItem(TOKEN_KEY);
+    });
     const [loading, setLoading] = useState(Boolean(token));
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState("");
@@ -121,6 +131,10 @@ function AdminPage() {
     const [billingConfig, setBillingConfig] = useState({ payments_enabled: false, cash_enabled: false, card_enabled: false });
     const [billingMessage, setBillingMessage] = useState("");
     const [savedBillingConfig, setSavedBillingConfig] = useState(null);
+    const [parkingActivity, setParkingActivity] = useState(null);
+    const [activityLoading, setActivityLoading] = useState(false);
+    const [activityError, setActivityError] = useState("");
+    const activityLoadingRef = useRef(false);
 
     useEffect(() => {
         localStorage.setItem(LANGUAGE_KEY, language);
@@ -138,12 +152,24 @@ function AdminPage() {
     }, [theme]);
 
     useEffect(() => {
+        const mediaQuery = window.matchMedia?.("(prefers-color-scheme: dark)");
+        if (!mediaQuery) return;
+        const updateSystemTheme = (event) => setSystemDark(event.matches);
+        setSystemDark(mediaQuery.matches);
+        mediaQuery.addEventListener?.("change", updateSystemTheme);
+        return () => mediaQuery.removeEventListener?.("change", updateSystemTheme);
+    }, []);
+
+    useEffect(() => {
         if (!token) return;
         getAdminSession(token)
             .then((session) => setAdminName(session.username))
-            .catch(() => {
-                sessionStorage.removeItem(TOKEN_KEY);
-                setToken(null);
+            .catch((sessionError) => {
+                if (sessionError.status === 401) {
+                    localStorage.removeItem(TOKEN_KEY);
+                    sessionStorage.removeItem(TOKEN_KEY);
+                    setToken(null);
+                }
             })
             .finally(() => setLoading(false));
 
@@ -154,6 +180,7 @@ function AdminPage() {
                     const normalizedGarageSettings = {
                         level_count: String(garage.level_count),
                         spaces_per_level: String(garage.spaces_per_level),
+                        automatic_entry: Boolean(garage.automatic_entry),
                         levels: (garage.levels || []).map((level) => ({
                             ...level,
                             spaces: String(level.spaces),
@@ -193,7 +220,8 @@ function AdminPage() {
         setError("");
         try {
             const result = await loginAdmin(username, password);
-            sessionStorage.setItem(TOKEN_KEY, result.access_token);
+            localStorage.setItem(TOKEN_KEY, result.access_token);
+            sessionStorage.removeItem(TOKEN_KEY);
             setToken(result.access_token);
             setAdminName(username.trim());
             setPassword("");
@@ -205,10 +233,34 @@ function AdminPage() {
     }
 
     function signOut() {
+        localStorage.removeItem(TOKEN_KEY);
         sessionStorage.removeItem(TOKEN_KEY);
         setToken(null);
         setAdminName("");
     }
+
+    async function loadParkingActivity() {
+        if (activityLoadingRef.current) return;
+        activityLoadingRef.current = true;
+        setActivityLoading(true);
+        setActivityError("");
+        try {
+            setParkingActivity(await getParkingActivity(token));
+        } catch (err) {
+            setActivityError(err.message || "Unable to load parking activity.");
+        } finally {
+            activityLoadingRef.current = false;
+            setActivityLoading(false);
+        }
+    }
+
+    useEffect(() => {
+        if (activeFeature !== "parking-activity" || !token) return undefined;
+        const interval = window.setInterval(() => {
+            void loadParkingActivity();
+        }, 2500);
+        return () => window.clearInterval(interval);
+    }, [activeFeature, token]);
 
     async function submitWhitelist(event) {
         event.preventDefault();
@@ -475,6 +527,7 @@ function AdminPage() {
             setSavedCameraSetup(normalizeCameraSetup(normalizedConfig, cameraAssignments));
             setCameraMessageType("success");
             setCameraMessage(t.camerasSaved);
+            localStorage.setItem(GARAGE_SETTINGS_UPDATED_KEY, String(Date.now()));
             setConfirmationOpen(false);
             setConfirmationSection(null);
         } catch {
@@ -494,6 +547,7 @@ function AdminPage() {
             setBillingConfig(savedConfig);
             setSavedBillingConfig(normalizeBillingConfig(savedConfig));
             setBillingMessage(t.billingApplied);
+            localStorage.setItem(GARAGE_SETTINGS_UPDATED_KEY, String(Date.now()));
             setConfirmationOpen(false);
             setConfirmationSection(null);
         } catch {
@@ -519,6 +573,10 @@ function AdminPage() {
         }
 
         if (Number(currentSettings.spaces_per_level) !== Number(savedSettings.spaces_per_level)) {
+            return false;
+        }
+
+        if (Boolean(currentSettings.automatic_entry) !== Boolean(savedSettings.automatic_entry)) {
             return false;
         }
 
@@ -755,6 +813,7 @@ function AdminPage() {
                 level_count: count,
                 spaces_per_level: defaultSpaces,
                 levels: payloadLevels,
+                automatic_entry: Boolean(garageSettings.automatic_entry),
             });
             const savedSettings = result?.garage_settings || {
                 level_count: count,
@@ -773,10 +832,13 @@ function AdminPage() {
                 ...current,
                 level_count: String(count),
                 spaces_per_level: String(defaultSpaces),
+                automatic_entry: Boolean(savedSettings.automatic_entry),
                 levels: payloadLevels.map((l) => ({ ...l, spaces: String(l.spaces) })),
+                automatic_entry: Boolean(savedSettings.automatic_entry),
             }));
             setGarageSettingsMessageType("success");
             setGarageSettingsMessage(t.garageApplied);
+            localStorage.setItem(GARAGE_SETTINGS_UPDATED_KEY, String(Date.now()));
             setConfirmationOpen(false);
             setConfirmationSection(null);
         } catch (err) {
@@ -789,14 +851,14 @@ function AdminPage() {
         }
     }
 
-    if (loading) return <main className={`admin-shell admin-theme-${theme} admin-loading`} dir={isUrdu ? "rtl" : "ltr"} lang={language}>{t.checkingSession}</main>;
+    if (loading) return <main className={`admin-shell admin-theme-${appliedTheme} admin-loading`} dir={isUrdu ? "rtl" : "ltr"} lang={language}>{t.checkingSession}</main>;
 
     if (token) {
         return (
-            <main className={`admin-shell admin-theme-${theme}`} dir={isUrdu ? "rtl" : "ltr"} lang={language}>
+            <main className={`admin-shell admin-theme-${appliedTheme}`} dir={isUrdu ? "rtl" : "ltr"} lang={language}>
                 <header className="admin-header">
                     <a href="/" className="admin-logo">PARKING<span>OS</span></a>
-                    <div className="admin-header-actions"><DisplayControls t={t} theme={theme} language={language} onLanguageChange={setLanguage} onThemeToggle={() => setTheme((current) => current === "light" ? "dark" : "light")} /><div className="admin-user">{adminName}<button type="button" onClick={signOut}>{t.signOut}</button></div></div>
+                    <div className="admin-header-actions"><DisplayControls theme={theme} language={language} onLanguageChange={setLanguage} onThemeChange={setTheme} /><button type="button" className="theme-toggle" onClick={() => window.open("/", "_blank", "noopener,noreferrer")}>Open Garage</button><div className="admin-user">{adminName}<button type="button" onClick={signOut}>{t.signOut}</button></div></div>
                 </header>
                 <div className="admin-app-body">
                     <aside className="admin-sidebar">
@@ -813,9 +875,26 @@ function AdminPage() {
                         <button type="button" className={`sidebar-feature ${activeFeature === "billing" ? "active" : ""}`} onClick={() => setActiveFeature(activeFeature === "billing" ? null : "billing")}>
                             <span className="feature-number">04</span><span>{t.billing}</span><span className="feature-arrow">{activeFeature === "billing" ? "−" : "+"}</span>
                         </button>
+                        <button type="button" className={`sidebar-feature ${activeFeature === "parking-activity" ? "active" : ""}`} onClick={() => { setActiveFeature("parking-activity"); loadParkingActivity(); }}>
+                            <span className="feature-number">05</span><span>Parking Activity</span><span className="feature-arrow">+</span>
+                        </button>
                     </aside>
                     <section className="admin-dashboard">
-                        {activeFeature === "whitelist" ? (
+                        {activeFeature === "parking-activity" ? (
+                            <div className="feature-view">
+                                <h1>Parking<br /><span>activity.</span></h1>
+                                <p className="admin-message">Live parking, recent visits, and active space status.</p>
+                                <button type="button" className="show-list-button" onClick={loadParkingActivity} disabled={activityLoading}>{activityLoading ? "Refreshing..." : "Refresh activity"}</button>
+                                {activityError && <p className="admin-error whitelist-feedback">{activityError}</p>}
+                                {parkingActivity && <>
+                                    <p className="admin-message">Capacity: {parkingActivity.space_status.total_active_capacity} · Occupied: {parkingActivity.space_status.occupied} · Available: {parkingActivity.space_status.available}</p>
+                                    <div className="whitelist-table-wrap"><table><thead><tr><th>Live plate</th><th>Space</th><th>Entry time</th><th>Duration</th></tr></thead><tbody>{parkingActivity.live_sessions.map((session) => <tr key={`${session.plate}-${session.entry_time}`}><td>{session.plate}</td><td>{session.space || "-"}</td><td>{new Date(session.entry_time).toLocaleString()}</td><td>{session.duration_minutes} min</td></tr>)}</tbody></table></div>
+                                    <div className="whitelist-table-wrap"><table><thead><tr><th>Level</th><th>Space</th><th>Status</th><th>Plate</th></tr></thead><tbody>{parkingActivity.space_status.spaces.map((space) => <tr key={`${space.level}-${space.space}`}><td>{space.level}</td><td>{space.space}</td><td>{space.is_occupied ? "Occupied" : "Available"}</td><td>{space.plate || "-"}</td></tr>)}</tbody></table></div>
+                                    <div className="whitelist-table-wrap"><table><thead><tr><th>Plate</th><th>Visits</th><th>Last entry</th><th>Last exit</th><th>Parked</th><th>Whitelist</th></tr></thead><tbody>{parkingActivity.vehicles.map((vehicle) => <tr key={vehicle.plate}><td>{vehicle.plate}</td><td>{vehicle.total_visits}</td><td>{vehicle.last_entry ? new Date(vehicle.last_entry).toLocaleString() : "-"}</td><td>{vehicle.last_exit ? new Date(vehicle.last_exit).toLocaleString() : "-"}</td><td>{vehicle.currently_parked ? "Yes" : "No"}</td><td>{vehicle.whitelisted ? "Yes" : "No"}</td></tr>)}</tbody></table></div>
+                                    <div className="whitelist-table-wrap"><table><thead><tr><th>Plate</th><th>Entry</th><th>Exit</th><th>Duration</th><th>Space</th>{parkingActivity.billing_enabled && <><th>Payment</th><th>Amount</th><th>Discount</th></>}</tr></thead><tbody>{parkingActivity.history.map((item, index) => <tr key={`${item.plate}-${index}`}><td>{item.plate}</td><td>{new Date(item.entry_time).toLocaleString()}</td><td>{item.exit_time ? new Date(item.exit_time).toLocaleString() : "-"}</td><td>{item.duration_minutes} min</td><td>{item.space || "-"}</td>{parkingActivity.billing_enabled && <><td>{item.payment_method || "-"}</td><td>{item.amount ?? "-"}</td><td>{item.discount_percent ? `${item.discount_percent}%` : "-"}</td></>}</tr>)}</tbody></table></div>
+                                </>}
+                            </div>
+                        ) : activeFeature === "whitelist" ? (
                             <div className="feature-view">
                                 <h1>{t.vehicleTitle}<br /><span>{t.whitelistTitle}</span></h1>
                                 <p className="admin-message">{t.vehicleIntro}</p>
@@ -867,6 +946,14 @@ function AdminPage() {
                                                 </small>
                                             </label>
                                         </div>
+                                        <label className="automatic-entry-toggle">
+                                            <input
+                                                type="checkbox"
+                                                checked={Boolean(garageSettings.automatic_entry)}
+                                                onChange={(event) => setGarageSettings((current) => ({ ...current, automatic_entry: event.target.checked }))}
+                                            />
+                                            <span>Automatic Entry</span>
+                                        </label>
                                     </div>
 
                                     {advancedGarageSettings && (
@@ -1117,9 +1204,9 @@ function AdminPage() {
     }
 
     return (
-        <main className={`admin-shell admin-theme-${theme} admin-login-shell`} dir={isUrdu ? "rtl" : "ltr"} lang={language}>
+        <main className={`admin-shell admin-theme-${appliedTheme} admin-login-shell`} dir={isUrdu ? "rtl" : "ltr"} lang={language}>
             <section className="admin-welcome">
-                <div className="admin-login-top"><a href="/" className="admin-logo">PARKING<span>OS</span></a><DisplayControls t={t} theme={theme} language={language} onLanguageChange={setLanguage} onThemeToggle={() => setTheme((current) => current === "light" ? "dark" : "light")} /></div>
+                <div className="admin-login-top"><a href="/" className="admin-logo">PARKING<span>OS</span></a><DisplayControls theme={theme} language={language} onLanguageChange={setLanguage} onThemeChange={setTheme} /></div>
                 <div><p className="admin-label">{t.adminAccess}</p><h1>{t.makeEvery}<br /><span>{t.spaceCount}</span></h1><p className="admin-subtitle">{t.loginIntro}</p></div>
                 <small>{t.secureAccess}</small>
             </section>

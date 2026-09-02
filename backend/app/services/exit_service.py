@@ -12,16 +12,17 @@ from app.services.billing_service import (
 from app.services.time_service import pakistan_now
 
 
-def payment_required_for_exit(db: Session, license_plate: str, billing_enabled: bool) -> bool:
+def payment_required_for_exit(db: Session, license_plate: str, billing_enabled: bool, tenant_id: int) -> bool:
     if not billing_enabled:
         return False
 
-    vehicle = db.query(Vehicle).filter(Vehicle.license_plate == license_plate.strip().upper()).first()
+    vehicle = db.query(Vehicle).filter(Vehicle.tenant_id == tenant_id, Vehicle.license_plate == license_plate.strip().upper()).first()
     if vehicle is None:
         raise ValueError("Vehicle not found")
 
     session = db.query(ParkingSession).filter(
         ParkingSession.vehicle_id == vehicle.id,
+        ParkingSession.tenant_id == tenant_id,
         ParkingSession.status == "active",
     ).first()
     if session is None:
@@ -29,7 +30,8 @@ def payment_required_for_exit(db: Session, license_plate: str, billing_enabled: 
 
     amount, _ = calculate_parking_fee(session.entry_time, pakistan_now())
     whitelist_entry = db.query(WhitelistEntry).filter(
-        WhitelistEntry.license_plate == vehicle.license_plate
+        WhitelistEntry.license_plate == vehicle.license_plate,
+        WhitelistEntry.tenant_id == tenant_id,
     ).first()
     discount_percent = whitelist_entry.discount_percent if whitelist_entry else 0
     return apply_discount(amount, discount_percent) > 0
@@ -40,6 +42,7 @@ def process_vehicle_exit_by_plate(
     license_plate: str,
     payment_method: str | None,
     billing_enabled: bool = True,
+    tenant_id: int | None = None,
 ):
     """
     Complete the active parking session for a license
@@ -51,7 +54,7 @@ def process_vehicle_exit_by_plate(
     if not license_plate:
         raise ValueError("License plate was not recognized")
 
-    vehicle = db.query(Vehicle).filter(Vehicle.license_plate == license_plate).first()
+    vehicle = db.query(Vehicle).filter(Vehicle.tenant_id == tenant_id, Vehicle.license_plate == license_plate).first()
 
     if vehicle is None:
         raise ValueError("Vehicle not found")
@@ -60,6 +63,7 @@ def process_vehicle_exit_by_plate(
         db.query(ParkingSession)
         .filter(
             ParkingSession.vehicle_id == vehicle.id,
+            ParkingSession.tenant_id == tenant_id,
             ParkingSession.status == "active",
         )
         .first()
@@ -74,6 +78,7 @@ def process_vehicle_exit_by_plate(
         vehicle=vehicle,
         payment_method=payment_method,
         billing_enabled=billing_enabled,
+        tenant_id=tenant_id,
     )
 
 
@@ -83,6 +88,7 @@ def complete_parking_session(
     vehicle: Vehicle,
     payment_method: str | None,
     billing_enabled: bool = True,
+    tenant_id: int | None = None,
 ):
     """
     Complete an active parking session.
@@ -101,6 +107,7 @@ def complete_parking_session(
         whitelist_entry = (
             db.query(WhitelistEntry)
             .filter(WhitelistEntry.license_plate == vehicle.license_plate)
+            .filter(WhitelistEntry.tenant_id == tenant_id)
             .first()
         )
         discount_percent = whitelist_entry.discount_percent if whitelist_entry else 0
@@ -112,12 +119,14 @@ def complete_parking_session(
 
     session.exit_time = exit_time
     session.amount = amount
+    session.discount_percent = discount_percent
     session.payment_method = payment_method
     session.status = "completed"
 
     parking_space = (
         db.query(ParkingSpace)
         .filter(ParkingSpace.id == session.parking_space_id)
+        .filter(ParkingSpace.tenant_id == tenant_id)
         .first()
     )
 

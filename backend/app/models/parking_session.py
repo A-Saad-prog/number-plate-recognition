@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, String
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.database import Base
@@ -10,6 +10,7 @@ class ParkingSession(Base):
     __tablename__ = "parking_sessions"
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
 
     vehicle_id: Mapped[int] = mapped_column(
         ForeignKey("vehicles.id"),
@@ -46,3 +47,5 @@ class ParkingSession(Base):
         default="active",
         nullable=False,
     )
+
+    discount_percent: Mapped[float | None] = mapped_column(Float, nullable=True)

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, String
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.database import Base
@@ -11,7 +11,10 @@ class WhitelistEntry(Base):
     __tablename__ = "whitelist_entries"
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    license_plate: Mapped[str] = mapped_column(String(20), unique=True, index=True, nullable=False)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
+    license_plate: Mapped[str] = mapped_column(String(20), index=True, nullable=False)
     vehicle_name: Mapped[str] = mapped_column(String(100), nullable=False)
     discount_percent: Mapped[float] = mapped_column(Float, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=pakistan_now, nullable=False)
+
+    __table_args__ = (UniqueConstraint("tenant_id", "license_plate", name="uq_whitelist_tenant_plate"),)

@@ -7,6 +7,7 @@ DEFAULT_GARAGE_SETTINGS = {
     "level_count": 0,
     "spaces_per_level": 0,
     "levels": [],
+    "automatic_entry": False,
 }
 DEFAULT_CAMERA_CONFIG = {
     "entry_lane_cameras": 1,
@@ -19,10 +20,11 @@ DEFAULT_BILLING_CONFIG = {
 }
 
 
-def get_admin_settings(db: Session, create: bool = False) -> AdminSettings | None:
-    settings = db.query(AdminSettings).first()
+def get_admin_settings(db: Session, tenant_id: int, create: bool = False) -> AdminSettings | None:
+    settings = db.query(AdminSettings).filter(AdminSettings.tenant_id == tenant_id).first()
     if settings is None and create:
         settings = AdminSettings(
+            tenant_id=tenant_id,
             garage_settings=DEFAULT_GARAGE_SETTINGS.copy(),
             camera_config=DEFAULT_CAMERA_CONFIG.copy(),
             billing_config=DEFAULT_BILLING_CONFIG.copy(),

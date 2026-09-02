@@ -13,6 +13,7 @@ from app.services.time_service import pakistan_now
 def create_vehicle_entry(
     db: Session,
     license_plate: str,
+    tenant_id: int,
     parking_space_id: int | None = None,
 ):
     """
@@ -39,24 +40,24 @@ def create_vehicle_entry(
     # ============================================================
 
     if parking_space_id is None:
-        space = next(iter(get_available_spaces(db)), None)
+        space = next(iter(get_available_spaces(db, tenant_id)), None)
 
         if space is None:
             raise ValueError("No available parking space")
     else:
         space = validate_available_space(
             db,
-            parking_space_id,
+            parking_space_id, tenant_id,
         )
 
     # ============================================================
     # Find or create vehicle
     # ============================================================
 
-    vehicle = db.query(Vehicle).filter(Vehicle.license_plate == license_plate).first()
+    vehicle = db.query(Vehicle).filter(Vehicle.tenant_id == tenant_id, Vehicle.license_plate == license_plate).first()
 
     if vehicle is None:
-        vehicle = Vehicle(license_plate=license_plate)
+        vehicle = Vehicle(tenant_id=tenant_id, license_plate=license_plate)
 
         db.add(vehicle)
         db.flush()
@@ -69,6 +70,7 @@ def create_vehicle_entry(
         db.query(ParkingSession)
         .filter(
             ParkingSession.vehicle_id == vehicle.id,
+            ParkingSession.tenant_id == tenant_id,
             ParkingSession.status == "active",
         )
         .first()
@@ -84,6 +86,7 @@ def create_vehicle_entry(
     space.is_occupied = True
 
     session = ParkingSession(
+        tenant_id=tenant_id,
         vehicle_id=vehicle.id,
         parking_space_id=space.id,
         entry_time=pakistan_now(),
