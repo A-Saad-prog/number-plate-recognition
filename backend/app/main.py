@@ -1,4 +1,8 @@
 import os
+import logging
+import time
+
+import numpy as np
 
 from dotenv import load_dotenv
 
@@ -20,6 +24,7 @@ from app.services.parking_service import (
     get_all_spaces,
 )
 from app.services.settings_service import get_admin_settings, settings_response
+from app.services.plate_recognition import ocr
 
 from app.schemas.parking import (
     VehicleEntryRequest,
@@ -53,6 +58,24 @@ app = FastAPI(
     description=("Backend API for the number plate recognition " "parking system"),
     version="2.0.0",
 )
+
+
+@app.on_event("startup")
+def warm_up_ocr():
+    started_at = time.perf_counter()
+    try:
+        warmup_image = np.full((64, 256, 3), 255, dtype=np.uint8)
+        list(ocr.predict(warmup_image))
+        logging.getLogger(__name__).info(
+            "OCR warm-up completed in %.1fms",
+            (time.perf_counter() - started_at) * 1000,
+        )
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "OCR warm-up failed after %.1fms; continuing startup",
+            (time.perf_counter() - started_at) * 1000,
+            exc_info=True,
+        )
 
 
 # ============================================================
