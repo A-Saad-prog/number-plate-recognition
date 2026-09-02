@@ -24,7 +24,13 @@ from app.services.parking_service import (
     get_all_spaces,
 )
 from app.services.settings_service import get_admin_settings, settings_response
-from app.services.plate_recognition import ocr
+from app.services.plate_recognition import (
+    ocr,
+    yolo,
+    CONFIDENCE_THRESHOLD,
+    YOLO_IMGSZ,
+    YOLO_DEVICE,
+)
 
 from app.schemas.parking import (
     VehicleEntryRequest,
@@ -61,21 +67,54 @@ app = FastAPI(
 
 
 @app.on_event("startup")
-def warm_up_ocr():
-    started_at = time.perf_counter()
+def warm_up_vision_models():
+    total_started_at = time.perf_counter()
+
+    yolo_started_at = time.perf_counter()
     try:
-        warmup_image = np.full((64, 256, 3), 255, dtype=np.uint8)
-        list(ocr.predict(warmup_image))
+        yolo_warmup_image = np.zeros(
+            (YOLO_IMGSZ, YOLO_IMGSZ, 3),
+            dtype=np.uint8,
+        )
+        inference_options = {
+            "source": yolo_warmup_image,
+            "conf": CONFIDENCE_THRESHOLD,
+            "verbose": False,
+            "imgsz": YOLO_IMGSZ,
+        }
+        if YOLO_DEVICE:
+            inference_options["device"] = YOLO_DEVICE
+        yolo.predict(**inference_options)
+        logging.getLogger(__name__).info(
+            "YOLO warm-up completed in %.1fms",
+            (time.perf_counter() - yolo_started_at) * 1000,
+        )
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "YOLO warm-up failed after %.1fms; continuing startup",
+            (time.perf_counter() - yolo_started_at) * 1000,
+            exc_info=True,
+        )
+
+    ocr_started_at = time.perf_counter()
+    try:
+        ocr_warmup_image = np.full((64, 256, 3), 255, dtype=np.uint8)
+        list(ocr.predict(ocr_warmup_image))
         logging.getLogger(__name__).info(
             "OCR warm-up completed in %.1fms",
-            (time.perf_counter() - started_at) * 1000,
+            (time.perf_counter() - ocr_started_at) * 1000,
         )
     except Exception:
         logging.getLogger(__name__).warning(
             "OCR warm-up failed after %.1fms; continuing startup",
-            (time.perf_counter() - started_at) * 1000,
+            (time.perf_counter() - ocr_started_at) * 1000,
             exc_info=True,
         )
+
+    logging.getLogger(__name__).info(
+        "Vision model warm-up completed in %.1fms",
+        (time.perf_counter() - total_started_at) * 1000,
+    )
 
 
 # ============================================================
