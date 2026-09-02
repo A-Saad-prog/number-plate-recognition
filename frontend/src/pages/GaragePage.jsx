@@ -73,6 +73,26 @@ function GaragePage() {
     const cameraRequestsRef = useRef({});
     const cameraStartingRefBySlot = useRef({});
     const cameraLaneGenerationRef = useRef(0);
+    const activeVisionLoopsRef = useRef({});
+
+    function debugVisionLoopStatus(source, phase) {
+        if (!VISION_DEBUG) return;
+
+        if (phase === "start") {
+            activeVisionLoopsRef.current[source] = performance.now();
+        } else if (phase === "end") {
+            delete activeVisionLoopsRef.current[source];
+        }
+
+        const activeSources = Object.keys(activeVisionLoopsRef.current);
+        const legacyEntryActive = activeSources.some((id) => id === "entry" || id === "entry-1");
+        const legacyExitActive = activeSources.some((id) => id === "exit" || id === "exit-1");
+        const slotLoopActive = activeSources.some((id) => id.startsWith("slot-") || id.includes("slot-"));
+
+        console.debug(
+            `[Vision FE loops] count=${activeSources.length} active=${activeSources.join(",") || "none"} legacy_entry=${legacyEntryActive} legacy_exit=${legacyExitActive} slot_active=${slotLoopActive}`
+        );
+    }
 
     const videoRef = useRef(null);
     const exitVideoRef = useRef(null);
@@ -118,6 +138,8 @@ function GaragePage() {
             return false;
         }
 
+        const requestId = `fe-${source}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+        const requestStartAt = performance.now();
         const captureStart = performance.now();
         const context = canvas.getContext("2d");
         const scale = Math.min(1, MAX_INFERENCE_FRAME_WIDTH / video.videoWidth);
@@ -132,30 +154,40 @@ function GaragePage() {
             canvas.height
         );
 
+        const captureMs = performance.now() - captureStart;
+        const encodeStartedAt = performance.now();
         const image = canvas.toDataURL(
             "image/jpeg",
             0.82
         );
+        const encodeMs = performance.now() - encodeStartedAt;
+
+        if (VISION_DEBUG) {
+            debugVisionLoopStatus(source, "start");
+            console.debug(
+                `[Vision FE] id=${requestId} source=${source} capture=${captureMs.toFixed(1)}ms encode=${encodeMs.toFixed(1)}ms request_start=${requestStartAt.toFixed(1)}ms`
+            );
+        }
 
         try {
             visionProcessingRef.current = true;
-            const requestStart = performance.now();
+            const apiStartedAt = performance.now();
             const result =
-                await detectPlateFromFrame(image, source);
+                await detectPlateFromFrame(image, source, requestId);
+            const resultReceivedAt = performance.now();
+            const apiMs = resultReceivedAt - apiStartedAt;
+            const totalMs = resultReceivedAt - requestStartAt;
+            const renderHandoffStartedAt = performance.now();
 
             if (source !== activeDetectionSourceRef.current) {
                 return false;
             }
 
             if (VISION_DEBUG) {
-                console.debug("[Vision timing]", {
-                    source,
-                    captureMs: Math.round(requestStart - captureStart),
-                    roundTripMs: Math.round(performance.now() - requestStart),
-                    frame: `${canvas.width}x${canvas.height}`,
-                    detected: result?.detected,
-                    plate: result?.license_plate || null,
-                });
+                const renderHandoffMs = performance.now() - renderHandoffStartedAt;
+                console.debug(
+                    `[Vision FE] id=${requestId} source=${source} api=${apiMs.toFixed(1)}ms total=${totalMs.toFixed(1)}ms render_handoff=${renderHandoffMs.toFixed(1)}ms detected=${Boolean(result?.detected)} plate=${result?.license_plate || "n/a"}`
+                );
             }
 
             if (source.startsWith("entry-")) {
@@ -267,6 +299,9 @@ function GaragePage() {
             return false;
         } finally {
             visionProcessingRef.current = false;
+            if (VISION_DEBUG) {
+                debugVisionLoopStatus(source, "end");
+            }
         }
 
         return true;

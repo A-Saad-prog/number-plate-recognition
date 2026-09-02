@@ -1,6 +1,7 @@
 const API_BASE_URL =
     import.meta.env.VITE_API_BASE_URL ||
     "http://127.0.0.1:8000";
+const VISION_DEBUG = import.meta.env.DEV && import.meta.env.VITE_VISION_DEBUG === "true";
 
 function garageAuthHeaders() {
     const token = localStorage.getItem("parking_admin_token");
@@ -102,7 +103,8 @@ export async function getGarageSettings() {
 // Detect Plate from Camera Frame
 // ============================================================
 
-export async function detectPlateFromFrame(imageDataUrl, source) {
+export async function detectPlateFromFrame(imageDataUrl, source, requestId) {
+    const requestStartedAt = performance.now();
 
     const response = await fetch(
         `${API_BASE_URL}/vision/detect-plate`,
@@ -116,11 +118,21 @@ export async function detectPlateFromFrame(imageDataUrl, source) {
             body: JSON.stringify({
                 image: imageDataUrl,
                 source,
+                request_id: requestId || undefined,
             }),
         }
     );
 
+    const parseStartedAt = performance.now();
     const data = await response.json().catch(() => ({}));
+    const parseMs = performance.now() - parseStartedAt;
+    const apiTotalMs = performance.now() - requestStartedAt;
+
+    if (VISION_DEBUG) {
+        console.debug(
+            `[Vision FE API] id=${requestId || "n/a"} source=${source || "default"} api=${apiTotalMs.toFixed(1)}ms parse=${parseMs.toFixed(1)}ms`
+        );
+    }
 
     if (!response.ok) {
 

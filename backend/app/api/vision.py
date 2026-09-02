@@ -23,6 +23,7 @@ router = APIRouter(
 class PlateDetectionRequest(BaseModel):
     image: str
     source: str | None = None
+    request_id: str | None = None
 
 
 # ============================================================
@@ -36,15 +37,23 @@ def detect_license_plate(
     try:
 
         started_at = time.perf_counter()
+        if VISION_DEBUG:
+            logger.info(
+                "[Vision BE req] id=%s source=%s received",
+                request.request_id or "n/a",
+                request.source or "default",
+            )
 
         result = detect_plate(
             request.image,
             request.source,
+            request_id=request.request_id,
         )
 
         if VISION_DEBUG:
             logger.info(
-                "Vision endpoint timing source=%s total_ms=%.1f detected=%s accepted=%s",
+                "[Vision BE] id=%s source=%s total_ms=%.1f detected=%s accepted=%s",
+                request.request_id or "n/a",
                 request.source or "default",
                 (time.perf_counter() - started_at) * 1000,
                 result.get("detected"),
