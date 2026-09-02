@@ -43,6 +43,8 @@ function GaragePage() {
     const activeDetectionSourceRef = useRef("entry-1");
     const entrySubmittingRef = useRef(false);
     const exitSubmittingRef = useRef(false);
+    const automaticExitAttemptRef = useRef({});
+    const pendingAutomaticExitRef = useRef({ plate: "", source: "" });
     const exitPaymentPrefetchRef = useRef({ plate: "", promise: null, result: null });
 
     const [selectedSpaceId, setSelectedSpaceId] = useState(null);
@@ -299,6 +301,7 @@ function GaragePage() {
                         setPaymentMethod(null);
                         setExitRatePerMinute(null);
                         void prefetchExitPaymentRequired(plate);
+                        void startAutomaticExit(plate, source);
                     }
 
                     // ====================================================
@@ -468,6 +471,8 @@ function GaragePage() {
     function clearVehicleDetectionState() {
         detectedPlateRef.current = {};
         lastCompletedPlateRef.current = {};
+        automaticExitAttemptRef.current = {};
+        pendingAutomaticExitRef.current = { plate: "", source: "" };
         exitPaymentPrefetchRef.current = { plate: "", promise: null, result: null };
         plateCandidateRef.current = "";
         plateCandidateCountRef.current = 0;
@@ -893,7 +898,17 @@ function GaragePage() {
     }
 
 
-    async function handleSelectExit() {
+    async function startAutomaticExit(plate, source) {
+        if (
+            !source.startsWith("exit-") ||
+            automaticExitAttemptRef.current[source] === plate ||
+            exitSubmittingRef.current
+        ) {
+            return;
+        }
+
+        automaticExitAttemptRef.current[source] = plate;
+        pendingAutomaticExitRef.current = { plate: "", source: "" };
         setVehicleAction("exit");
         setEntryError("");
         setExitError("");
@@ -902,18 +917,20 @@ function GaragePage() {
         setSelectedSpaceId(null);
         setPaymentMethod(null);
         setExitPaymentRequired(false);
+        setExitLoading(true);
 
         const isDetectedVehicleParked = parkingSpacesRef.current.some(
-            (space) => space.is_occupied && space.license_plate === detectedPlate
+            (space) => space.is_occupied && space.license_plate === plate
         );
 
         if (!isDetectedVehicleParked) {
             setExitError("Vehicle is not currently parked in the garage.");
+            setExitLoading(false);
             return;
         }
 
         try {
-            const result = await getPrefetchedExitPaymentRequired(detectedPlate);
+            const result = await getPrefetchedExitPaymentRequired(plate);
             const paymentRequired = Boolean(result.payment_required);
             setExitRatePerMinute(result.rate_per_minute ?? 1.67);
             setExitPaymentRequired(paymentRequired);
@@ -922,14 +939,29 @@ function GaragePage() {
                 adminSettings?.billing_config?.card_enabled && "card",
             ].filter(Boolean);
             if (!paymentRequired) {
-                await handleConfirmExit(null, false);
+                await handleConfirmExit(null, false, plate, source);
             } else if (allowedMethods.length === 1) {
                 setPaymentMethod(allowedMethods[0]);
-                await handleConfirmExit(allowedMethods[0], true);
+                await handleConfirmExit(allowedMethods[0], true, plate, source);
+            } else {
+                pendingAutomaticExitRef.current = { plate, source };
+                setExitLoading(false);
             }
         } catch (error) {
             setExitError(error.message || "Could not check exit payment.");
+            setExitLoading(false);
         }
+    }
+
+    function handlePaymentSelection(method) {
+        setPaymentMethod(method);
+        setExitError("");
+        void handleConfirmExit(
+            method,
+            true,
+            pendingAutomaticExitRef.current.plate,
+            pendingAutomaticExitRef.current.source
+        );
     }
 
 
@@ -1043,9 +1075,14 @@ function GaragePage() {
     }
 
 
-    async function handleConfirmExit(selectedPaymentMethod = paymentMethod, paymentRequired = exitPaymentRequired) {
+    async function handleConfirmExit(
+        selectedPaymentMethod = paymentMethod,
+        paymentRequired = exitPaymentRequired,
+        plateOverride = detectedPlate,
+        sourceOverride = detectionSource || activeDetectionSourceRef.current
+    ) {
         if (exitSubmittingRef.current) return;
-        if (!detectedPlate) {
+        if (!plateOverride) {
             setExitError(
                 "No vehicle license plate has been detected."
             );
@@ -1071,7 +1108,7 @@ function GaragePage() {
         try {
             const result =
                 await exitUsingPlate(
-                    detectedPlate,
+                    plateOverride,
                     paymentRequired ? normalizedPaymentMethod : null
                 );
 
@@ -1085,14 +1122,15 @@ function GaragePage() {
 
             const receipt = result.vehicle;
 
-            lastCompletedPlateRef.current[detectionSource || activeDetectionSourceRef.current] =
-                detectedPlate;
+            lastCompletedPlateRef.current[sourceOverride] = plateOverride;
+            delete automaticExitAttemptRef.current[sourceOverride];
+            pendingAutomaticExitRef.current = { plate: "", source: "" };
 
             const nextSpaces =
                 parkingSpacesRef.current.map((space) => {
                     if (
                         space.is_occupied &&
-                        space.license_plate === detectedPlate
+                        space.license_plate === plateOverride
                     ) {
                         return {
                             ...space,
@@ -1110,7 +1148,7 @@ function GaragePage() {
 
             setExitResult(receipt);
 
-            detectedPlateRef.current[detectionSource || activeDetectionSourceRef.current] = "";
+            detectedPlateRef.current[sourceOverride] = "";
             setDetectedPlate("");
             setDetectionSource(null);
 
@@ -1631,6 +1669,7 @@ function GaragePage() {
                             setPaymentMethod(null);
                             setExitRatePerMinute(null);
                             void prefetchExitPaymentRequired(plate);
+                            void startAutomaticExit(plate, cameraId);
                         }
 
                         const parkedSpace = cameraId.startsWith("entry-")
@@ -1702,8 +1741,11 @@ function GaragePage() {
     const isDetectedVehicleParked = parkingSpaces.some(
         (space) => space.is_occupied && space.license_plate === detectedPlate
     );
-    const showCashPayment = isDetectedVehicleParked && exitPaymentRequired && Boolean(billingConfig?.payments_enabled && billingConfig?.cash_enabled);
-    const showCardPayment = isDetectedVehicleParked && exitPaymentRequired && Boolean(billingConfig?.payments_enabled && billingConfig?.card_enabled);
+    const showPaymentSelection = isDetectedVehicleParked && exitPaymentRequired && Boolean(
+        billingConfig?.payments_enabled && billingConfig?.cash_enabled && billingConfig?.card_enabled
+    );
+    const showCashPayment = showPaymentSelection;
+    const showCardPayment = showPaymentSelection;
 
     return (
         <div className="app">
@@ -2167,28 +2209,6 @@ function GaragePage() {
                                                 )}
 
 
-                                            {detectionSource?.startsWith("exit-") &&
-                                                (parkingSpaces.some(
-                                                    (space) => space.is_occupied && space.license_plate === detectedPlate
-                                                ) ? (
-                                                    <button
-                                                        className="exit-button"
-                                                        onClick={
-                                                            handleSelectExit
-                                                        }
-                                                        disabled={
-                                                            entryLoading ||
-                                                            exitLoading
-                                                        }
-                                                    >
-                                                        Exit Vehicle
-                                                    </button>
-                                                ) : (
-                                                    <div className="error">
-                                                        Car is not parked in the garage.
-                                                    </div>
-                                                ))}
-
                                         </div>
 
 
@@ -2301,8 +2321,8 @@ function GaragePage() {
 
                                             <p className="description">
                                                 {exitPaymentRequired
-                                                    ? `Select a payment method, then confirm exit. Parking is billed at ${formatRupees(exitRatePerMinute ?? 1.67)} per minute.`
-                                                    : "Confirm exit to complete the parking session."}
+                                                    ? `Select a payment method. Parking is billed at ${formatRupees(exitRatePerMinute ?? 1.67)} per minute.`
+                                                    : "Exit is being processed automatically."}
                                             </p>
 
 
@@ -2337,15 +2357,7 @@ function GaragePage() {
                                                                     : ""
                                                                 }`
                                                             }
-                                                            onClick={() => {
-                                                                setPaymentMethod(
-                                                                    "cash"
-                                                                );
-
-                                                                setExitError(
-                                                                    ""
-                                                                );
-                                                            }}
+                                                            onClick={() => handlePaymentSelection("cash")}
                                                             disabled={
                                                                 exitLoading
                                                             }
@@ -2363,15 +2375,7 @@ function GaragePage() {
                                                                     : ""
                                                                 }`
                                                             }
-                                                            onClick={() => {
-                                                                setPaymentMethod(
-                                                                    "card"
-                                                                );
-
-                                                                setExitError(
-                                                                    ""
-                                                                );
-                                                            }}
+                                                            onClick={() => handlePaymentSelection("card")}
                                                             disabled={
                                                                 exitLoading
                                                             }
@@ -2390,46 +2394,7 @@ function GaragePage() {
                                                 </div>
                                             )}
 
-
-                                            <div className="confirmation-buttons">
-
-                                                <button
-                                                    className="exit-button"
-                                                    onClick={() => handleConfirmExit()}
-                                                    disabled={
-                                                        exitLoading ||
-                                                        (exitPaymentRequired && !paymentMethod)
-                                                    }
-                                                >
-                                                    {exitLoading
-                                                        ? "Processing Exit..."
-                                                        : "Proceed to Exit"}
-                                                </button>
-
-
-                                                <button
-                                                    className="cancel-button"
-                                                    onClick={() => {
-                                                        setVehicleAction(
-                                                            null
-                                                        );
-
-                                                        setExitError(
-                                                            ""
-                                                        );
-
-                                                        setPaymentMethod(
-                                                            null
-                                                        );
-                                                    }}
-                                                    disabled={
-                                                        exitLoading
-                                                    }
-                                                >
-                                                    Back
-                                                </button>
-
-                                            </div>
+                                            {exitLoading && <p className="description">Processing Exit...</p>}
 
                                         </div>
                                     )}
