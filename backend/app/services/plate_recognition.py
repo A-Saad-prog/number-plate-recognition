@@ -680,8 +680,8 @@ def _run_ocr_vote(
                 confirmed = True
             else:
                 grouped = {}
-                for read_plate, read_confidence, _, _ in reads:
-                    grouped.setdefault(read_plate, []).append(read_confidence)
+                for stored_plate, read_confidence, _, _ in reads:
+                    grouped.setdefault(stored_plate, []).append(read_confidence)
 
                 if grouped:
                     for candidate_plate, candidate_confidences in grouped.items():
@@ -719,8 +719,8 @@ def _run_ocr_vote(
                 vote_window_snapshot = list(reads)
                 vote_window_count = len(vote_window_snapshot)
                 vote_window_preview = [
-                    (read_plate, round(read_confidence, 4), read_timestamp)
-                    for read_plate, read_confidence, read_timestamp, _ in vote_window_snapshot
+                    (stored_plate, round(read_confidence, 4), read_timestamp)
+                    for stored_plate, read_confidence, read_timestamp, _ in vote_window_snapshot
                 ]
                 winner_vote_reads = [
                     read for read in vote_window_snapshot if read[0] == winner
