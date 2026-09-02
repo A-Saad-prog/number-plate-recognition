@@ -707,6 +707,32 @@ def detect_plate(
     state = _ocr_state(source)
     request_started_at = time.perf_counter()
 
+    # OCR is the CPU-bound work for this source. While it is running, return
+    # the current pending recognition state instead of competing with it for
+    # CPU by decoding and running YOLO on another frame from the same camera.
+    with state["lock"]:
+        if state["ocr_in_flight"]:
+            plate_metadata = state["accepted"]
+            recognized_plate = plate_metadata["plate"] if plate_metadata else None
+            _vision_debug_request(
+                request_id,
+                source,
+                decode=0.0,
+                yolo=0.0,
+                total=(time.perf_counter() - request_started_at) * 1000,
+                ocr_pending=True,
+                yolo_skipped=True,
+            )
+            return {
+                "detected": True,
+                "license_plate": recognized_plate,
+                "plate_metadata": plate_metadata,
+                "plate_image": None,
+                "confidence": 0.0,
+                "box": None,
+                "fps": current_fps,
+            }
+
     frame = decode_image(image_base64)
     decoded_at = time.perf_counter()
     if VISION_DEBUG:
