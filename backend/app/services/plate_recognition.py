@@ -11,8 +11,6 @@ import cv2
 import numpy as np
 from dotenv import load_dotenv
 
-from collections import Counter
-
 # Disable PaddlePaddle features that caused compatibility issues
 os.environ["FLAGS_enable_pir_api"] = "0"
 
@@ -43,10 +41,6 @@ CONFIDENCE_THRESHOLD = 0.30
 YOLO_IMGSZ = int(os.getenv("YOLO_IMGSZ", "640"))
 YOLO_DEVICE = os.getenv("YOLO_DEVICE") or None
 VISION_DEBUG = os.getenv("VISION_DEBUG", "").lower() in {"1", "true", "yes"}
-
-OCR_AGREEMENT_REQUIRED = 3
-OCR_BUFFER_SIZE = 8
-OCR_BUFFER_TTL_SECONDS = 5.0
 
 OCR_CONFIDENCE_THRESHOLD = 0.50
 OCR_RECOGNITION_MODEL = os.getenv(
@@ -334,97 +328,20 @@ def normalize_plate(text: str) -> str:
     return result["plate"] if result else ""
 
 
-def _comparison_plate(value: str) -> str:
-    return re.sub(r"[^A-Z0-9]", "", value.upper())
-
-
-def _plate_distance(first: str, second: str) -> int:
-    if abs(len(first) - len(second)) > 1:
-        return 2
-
-    previous = list(range(len(second) + 1))
-    for first_index, first_character in enumerate(first, 1):
-        current = [first_index]
-        for second_index, second_character in enumerate(second, 1):
-            current.append(
-                min(
-                    current[-1] + 1,
-                    previous[second_index] + 1,
-                    previous[second_index - 1] + (first_character != second_character),
-                )
-            )
-        previous = current
-    return previous[-1]
-
-
 def _ocr_state(source):
     with ocr_states_lock:
         return ocr_states.setdefault(
             source,
             {
-                "buffer": [],
-                "accepted": None,
-                "last_detection_time": 0.0,
-                "latest_crop": None,
                 "ocr_in_flight": False,
                 "vision_lock": threading.Lock(),
-                "generation": 0,
                 "lock": threading.RLock(),
             },
         )
 
 
-def _clear_ocr_state(source):
-    state = _ocr_state(source)
-    with state["lock"]:
-        state["buffer"].clear()
-        state["accepted"] = None
-        state["latest_crop"] = None
-        state["generation"] += 1
-
-
-def _vote_for_plate(metadata, source):
-    """Add one OCR result and return a weighted agreement when established."""
-    state = _ocr_state(source)
-    buffer = state["buffer"]
-
-    now = time.monotonic()
-    buffer[:] = [
-        reading for reading in buffer if now - reading["time"] <= OCR_BUFFER_TTL_SECONDS
-    ]
-
-    normalized = _comparison_plate(metadata["plate"])
-    if buffer and not any(
-        _plate_distance(normalized, item["normalized"]) <= 1 for item in buffer
-    ):
-        # A new plate candidate starts a new vehicle vote window.
-        buffer.clear()
-
-    reading = {"metadata": metadata, "normalized": normalized, "time": now}
-    buffer.append(reading)
-    del buffer[:-OCR_BUFFER_SIZE]
-
-    matching = [
-        item for item in buffer if _plate_distance(normalized, item["normalized"]) <= 1
-    ]
-    weighted_confidence = sum(
-        float(item["metadata"].get("confidence", 0.0)) for item in matching
-    )
-
-    if len(matching) < OCR_AGREEMENT_REQUIRED or weighted_confidence < 1.5:
-        return None
-
-    best = max(
-        matching,
-        key=lambda item: float(item["metadata"].get("confidence", 0.0)),
-    )["metadata"]
-    state["accepted"] = best
-    buffer.clear()
-    return best
-
-
 def _upload_accepted_frame(frame, metadata):
-    """Upload only the frame that completed the OCR agreement vote."""
+    """Upload the frame that produced a valid OCR result."""
     bucket = os.getenv("AWS_S3_BUCKET")
     endpoint_url = os.getenv("AWS_ENDPOINT_URL_S3")
     region = os.getenv("AWS_REGION")
@@ -634,23 +551,16 @@ def _run_ocr_vote(
     source: str,
     plate_crop,
     frame_for_upload,
-    generation: int,
     request_id: str | None = None,
 ):
     """Run one OCR read from one detected plate crop."""
     state = _ocr_state(source)
     started_at = time.perf_counter()
     predict_ms = 0.0
-    vote_total_ms = 0.0
-    accepted_plate = None
 
     try:
         if plate_crop is None or plate_crop.size == 0:
-            return
-
-        with state["lock"]:
-            if state["generation"] != generation or state["accepted"] is not None:
-                return
+            return None
 
         with ocr_lock:
             timing_started_at = time.perf_counter()
@@ -658,28 +568,19 @@ def _run_ocr_vote(
             predict_ms = (time.perf_counter() - timing_started_at) * 1000
 
         if not ocr_result:
-            return
+            return None
 
-        validation_started_at = time.perf_counter()
-        with state["lock"]:
-            if state["generation"] != generation:
-                return
-            state["accepted"] = ocr_result
-            state["buffer"].clear()
-            plate_metadata = state["accepted"]
-        vote_total_ms = (time.perf_counter() - validation_started_at) * 1000
-
-        accepted_plate = plate_metadata.get("plate")
-        _upload_accepted_frame_in_background(frame_for_upload, plate_metadata)
+        _upload_accepted_frame_in_background(frame_for_upload, ocr_result)
         if VISION_DEBUG:
             vision_logger.info(
-                "[OCR] id=%s source=%s predict=%.1fms vote_total=%.1fms accepted=%s",
+                "[OCR] id=%s source=%s predict=%.1fms validation=%.1fms accepted=%s",
                 request_id or "n/a",
                 source,
                 predict_ms,
-                vote_total_ms,
-                accepted_plate or "n/a",
+                0.0,
+                ocr_result.get("plate") or "n/a",
             )
+        return ocr_result
     finally:
         with state["lock"]:
             state["ocr_in_flight"] = False
@@ -707,13 +608,11 @@ def _run_ocr_vote(
 #       ↓
 # PaddleOCR
 #       ↓
-# Majority vote
+# Text recognition
 # ============================================================
 
 
 def _pending_ocr_response(state, source, request_id, request_started_at):
-    plate_metadata = state["accepted"]
-    recognized_plate = plate_metadata["plate"] if plate_metadata else None
     _vision_debug_request(
         request_id,
         source,
@@ -725,8 +624,8 @@ def _pending_ocr_response(state, source, request_id, request_started_at):
     )
     return {
         "detected": True,
-        "license_plate": recognized_plate,
-        "plate_metadata": plate_metadata,
+        "license_plate": None,
+        "plate_metadata": None,
         "plate_image": None,
         "confidence": 0.0,
         "box": None,
@@ -848,13 +747,6 @@ def _detect_plate(
 
     if best_box is None:
 
-        if (
-            state["last_detection_time"]
-            and time.monotonic() - state["last_detection_time"] > OCR_BUFFER_TTL_SECONDS
-        ):
-            _clear_ocr_state(source)
-            state["last_detection_time"] = 0.0
-
         _vision_debug(
             "Vision timing source=%s decode_ms=%.1f yolo_ms=%.1f total_ms=%.1f detected=false",
             source,
@@ -876,9 +768,6 @@ def _detect_plate(
     # ========================================================
     # Bounding box
     # ========================================================
-
-    with state["lock"]:
-        state["last_detection_time"] = time.monotonic()
 
     x1, y1, x2, y2 = map(
         int,
@@ -945,27 +834,12 @@ def _detect_plate(
             "fps": current_fps,
         }
 
-    # Keep the fast path bounded by decode + YOLO. One OCR read runs once per
-    # source in a lightweight thread, so
-    # the client can render the detected box without waiting for OCR.
+    # Mark OCR busy before starting the one recognition call. The source lock
+    # prevents concurrent requests from starting duplicate work.
     with state["lock"]:
-        plate_metadata = state["accepted"]
-        if plate_metadata is None:
-            if not state["ocr_in_flight"]:
-                state["latest_crop"] = plate_crop.copy()
-                state["ocr_in_flight"] = True
-                threading.Thread(
-                    target=_run_ocr_vote,
-                    args=(
-                        source,
-                        state["latest_crop"],
-                        frame,
-                        state["generation"],
-                        request_id,
-                    ),
-                    daemon=True,
-                ).start()
+        state["ocr_in_flight"] = True
 
+    plate_metadata = _run_ocr_vote(source, plate_crop.copy(), frame, request_id)
     recognized_plate = plate_metadata["plate"] if plate_metadata else None
     response_started_at = time.perf_counter()
     if VISION_DEBUG:
