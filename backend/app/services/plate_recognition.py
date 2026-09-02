@@ -54,6 +54,7 @@ PLATE_HORIZONTAL_PADDING_RATIO = 0.12
 PLATE_VERTICAL_PADDING_RATIO = 0.25
 
 ocr_states = {}
+ocr_states_lock = threading.Lock()
 ocr_lock = threading.Lock()
 vision_logger = logging.getLogger(__name__)
 
@@ -358,18 +359,19 @@ def _plate_distance(first: str, second: str) -> int:
 
 
 def _ocr_state(source):
-    return ocr_states.setdefault(
-        source,
-        {
-            "buffer": [],
-            "accepted": None,
-            "last_detection_time": 0.0,
-            "latest_crop": None,
-            "ocr_in_flight": False,
-            "generation": 0,
-            "lock": threading.RLock(),
-        },
-    )
+    with ocr_states_lock:
+        return ocr_states.setdefault(
+            source,
+            {
+                "buffer": [],
+                "accepted": None,
+                "last_detection_time": 0.0,
+                "latest_crop": None,
+                "ocr_in_flight": False,
+                "generation": 0,
+                "lock": threading.RLock(),
+            },
+        )
 
 
 def _clear_ocr_state(source):
@@ -620,8 +622,8 @@ def read_plate(plate_crop):
         return None
 
 
-def _run_ocr_vote(source: str, frame_for_upload, generation: int, request_id: str | None = None):
-    """Run the existing strict vote off the latency-sensitive YOLO response."""
+def _run_ocr_vote(source: str, plate_crop, frame_for_upload, generation: int, request_id: str | None = None):
+    """Run the strict three-read vote from one detected plate crop."""
     state = _ocr_state(source)
     started_at = time.perf_counter()
     predict_ms = 0.0
@@ -630,17 +632,13 @@ def _run_ocr_vote(source: str, frame_for_upload, generation: int, request_id: st
 
     try:
         for _ in range(OCR_AGREEMENT_REQUIRED):
-            with state["lock"]:
-                if state["generation"] != generation or state["accepted"] is not None:
-                    return
-                plate_crop = state["latest_crop"]
-                if plate_crop is not None:
-                    plate_crop = plate_crop.copy()
-
             if plate_crop is None or plate_crop.size == 0:
                 return
 
-            vote_started_at = time.perf_counter()
+            with state["lock"]:
+                if state["generation"] != generation or state["accepted"] is not None:
+                    return
+
             with ocr_lock:
                 timing_started_at = time.perf_counter()
                 ocr_result = read_plate(plate_crop)
@@ -880,18 +878,18 @@ def detect_plate(image_base64: str, source: str | None = None, request_id: str |
             "fps": current_fps,
         }
 
-    # Keep the fast path bounded by decode + YOLO. The current strict
-    # three-read OCR vote runs once per source in a lightweight thread, so
+    # Keep the fast path bounded by decode + YOLO. The strict three-read vote
+    # runs once per source in a lightweight thread, so
     # the client can render the detected box without waiting for OCR.
     with state["lock"]:
         plate_metadata = state["accepted"]
         if plate_metadata is None:
-            state["latest_crop"] = plate_crop.copy()
             if not state["ocr_in_flight"]:
+                state["latest_crop"] = plate_crop.copy()
                 state["ocr_in_flight"] = True
                 threading.Thread(
                     target=_run_ocr_vote,
-                    args=(source, frame, state["generation"], request_id),
+                    args=(source, state["latest_crop"], frame, state["generation"], request_id),
                     daemon=True,
                 ).start()
 

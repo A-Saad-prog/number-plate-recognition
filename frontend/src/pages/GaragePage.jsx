@@ -14,6 +14,7 @@ import VehicleInformation from "../components/VehicleInformation";
 import "../styles/App.css";
 
 const MAX_INFERENCE_FRAME_WIDTH = 960;
+const VISION_REQUEST_INTERVAL_MS = 333;
 const VISION_DEBUG = import.meta.env.DEV && import.meta.env.VITE_VISION_DEBUG === "true";
 const GARAGE_SETTINGS_UPDATED_KEY = "parking_garage_settings_updated";
 
@@ -71,6 +72,7 @@ function GaragePage() {
     const cameraNodesRef = useRef({});
     const cameraCanvasesRef = useRef({});
     const cameraRequestsRef = useRef({});
+    const cameraTimersRef = useRef({});
     const cameraStartingRefBySlot = useRef({});
     const cameraLaneGenerationRef = useRef(0);
     const activeVisionLoopsRef = useRef({});
@@ -343,6 +345,11 @@ function GaragePage() {
         cameraId
     ) {
         if (cameraStartingRef.current) {
+            return;
+        }
+
+        if (!cameraAssignments[cameraId]) {
+            setActive(false);
             return;
         }
 
@@ -716,8 +723,10 @@ async function loadAdminSettings() {
         const processLatestFrame = async () => {
             const processed = await processCameraFrame(videoRef, true, "entry-1");
             if (!cancelled) {
-                if (processed) queueMicrotask(processLatestFrame);
-                else nextFrameTimer = window.setTimeout(processLatestFrame, 100);
+                nextFrameTimer = window.setTimeout(
+                    processLatestFrame,
+                    processed ? VISION_REQUEST_INTERVAL_MS : 100
+                );
             }
         };
 
@@ -752,8 +761,10 @@ async function loadAdminSettings() {
         const processLatestFrame = async () => {
             const processed = await processCameraFrame(exitVideoRef, true, "exit-1");
             if (!cancelled) {
-                if (processed) queueMicrotask(processLatestFrame);
-                else nextFrameTimer = window.setTimeout(processLatestFrame, 100);
+                nextFrameTimer = window.setTimeout(
+                    processLatestFrame,
+                    processed ? VISION_REQUEST_INTERVAL_MS : 100
+                );
             }
         };
 
@@ -1505,6 +1516,8 @@ async function loadAdminSettings() {
 
     function stopSlotCamera(cameraId) {
         cameraRequestsRef.current[cameraId] = false;
+        window.clearTimeout(cameraTimersRef.current[cameraId]);
+        delete cameraTimersRef.current[cameraId];
         cameraStreamsRef.current[cameraId]?.getTracks().forEach((track) => track.stop());
         delete cameraStreamsRef.current[cameraId];
     }
@@ -1598,7 +1611,16 @@ async function loadAdminSettings() {
             if (VISION_DEBUG) console.debug("Vision processing error:", error);
         } finally {
             cameraRequestsRef.current[cameraId] = false;
-            if (cameraStreamsRef.current[cameraId]) queueMicrotask(() => runSlotDetection(cameraId));
+            if (
+                cameraStreamsRef.current[cameraId] &&
+                laneGeneration === cameraLaneGenerationRef.current &&
+                cameraId.startsWith(`${activeLaneRef.current}-`)
+            ) {
+                cameraTimersRef.current[cameraId] = window.setTimeout(
+                    () => runSlotDetection(cameraId),
+                    VISION_REQUEST_INTERVAL_MS
+                );
+            }
         }
     }
 
