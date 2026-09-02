@@ -728,6 +728,14 @@ button {
     cursor: pointer;
 }
 
+.exit-mode .payment-option {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    white-space: nowrap;
+    line-height: 1.2;
+}
+
 .payment-option:hover:not(:disabled) {
     border-color: #9a3412;
 }

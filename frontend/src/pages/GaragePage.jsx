@@ -43,6 +43,7 @@ function GaragePage() {
     const activeDetectionSourceRef = useRef("entry-1");
     const entrySubmittingRef = useRef(false);
     const exitSubmittingRef = useRef(false);
+    const exitPaymentPrefetchRef = useRef({ plate: "", promise: null, result: null });
 
     const [selectedSpaceId, setSelectedSpaceId] = useState(null);
     const [entryLoading, setEntryLoading] = useState(false);
@@ -55,6 +56,42 @@ function GaragePage() {
     const [exitResult, setExitResult] = useState(null);
     const [paymentMethod, setPaymentMethod] = useState(null);
     const [exitPaymentRequired, setExitPaymentRequired] = useState(false);
+
+    function prefetchExitPaymentRequired(plate) {
+        const cached = exitPaymentPrefetchRef.current;
+        if (cached.plate === plate && (cached.promise || cached.result)) {
+            return cached.promise || Promise.resolve(cached.result);
+        }
+
+        const promise = getExitPaymentRequired(plate)
+            .then((result) => {
+                if (exitPaymentPrefetchRef.current.plate === plate) {
+                    exitPaymentPrefetchRef.current = { plate, promise: null, result };
+                }
+                return result;
+            })
+            .catch(() => {
+                if (exitPaymentPrefetchRef.current.plate === plate) {
+                    exitPaymentPrefetchRef.current = { plate, promise: null, result: null };
+                }
+                return null;
+            });
+
+        exitPaymentPrefetchRef.current = { plate, promise, result: null };
+        return promise;
+    }
+
+    async function getPrefetchedExitPaymentRequired(plate) {
+        const cached = exitPaymentPrefetchRef.current;
+        if (cached.plate === plate) {
+            if (cached.result) return cached.result;
+            if (cached.promise) {
+                const result = await cached.promise;
+                if (result) return result;
+            }
+        }
+        return getExitPaymentRequired(plate);
+    }
 
     const [parkingSpaces, setParkingSpaces] = useState([]);
     const parkingSpacesRef = useRef([]);
@@ -258,6 +295,7 @@ function GaragePage() {
                         setExitError("");
                         setExitResult(null);
                         setPaymentMethod(null);
+                        void prefetchExitPaymentRequired(plate);
                     }
 
                     // ====================================================
@@ -427,6 +465,7 @@ function GaragePage() {
     function clearVehicleDetectionState() {
         detectedPlateRef.current = {};
         lastCompletedPlateRef.current = {};
+        exitPaymentPrefetchRef.current = { plate: "", promise: null, result: null };
         plateCandidateRef.current = "";
         plateCandidateCountRef.current = 0;
 
@@ -868,7 +907,7 @@ function GaragePage() {
         }
 
         try {
-            const result = await getExitPaymentRequired(detectedPlate);
+            const result = await getPrefetchedExitPaymentRequired(detectedPlate);
             const paymentRequired = Boolean(result.payment_required);
             setExitPaymentRequired(paymentRequired);
             const allowedMethods = [
@@ -1583,6 +1622,7 @@ function GaragePage() {
                             setExitError("");
                             setExitResult(null);
                             setPaymentMethod(null);
+                            void prefetchExitPaymentRequired(plate);
                         }
 
                         const parkedSpace = cameraId.startsWith("entry-")

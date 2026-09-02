@@ -171,7 +171,10 @@ PLATE_FORMATS = {
         "government": [("alphanumeric", r"^[A-Z0-9]+$")],
     },
     "Sindh": {
-        "car": [("AAA000", r"^[A-Z]{3}[0-9]{3}$")],
+        "car": [
+            ("AAA000", r"^[A-Z]{3}[0-9]{3}$"),
+            ("AAA0000", r"^[A-Z]{3}[0-9]{4}$"),
+        ],
         "motorcycle": [("AAA0000", r"^[A-Z]{3}[0-9]{4}$")],
         "public_transport": [("AA0000", r"^[A-Z]{2}[0-9]{4}$")],
         "government": [("AA000", r"^[A-Z]{2}[0-9]{3}$")],
@@ -476,6 +479,29 @@ def read_plate(plate_crop, source=None, request_id=None):
                 (round(width * scale), round(height * scale)),
                 interpolation=cv2.INTER_CUBIC,
             )
+
+        height, width = plate_crop.shape[:2]
+        if height >= 2 and width / height < 2.0:
+            split_at = height // 2
+            top_line = plate_crop[:split_at]
+            bottom_line = plate_crop[split_at:]
+            target_height = max(top_line.shape[0], bottom_line.shape[0])
+            top_line = cv2.resize(
+                top_line,
+                (round(top_line.shape[1] * target_height / top_line.shape[0]), target_height),
+                interpolation=cv2.INTER_CUBIC,
+            )
+            bottom_line = cv2.resize(
+                bottom_line,
+                (round(bottom_line.shape[1] * target_height / bottom_line.shape[0]), target_height),
+                interpolation=cv2.INTER_CUBIC,
+            )
+            separator = np.full(
+                (target_height, max(4, target_height // 8), 3),
+                255,
+                dtype=np.uint8,
+            )
+            plate_crop = np.hstack((top_line, separator, bottom_line))
         preprocess_ms = (time.perf_counter() - started_at) * 1000
 
         recognition_started_at = time.perf_counter()
