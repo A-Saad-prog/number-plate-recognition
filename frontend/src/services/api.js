@@ -193,7 +193,7 @@ export async function getExitPaymentRequired(licensePlate) {
 
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-        throw new Error(data.detail || `Failed to check exit payment: ${response.status}`);
+        throw requestError(response, data, `Failed to check exit payment: ${response.status}`);
     }
     return data;
 }

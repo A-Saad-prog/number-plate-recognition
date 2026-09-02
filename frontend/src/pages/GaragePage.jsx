@@ -45,7 +45,7 @@ function GaragePage() {
     const exitSubmittingRef = useRef(false);
     const automaticExitAttemptRef = useRef({});
     const pendingAutomaticExitRef = useRef({ plate: "", source: "" });
-    const exitPaymentPrefetchRef = useRef({ plate: "", promise: null, result: null });
+    const exitPaymentPrefetchRef = useRef({ plate: "", promise: null, result: null, error: null });
 
     const [selectedSpaceId, setSelectedSpaceId] = useState(null);
     const [entryLoading, setEntryLoading] = useState(false);
@@ -69,18 +69,18 @@ function GaragePage() {
         const promise = getExitPaymentRequired(plate)
             .then((result) => {
                 if (exitPaymentPrefetchRef.current.plate === plate) {
-                    exitPaymentPrefetchRef.current = { plate, promise: null, result };
+                    exitPaymentPrefetchRef.current = { plate, promise: null, result, error: null };
                 }
                 return result;
             })
-            .catch(() => {
+            .catch((error) => {
                 if (exitPaymentPrefetchRef.current.plate === plate) {
-                    exitPaymentPrefetchRef.current = { plate, promise: null, result: null };
+                    exitPaymentPrefetchRef.current = { plate, promise: null, result: null, error };
                 }
                 return null;
             });
 
-        exitPaymentPrefetchRef.current = { plate, promise, result: null };
+        exitPaymentPrefetchRef.current = { plate, promise, result: null, error: null };
         return promise;
     }
 
@@ -91,6 +91,9 @@ function GaragePage() {
             if (cached.promise) {
                 const result = await cached.promise;
                 if (result) return result;
+            }
+            if (exitPaymentPrefetchRef.current.error) {
+                throw exitPaymentPrefetchRef.current.error;
             }
         }
         return getExitPaymentRequired(plate);
@@ -473,7 +476,7 @@ function GaragePage() {
         lastCompletedPlateRef.current = {};
         automaticExitAttemptRef.current = {};
         pendingAutomaticExitRef.current = { plate: "", source: "" };
-        exitPaymentPrefetchRef.current = { plate: "", promise: null, result: null };
+        exitPaymentPrefetchRef.current = { plate: "", promise: null, result: null, error: null };
         plateCandidateRef.current = "";
         plateCandidateCountRef.current = 0;
 
@@ -919,16 +922,6 @@ function GaragePage() {
         setExitPaymentRequired(false);
         setExitLoading(true);
 
-        const isDetectedVehicleParked = parkingSpacesRef.current.some(
-            (space) => space.is_occupied && space.license_plate === plate
-        );
-
-        if (!isDetectedVehicleParked) {
-            setExitError("Vehicle is not currently parked in the garage.");
-            setExitLoading(false);
-            return;
-        }
-
         try {
             const result = await getPrefetchedExitPaymentRequired(plate);
             const paymentRequired = Boolean(result.payment_required);
@@ -948,6 +941,25 @@ function GaragePage() {
                 setExitLoading(false);
             }
         } catch (error) {
+            if (error.status === 404) {
+                if (automaticExitAttemptRef.current[source] === plate) {
+                    delete automaticExitAttemptRef.current[source];
+                }
+                if (detectedPlateRef.current[source] === plate) {
+                    detectedPlateRef.current[source] = "";
+                    setDetectedPlate("");
+                    setDetectionSource(null);
+                    setVehicleAction(null);
+                    setPaymentMethod(null);
+                    setExitPaymentRequired(false);
+                    setExitRatePerMinute(null);
+                    setExitLoading(false);
+                }
+                if (pendingAutomaticExitRef.current.plate === plate && pendingAutomaticExitRef.current.source === source) {
+                    pendingAutomaticExitRef.current = { plate: "", source: "" };
+                }
+                return;
+            }
             setExitError(error.message || "Could not check exit payment.");
             setExitLoading(false);
         }
