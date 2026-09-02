@@ -17,7 +17,7 @@ from collections import Counter
 os.environ["FLAGS_enable_pir_api"] = "0"
 
 from ultralytics import YOLO
-from paddleocr import PaddleOCR
+from paddleocr import TextRecognition
 
 try:
     import boto3
@@ -49,6 +49,9 @@ OCR_BUFFER_SIZE = 8
 OCR_BUFFER_TTL_SECONDS = 5.0
 
 OCR_CONFIDENCE_THRESHOLD = 0.50
+OCR_RECOGNITION_MODEL = os.getenv(
+    "OCR_RECOGNITION_MODEL", "en_PP-OCRv5_mobile_rec"
+)
 
 PLATE_HORIZONTAL_PADDING_RATIO = 0.12
 PLATE_VERTICAL_PADDING_RATIO = 0.25
@@ -95,17 +98,13 @@ print("YOLO loaded.")
 # Load OCR
 # ============================================================
 
-print("Loading OCR...")
+print("Loading OCR recognition model...")
 
-ocr = PaddleOCR(
-    lang="en",
-    enable_mkldnn=False,
-    use_doc_orientation_classify=False,
-    use_doc_unwarping=False,
-    use_textline_orientation=False,
-)
+# YOLO already isolates the plate, so use Paddle's recognition-only predictor
+# rather than loading and running a second text detector on the same crop.
+ocr = TextRecognition(model_name=OCR_RECOGNITION_MODEL)
 
-print("OCR loaded.")
+print("OCR recognition model loaded.")
 
 
 # ============================================================
@@ -546,7 +545,10 @@ def encode_plate_image(plate_crop):
 # ============================================================
 
 
-def read_plate(plate_crop):
+def read_plate(plate_crop, source=None, request_id=None):
+    started_at = time.perf_counter()
+    preprocess_ms = 0.0
+    recognition_ms = 0.0
 
     try:
         height, width = plate_crop.shape[:2]
@@ -557,23 +559,23 @@ def read_plate(plate_crop):
                 (round(width * scale), round(height * scale)),
                 interpolation=cv2.INTER_CUBIC,
             )
+        preprocess_ms = (time.perf_counter() - started_at) * 1000
 
+        recognition_started_at = time.perf_counter()
         results = ocr.predict(plate_crop)
+        recognition_ms = (time.perf_counter() - recognition_started_at) * 1000
 
         texts = []
         scores = []
 
         for result in results:
 
-            data = result.get(
-                "rec_texts",
-                [],
-            )
-
-            confidence = result.get(
-                "rec_scores",
-                [],
-            )
+            data = result.get("rec_text", [])
+            confidence = result.get("rec_score", [])
+            if not isinstance(data, (list, tuple, np.ndarray)):
+                data = [data]
+            if not isinstance(confidence, (list, tuple, np.ndarray)):
+                confidence = [confidence]
 
             for text, score in zip(
                 data,
@@ -617,6 +619,16 @@ def read_plate(plate_crop):
 
         return None
 
+    finally:
+        _vision_debug(
+            "[OCR] id=%s source=%s preprocess=%.1fms detection=0.0ms recognition=%.1fms total=%.1fms",
+            request_id or "n/a",
+            source or "default",
+            preprocess_ms,
+            recognition_ms,
+            (time.perf_counter() - started_at) * 1000,
+        )
+
 
 def _run_ocr_vote(
     source: str,
@@ -642,7 +654,7 @@ def _run_ocr_vote(
 
         with ocr_lock:
             timing_started_at = time.perf_counter()
-            ocr_result = read_plate(plate_crop)
+            ocr_result = read_plate(plate_crop, source, request_id)
             predict_ms = (time.perf_counter() - timing_started_at) * 1000
 
         if not ocr_result:
