@@ -623,7 +623,7 @@ def read_plate(plate_crop):
 
 
 def _run_ocr_vote(source: str, plate_crop, frame_for_upload, generation: int, request_id: str | None = None):
-    """Run the strict three-read vote from one detected plate crop."""
+    """Run one OCR read from one detected plate crop."""
     state = _ocr_state(source)
     started_at = time.perf_counter()
     predict_ms = 0.0
@@ -631,42 +631,41 @@ def _run_ocr_vote(source: str, plate_crop, frame_for_upload, generation: int, re
     accepted_plate = None
 
     try:
-        for _ in range(OCR_AGREEMENT_REQUIRED):
-            if plate_crop is None or plate_crop.size == 0:
+        if plate_crop is None or plate_crop.size == 0:
+            return
+
+        with state["lock"]:
+            if state["generation"] != generation or state["accepted"] is not None:
                 return
 
-            with state["lock"]:
-                if state["generation"] != generation or state["accepted"] is not None:
-                    return
+        with ocr_lock:
+            timing_started_at = time.perf_counter()
+            ocr_result = read_plate(plate_crop)
+            predict_ms = (time.perf_counter() - timing_started_at) * 1000
 
-            with ocr_lock:
-                timing_started_at = time.perf_counter()
-                ocr_result = read_plate(plate_crop)
-                predict_ms = max(predict_ms, (time.perf_counter() - timing_started_at) * 1000)
+        if not ocr_result:
+            return
 
-            if not ocr_result:
+        validation_started_at = time.perf_counter()
+        with state["lock"]:
+            if state["generation"] != generation:
                 return
+            state["accepted"] = ocr_result
+            state["buffer"].clear()
+            plate_metadata = state["accepted"]
+        vote_total_ms = (time.perf_counter() - validation_started_at) * 1000
 
-            validation_started_at = time.perf_counter()
-            with state["lock"]:
-                if state["generation"] != generation:
-                    return
-                plate_metadata = _vote_for_plate(ocr_result, source)
-            vote_total_ms += (time.perf_counter() - validation_started_at) * 1000
-
-            if plate_metadata is not None:
-                accepted_plate = plate_metadata.get("plate")
-                _upload_accepted_frame_in_background(frame_for_upload, plate_metadata)
-                if VISION_DEBUG:
-                    vision_logger.info(
-                        "[OCR] id=%s source=%s predict=%.1fms vote_total=%.1fms accepted=%s",
-                        request_id or "n/a",
-                        source,
-                        predict_ms,
-                        vote_total_ms,
-                        accepted_plate or "n/a",
-                    )
-                return
+        accepted_plate = plate_metadata.get("plate")
+        _upload_accepted_frame_in_background(frame_for_upload, plate_metadata)
+        if VISION_DEBUG:
+            vision_logger.info(
+                "[OCR] id=%s source=%s predict=%.1fms vote_total=%.1fms accepted=%s",
+                request_id or "n/a",
+                source,
+                predict_ms,
+                vote_total_ms,
+                accepted_plate or "n/a",
+            )
     finally:
         with state["lock"]:
             state["ocr_in_flight"] = False
@@ -878,8 +877,8 @@ def detect_plate(image_base64: str, source: str | None = None, request_id: str |
             "fps": current_fps,
         }
 
-    # Keep the fast path bounded by decode + YOLO. The strict three-read vote
-    # runs once per source in a lightweight thread, so
+    # Keep the fast path bounded by decode + YOLO. One OCR read runs once per
+    # source in a lightweight thread, so
     # the client can render the detected box without waiting for OCR.
     with state["lock"]:
         plate_metadata = state["accepted"]
