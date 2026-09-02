@@ -43,11 +43,9 @@ YOLO_DEVICE = os.getenv("YOLO_DEVICE") or None
 VISION_DEBUG = os.getenv("VISION_DEBUG", "").lower() in {"1", "true", "yes"}
 
 OCR_CONFIDENCE_THRESHOLD = 0.50
-OCR_RECOGNITION_MODEL = os.getenv(
-    "OCR_RECOGNITION_MODEL", "en_PP-OCRv5_mobile_rec"
-)
+OCR_RECOGNITION_MODEL = os.getenv("OCR_RECOGNITION_MODEL", "en_PP-OCRv5_mobile_rec")
 
-PLATE_HORIZONTAL_PADDING_RATIO = 0.12
+PLATE_HORIZONTAL_PADDING_RATIO = 0.04
 PLATE_VERTICAL_PADDING_RATIO = 0.25
 
 ocr_states = {}
@@ -488,12 +486,18 @@ def read_plate(plate_crop, source=None, request_id=None):
             target_height = max(top_line.shape[0], bottom_line.shape[0])
             top_line = cv2.resize(
                 top_line,
-                (round(top_line.shape[1] * target_height / top_line.shape[0]), target_height),
+                (
+                    round(top_line.shape[1] * target_height / top_line.shape[0]),
+                    target_height,
+                ),
                 interpolation=cv2.INTER_CUBIC,
             )
             bottom_line = cv2.resize(
                 bottom_line,
-                (round(bottom_line.shape[1] * target_height / bottom_line.shape[0]), target_height),
+                (
+                    round(bottom_line.shape[1] * target_height / bottom_line.shape[0]),
+                    target_height,
+                ),
                 interpolation=cv2.INTER_CUBIC,
             )
             separator = np.full(
