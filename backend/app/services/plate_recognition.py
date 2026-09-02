@@ -391,7 +391,7 @@ def _upload_accepted_frame(frame, metadata):
 def _upload_accepted_frame_in_background(frame, metadata):
     threading.Thread(
         target=_upload_accepted_frame,
-        args=(frame.copy(), metadata.copy()),
+        args=(frame, metadata),
         daemon=True,
     ).start()
 

@@ -86,6 +86,7 @@ def warm_up_vision_models():
         if YOLO_DEVICE:
             inference_options["device"] = YOLO_DEVICE
         yolo.predict(**inference_options)
+        yolo.predict(**inference_options)
         logging.getLogger(__name__).info(
             "YOLO warm-up completed in %.1fms",
             (time.perf_counter() - yolo_started_at) * 1000,
@@ -100,6 +101,9 @@ def warm_up_vision_models():
     ocr_started_at = time.perf_counter()
     try:
         ocr_warmup_image = np.full((64, 256, 3), 255, dtype=np.uint8)
+        ocr_warmup_image_large = np.full((96, 320, 3), 255, dtype=np.uint8)
+        list(ocr.predict(ocr_warmup_image))
+        list(ocr.predict(ocr_warmup_image_large))
         list(ocr.predict(ocr_warmup_image))
         logging.getLogger(__name__).info(
             "OCR warm-up completed in %.1fms",
