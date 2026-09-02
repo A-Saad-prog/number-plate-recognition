@@ -390,15 +390,12 @@ def _vote_for_plate(metadata, source):
 
     now = time.monotonic()
     buffer[:] = [
-        reading
-        for reading in buffer
-        if now - reading["time"] <= OCR_BUFFER_TTL_SECONDS
+        reading for reading in buffer if now - reading["time"] <= OCR_BUFFER_TTL_SECONDS
     ]
 
     normalized = _comparison_plate(metadata["plate"])
     if buffer and not any(
-        _plate_distance(normalized, item["normalized"]) <= 1
-        for item in buffer
+        _plate_distance(normalized, item["normalized"]) <= 1 for item in buffer
     ):
         # A new plate candidate starts a new vehicle vote window.
         buffer.clear()
@@ -408,9 +405,7 @@ def _vote_for_plate(metadata, source):
     del buffer[:-OCR_BUFFER_SIZE]
 
     matching = [
-        item
-        for item in buffer
-        if _plate_distance(normalized, item["normalized"]) <= 1
+        item for item in buffer if _plate_distance(normalized, item["normalized"]) <= 1
     ]
     weighted_confidence = sum(
         float(item["metadata"].get("confidence", 0.0)) for item in matching
@@ -622,7 +617,13 @@ def read_plate(plate_crop):
         return None
 
 
-def _run_ocr_vote(source: str, plate_crop, frame_for_upload, generation: int, request_id: str | None = None):
+def _run_ocr_vote(
+    source: str,
+    plate_crop,
+    frame_for_upload,
+    generation: int,
+    request_id: str | None = None,
+):
     """Run one OCR read from one detected plate crop."""
     state = _ocr_state(source)
     started_at = time.perf_counter()
@@ -697,7 +698,9 @@ def _run_ocr_vote(source: str, plate_crop, frame_for_upload, generation: int, re
 # ============================================================
 
 
-def detect_plate(image_base64: str, source: str | None = None, request_id: str | None = None):
+def detect_plate(
+    image_base64: str, source: str | None = None, request_id: str | None = None
+):
 
     global current_fps
     source = source or "default"
@@ -846,7 +849,9 @@ def detect_plate(image_base64: str, source: str | None = None, request_id: str |
     crop_started_at = time.perf_counter()
     box_width = x2 - x1
     box_height = y2 - y1
-    horizontal_padding = max(4, min(18, round(box_width * PLATE_HORIZONTAL_PADDING_RATIO)))
+    horizontal_padding = max(
+        4, min(18, round(box_width * PLATE_HORIZONTAL_PADDING_RATIO))
+    )
     vertical_padding = max(3, min(12, round(box_height * PLATE_VERTICAL_PADDING_RATIO)))
 
     crop_x1 = max(0, x1 - horizontal_padding)
@@ -888,7 +893,13 @@ def detect_plate(image_base64: str, source: str | None = None, request_id: str |
                 state["ocr_in_flight"] = True
                 threading.Thread(
                     target=_run_ocr_vote,
-                    args=(source, state["latest_crop"], frame, state["generation"], request_id),
+                    args=(
+                        source,
+                        state["latest_crop"],
+                        frame,
+                        state["generation"],
+                        request_id,
+                    ),
                     daemon=True,
                 ).start()
 

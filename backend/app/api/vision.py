@@ -20,6 +20,7 @@ router = APIRouter(
 # Request Models
 # ============================================================
 
+
 class PlateDetectionRequest(BaseModel):
     image: str
     source: str | None = None
@@ -29,6 +30,7 @@ class PlateDetectionRequest(BaseModel):
 # ============================================================
 # Plate Detection
 # ============================================================
+
 
 @router.post("/detect-plate")
 def detect_license_plate(
@@ -74,9 +76,7 @@ def detect_license_plate(
 
     except Exception as error:
 
-        logger.exception(
-            "Vision processing error"
-        )
+        logger.exception("Vision processing error")
 
         raise HTTPException(
             status_code=500,
