@@ -45,6 +45,7 @@ from app.services.exit_service import (
     process_vehicle_exit_by_plate,
     payment_required_for_exit,
 )
+from app.services.billing_service import PARKING_RATE_PER_MINUTE
 
 configure_logging()
 
@@ -265,15 +266,16 @@ def exit_payment_required(
     db: Session = Depends(get_db),
     admin=Depends(current_admin),
 ):
-    billing_enabled = bool(
-        settings_response(get_admin_settings(db, admin.tenant_id))["billing_config"].get("payments_enabled")
-    )
+    billing_config = settings_response(get_admin_settings(db, admin.tenant_id))["billing_config"]
+    billing_enabled = bool(billing_config.get("payments_enabled"))
+    rate_per_minute = float(billing_config.get("rate_per_minute", PARKING_RATE_PER_MINUTE))
     try:
         payment_required = payment_required_for_exit(
             db,
             license_plate,
             billing_enabled,
             admin.tenant_id,
+            rate_per_minute,
         )
     except ValueError:
         raise HTTPException(
@@ -281,7 +283,11 @@ def exit_payment_required(
             detail="Car is not entered in the garage.",
         ) from None
 
-    return {"success": True, "payment_required": payment_required}
+    return {
+        "success": True,
+        "payment_required": payment_required,
+        "rate_per_minute": rate_per_minute,
+    }
 
 
 @app.post("/parking/exit")
@@ -301,12 +307,16 @@ def vehicle_exit(
         billing_config = settings_response(
             get_admin_settings(db, admin.tenant_id)
         )["billing_config"]
+        rate_per_minute = float(
+            billing_config.get("rate_per_minute", PARKING_RATE_PER_MINUTE)
+        )
 
         payment_required = payment_required_for_exit(
             db,
             request.license_plate,
             bool(billing_config.get("payments_enabled")),
             admin.tenant_id,
+            rate_per_minute,
         )
 
         if payment_required and not request.payment_method:
@@ -324,6 +334,7 @@ def vehicle_exit(
                 else None
             ),
             billing_enabled=bool(billing_config.get("payments_enabled")),
+            rate_per_minute=rate_per_minute,
             tenant_id=admin.tenant_id,
         )
 

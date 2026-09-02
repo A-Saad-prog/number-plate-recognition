@@ -17,6 +17,7 @@ DEFAULT_BILLING_CONFIG = {
     "payments_enabled": False,
     "cash_enabled": False,
     "card_enabled": False,
+    "rate_per_minute": 1.67,
 }
 
 
@@ -42,9 +43,12 @@ def settings_response(settings: AdminSettings | None) -> dict:
             "billing_config": DEFAULT_BILLING_CONFIG,
         }
 
+    billing_config = DEFAULT_BILLING_CONFIG.copy()
+    billing_config.update(settings.billing_config or {})
+
     return {
         "garage_settings": settings.garage_settings,
         "camera_config": settings.camera_config,
-        "billing_config": settings.billing_config,
+        "billing_config": billing_config,
         "updated_at": settings.updated_at,
     }

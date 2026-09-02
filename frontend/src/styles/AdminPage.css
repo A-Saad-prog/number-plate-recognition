@@ -140,6 +140,12 @@
 .confirmation-confirm { background: #10231c; color: white; }
 .confirmation-confirm:hover { background: #e05b35; }
 .billing-toggle-section { background: #f8faf7; border: 1px solid #d3ded4; padding: 24px; margin-bottom: 24px; }
+.billing-rate-field { background: #f8faf7; border: 1px solid #d3ded4; margin-bottom: 24px; padding: 24px; }
+.billing-rate-field > label { display: block; margin-bottom: 10px; }
+.billing-rate-field > div { align-items: center; display: flex; gap: 8px; }
+.billing-rate-field input { background: white; border: 1px solid #bdcbc0; border-radius: 6px; margin: 0; max-width: 140px; padding: 10px 12px; }
+.billing-rate-field input[aria-invalid="true"] { border-color: #b43f28; }
+.billing-rate-field .error-space { margin: 6px 0 0; }
 .billing-toggle-label { align-items: center; cursor: pointer; display: flex; gap: 14px; }
 .billing-checkbox { cursor: pointer; height: 20px; width: 20px; accent-color: #e05b35; }
 .billing-toggle-text { color: #10231c; font: 600 14px 'Manrope', sans-serif; }
@@ -160,7 +166,7 @@
 .admin-theme-dark { background: radial-gradient(circle at 85% -10%, #1f5647 0, transparent 32%), #081511; color: #edf7f2; }
 .admin-theme-dark .admin-welcome, .admin-theme-dark .admin-dashboard, .admin-theme-dark .admin-sidebar { background: transparent; }
 .admin-theme-dark .admin-header { background: rgba(8, 21, 17, .78); border-color: rgba(138, 191, 167, .16); box-shadow: 0 12px 32px rgba(0, 0, 0, .14); }
-.admin-theme-dark .admin-form-panel, .admin-theme-dark .whitelist-card, .admin-theme-dark .garage-settings-form, .admin-theme-dark .billing-toggle-section, .admin-theme-dark .billing-payment-methods, .admin-theme-dark .confirmation-dialog, .admin-theme-dark .whitelist-table-wrap { background: rgba(20, 43, 35, .88); border-color: rgba(145, 199, 174, .18); box-shadow: 0 18px 42px rgba(0, 0, 0, .16); }
+.admin-theme-dark .admin-form-panel, .admin-theme-dark .whitelist-card, .admin-theme-dark .garage-settings-form, .admin-theme-dark .billing-rate-field, .admin-theme-dark .billing-toggle-section, .admin-theme-dark .billing-payment-methods, .admin-theme-dark .confirmation-dialog, .admin-theme-dark .whitelist-table-wrap { background: rgba(20, 43, 35, .88); border-color: rgba(145, 199, 174, .18); box-shadow: 0 18px 42px rgba(0, 0, 0, .16); }
 .admin-theme-dark .remove-card { background: transparent; }
 .admin-theme-dark .level-config-block, .admin-theme-dark .payment-option:hover { background: rgba(44, 82, 67, .58); border-color: rgba(145, 199, 174, .26); }
 .admin-theme-dark .admin-logo, .admin-theme-dark .admin-form-wrap label, .admin-theme-dark .garage-settings-form label, .admin-theme-dark .level-count-field span, .admin-theme-dark .billing-toggle-text, .admin-theme-dark .payment-method-name, .admin-theme-dark .sidebar-feature, .admin-theme-dark .confirmation-cancel { color: #edf2ee; }

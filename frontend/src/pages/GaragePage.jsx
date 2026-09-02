@@ -56,6 +56,7 @@ function GaragePage() {
     const [exitResult, setExitResult] = useState(null);
     const [paymentMethod, setPaymentMethod] = useState(null);
     const [exitPaymentRequired, setExitPaymentRequired] = useState(false);
+    const [exitRatePerMinute, setExitRatePerMinute] = useState(null);
 
     function prefetchExitPaymentRequired(plate) {
         const cached = exitPaymentPrefetchRef.current;
@@ -295,6 +296,7 @@ function GaragePage() {
                         setExitError("");
                         setExitResult(null);
                         setPaymentMethod(null);
+                        setExitRatePerMinute(null);
                         void prefetchExitPaymentRequired(plate);
                     }
 
@@ -479,6 +481,7 @@ function GaragePage() {
         setExitResult(null);
         setPaymentMethod(null);
         setSelectedSpaceId(null);
+        setExitRatePerMinute(null);
     }
 
 
@@ -909,6 +912,7 @@ function GaragePage() {
         try {
             const result = await getPrefetchedExitPaymentRequired(detectedPlate);
             const paymentRequired = Boolean(result.payment_required);
+            setExitRatePerMinute(result.rate_per_minute ?? 1.67);
             setExitPaymentRequired(paymentRequired);
             const allowedMethods = [
                 adminSettings?.billing_config?.cash_enabled && "cash",
@@ -1622,6 +1626,7 @@ function GaragePage() {
                             setExitError("");
                             setExitResult(null);
                             setPaymentMethod(null);
+                            setExitRatePerMinute(null);
                             void prefetchExitPaymentRequired(plate);
                         }
 
@@ -2293,7 +2298,7 @@ function GaragePage() {
 
                                             <p className="description">
                                                 {exitPaymentRequired
-                                                    ? "Select a payment method, then confirm exit. Parking is billed at Rs 1.67 per minute."
+                                                    ? `Select a payment method, then confirm exit. Parking is billed at ${formatRupees(exitRatePerMinute ?? 1.67)} per minute.`
                                                     : "Confirm exit to complete the parking session."}
                                             </p>
 
@@ -2342,7 +2347,7 @@ function GaragePage() {
                                                                 exitLoading
                                                             }
                                                         >
-                                                            Cash
+                                                            <span>💵</span><span>Cash</span>
                                                         </button>}
 
 
@@ -2368,7 +2373,7 @@ function GaragePage() {
                                                                 exitLoading
                                                             }
                                                         >
-                                                            Card
+                                                            <span>💳</span><span>Card</span>
                                                         </button>}
 
                                                     </div>

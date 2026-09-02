@@ -69,6 +69,7 @@ class BillingConfigRequest(BaseModel):
     payments_enabled: bool
     cash_enabled: bool
     card_enabled: bool
+    rate_per_minute: float = Field(gt=0)
 
     @model_validator(mode="after")
     def validate_payment_methods(self):

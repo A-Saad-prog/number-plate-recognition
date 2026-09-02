@@ -128,8 +128,9 @@ function AdminPage() {
     const [confirmationOpen, setConfirmationOpen] = useState(false);
     const [confirmationSection, setConfirmationSection] = useState(null);
     const [settingsSubmitting, setSettingsSubmitting] = useState(null);
-    const [billingConfig, setBillingConfig] = useState({ payments_enabled: false, cash_enabled: false, card_enabled: false });
+    const [billingConfig, setBillingConfig] = useState({ payments_enabled: false, cash_enabled: false, card_enabled: false, rate_per_minute: 1.67 });
     const [billingMessage, setBillingMessage] = useState("");
+    const [billingRateError, setBillingRateError] = useState("");
     const [savedBillingConfig, setSavedBillingConfig] = useState(null);
     const [parkingActivity, setParkingActivity] = useState(null);
     const [activityLoading, setActivityLoading] = useState(false);
@@ -199,8 +200,12 @@ function AdminPage() {
                     setSavedCameraSetup(normalizeCameraSetup(normalizedCameraConfig, cameraAssignments));
                 }
                 if (settings.billing_config) {
-                    setBillingConfig(settings.billing_config);
-                    setSavedBillingConfig(normalizeBillingConfig(settings.billing_config));
+                    const normalizedBillingConfig = {
+                        ...settings.billing_config,
+                        rate_per_minute: settings.billing_config.rate_per_minute ?? 1.67,
+                    };
+                    setBillingConfig(normalizedBillingConfig);
+                    setSavedBillingConfig(normalizeBillingConfig(normalizedBillingConfig));
                 }
             })
             .catch(() => { });
@@ -464,9 +469,27 @@ function AdminPage() {
         });
     }
 
+    function validateBillingRate(value) {
+        if (String(value).trim() === "") return t.required;
+        const rate = Number(value);
+        return Number.isFinite(rate) && rate > 0 ? "" : t.positiveNumber;
+    }
+
+    function handleBillingRateChange(value) {
+        setBillingConfig((current) => ({ ...current, rate_per_minute: value }));
+        setBillingRateError(validateBillingRate(value));
+    }
+
     async function handleBillingApply(event) {
         event.preventDefault();
         if (settingsSubmitting === "billing") return;
+        if (billingConfig.payments_enabled) {
+            const rateError = validateBillingRate(billingConfig.rate_per_minute);
+            setBillingRateError(rateError);
+            if (rateError) return;
+        } else {
+            setBillingRateError("");
+        }
         if (isBillingConfigAlreadyApplied(billingConfig, savedBillingConfig)) {
             setBillingMessage("These billing settings are already applied.");
             return;
@@ -487,6 +510,7 @@ function AdminPage() {
             payments_enabled: Boolean(config?.payments_enabled),
             cash_enabled: Boolean(config?.cash_enabled),
             card_enabled: Boolean(config?.card_enabled),
+            rate_per_minute: Number(config?.rate_per_minute ?? 1.67),
         });
     }
 
@@ -542,8 +566,12 @@ function AdminPage() {
         if (settingsSubmitting) return;
         setSettingsSubmitting("billing");
         try {
-            const result = await saveBillingConfig(token, billingConfig);
-            const savedConfig = result?.billing_config || billingConfig;
+            const payload = {
+                ...billingConfig,
+                rate_per_minute: Number(billingConfig.rate_per_minute),
+            };
+            const result = await saveBillingConfig(token, payload);
+            const savedConfig = result?.billing_config || payload;
             setBillingConfig(savedConfig);
             setSavedBillingConfig(normalizeBillingConfig(savedConfig));
             setBillingMessage(t.billingApplied);
@@ -1139,19 +1167,26 @@ function AdminPage() {
                                     </div>
 
                                     {billingConfig.payments_enabled && (
-                                        <div className="billing-payment-methods">
-                                            <p className="billing-subtitle">{t.acceptedPayments}</p>
-                                            <div className="payment-options">
-                                                <label className="payment-option">
-                                                    <input type="checkbox" className="payment-checkbox" checked={billingConfig.cash_enabled} onChange={() => handleBillingToggle("cash_enabled")} />
-                                                    <span className="payment-method-name">💵 {t.cash}</span>
-                                                </label>
-                                                <label className="payment-option">
-                                                    <input type="checkbox" className="payment-checkbox" checked={billingConfig.card_enabled} onChange={() => handleBillingToggle("card_enabled")} />
-                                                    <span className="payment-method-name">💳 {t.card}</span>
-                                                </label>
+                                        <>
+                                            <div className="billing-rate-field">
+                                                <label htmlFor="parking-rate-per-minute">Parking rate per minute</label>
+                                                <div><span>Rs</span><input id="parking-rate-per-minute" type="number" min="0.01" step="0.01" value={billingConfig.rate_per_minute} onChange={(event) => handleBillingRateChange(event.target.value)} aria-invalid={Boolean(billingRateError)} /> <span>/ minute</span></div>
+                                                <small className="admin-error whitelist-feedback error-space">{billingRateError || "\u00A0"}</small>
                                             </div>
-                                        </div>
+                                            <div className="billing-payment-methods">
+                                                <p className="billing-subtitle">{t.acceptedPayments}</p>
+                                                <div className="payment-options">
+                                                    <label className="payment-option">
+                                                        <input type="checkbox" className="payment-checkbox" checked={billingConfig.cash_enabled} onChange={() => handleBillingToggle("cash_enabled")} />
+                                                        <span className="payment-method-name">💵 {t.cash}</span>
+                                                    </label>
+                                                    <label className="payment-option">
+                                                        <input type="checkbox" className="payment-checkbox" checked={billingConfig.card_enabled} onChange={() => handleBillingToggle("card_enabled")} />
+                                                        <span className="payment-method-name">💳 {t.card}</span>
+                                                    </label>
+                                                </div>
+                                            </div>
+                                        </>
                                     )}
 
                                     {billingMessage && <p className="whitelist-success">{billingMessage}</p>}

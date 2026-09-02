@@ -8,9 +8,10 @@ PARKING_RATE_PER_MINUTE = 1.67
 def calculate_parking_fee(
     entry_time: datetime,
     exit_time: datetime,
+    rate_per_minute: float = PARKING_RATE_PER_MINUTE,
 ) -> tuple[float, int]:
     """
-    Charge Rs 1.67 per started minute, with a minimum
+    Charge the configured rate per started minute, with a minimum
     one-minute charge for even a sub-second stay.
     """
 
@@ -24,7 +25,7 @@ def calculate_parking_fee(
     total_seconds = max(0, duration.total_seconds())
 
     billed_minutes = max(1, math.ceil(total_seconds / 60))
-    amount = round(billed_minutes * PARKING_RATE_PER_MINUTE, 2)
+    amount = round(billed_minutes * rate_per_minute, 2)
 
     return amount, billed_minutes
 

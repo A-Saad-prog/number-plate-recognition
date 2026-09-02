@@ -12,7 +12,13 @@ from app.services.billing_service import (
 from app.services.time_service import pakistan_now
 
 
-def payment_required_for_exit(db: Session, license_plate: str, billing_enabled: bool, tenant_id: int) -> bool:
+def payment_required_for_exit(
+    db: Session,
+    license_plate: str,
+    billing_enabled: bool,
+    tenant_id: int,
+    rate_per_minute: float = PARKING_RATE_PER_MINUTE,
+) -> bool:
     if not billing_enabled:
         return False
 
@@ -28,7 +34,7 @@ def payment_required_for_exit(db: Session, license_plate: str, billing_enabled: 
     if session is None:
         raise ValueError("No active parking session found")
 
-    amount, _ = calculate_parking_fee(session.entry_time, pakistan_now())
+    amount, _ = calculate_parking_fee(session.entry_time, pakistan_now(), rate_per_minute)
     whitelist_entry = db.query(WhitelistEntry).filter(
         WhitelistEntry.license_plate == vehicle.license_plate,
         WhitelistEntry.tenant_id == tenant_id,
@@ -42,6 +48,7 @@ def process_vehicle_exit_by_plate(
     license_plate: str,
     payment_method: str | None,
     billing_enabled: bool = True,
+    rate_per_minute: float = PARKING_RATE_PER_MINUTE,
     tenant_id: int | None = None,
 ):
     """
@@ -78,6 +85,7 @@ def process_vehicle_exit_by_plate(
         vehicle=vehicle,
         payment_method=payment_method,
         billing_enabled=billing_enabled,
+        rate_per_minute=rate_per_minute,
         tenant_id=tenant_id,
     )
 
@@ -88,6 +96,7 @@ def complete_parking_session(
     vehicle: Vehicle,
     payment_method: str | None,
     billing_enabled: bool = True,
+    rate_per_minute: float = PARKING_RATE_PER_MINUTE,
     tenant_id: int | None = None,
 ):
     """
@@ -102,6 +111,7 @@ def complete_parking_session(
         amount, billed_minutes = calculate_parking_fee(
             session.entry_time,
             exit_time,
+            rate_per_minute,
         )
 
         whitelist_entry = (
@@ -150,7 +160,7 @@ def complete_parking_session(
         "entry_time": session.entry_time,
         "exit_time": session.exit_time,
         "duration_minutes": billed_minutes,
-        "rate_per_minute": PARKING_RATE_PER_MINUTE,
+        "rate_per_minute": rate_per_minute,
         "amount": session.amount,
         "discount_percent": discount_percent,
         "payment_method": session.payment_method,
