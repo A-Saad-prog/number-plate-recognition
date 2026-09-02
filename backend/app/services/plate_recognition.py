@@ -37,17 +37,13 @@ MODEL_PATH = os.path.abspath(
     )
 )
 
-CONFIDENCE_THRESHOLD = float(
-    os.getenv("YOLO_CONFIDENCE_THRESHOLD", "0.20")
-)
+CONFIDENCE_THRESHOLD = float(os.getenv("YOLO_CONFIDENCE_THRESHOLD", "0.20"))
 YOLO_IMGSZ = int(os.getenv("YOLO_IMGSZ", "640"))
 YOLO_DEVICE = os.getenv("YOLO_DEVICE") or None
 VISION_DEBUG = os.getenv("VISION_DEBUG", "").lower() in {"1", "true", "yes"}
 
 OCR_CONFIDENCE_THRESHOLD = 0.50
-OCR_RECOGNITION_MODEL = os.getenv(
-    "OCR_RECOGNITION_MODEL", "en_PP-OCRv5_mobile_rec"
-)
+OCR_RECOGNITION_MODEL = os.getenv("OCR_RECOGNITION_MODEL", "en_PP-OCRv5_mobile_rec")
 
 PLATE_HORIZONTAL_PADDING_RATIO = 0.12
 PLATE_VERTICAL_PADDING_RATIO = 0.25
@@ -339,9 +335,7 @@ def _ocr_state(source):
             source,
             {
                 "ocr_in_flight": False,
-                "candidate_plate": "",
-                "candidate_count": 0,
-                "candidate_at": 0.0,
+                "candidate_reads": [],
                 "vision_lock": threading.Lock(),
                 "lock": threading.RLock(),
             },
@@ -493,12 +487,18 @@ def read_plate(plate_crop, source=None, request_id=None):
             target_height = max(top_line.shape[0], bottom_line.shape[0])
             top_line = cv2.resize(
                 top_line,
-                (round(top_line.shape[1] * target_height / top_line.shape[0]), target_height),
+                (
+                    round(top_line.shape[1] * target_height / top_line.shape[0]),
+                    target_height,
+                ),
                 interpolation=cv2.INTER_CUBIC,
             )
             bottom_line = cv2.resize(
                 bottom_line,
-                (round(bottom_line.shape[1] * target_height / bottom_line.shape[0]), target_height),
+                (
+                    round(bottom_line.shape[1] * target_height / bottom_line.shape[0]),
+                    target_height,
+                ),
                 interpolation=cv2.INTER_CUBIC,
             )
             separator = np.full(
@@ -632,46 +632,142 @@ def _run_ocr_vote(
             return None
 
         plate = ocr_result["plate"]
+        confidence = float(ocr_result["confidence"])
         now = time.monotonic()
+
         with state["lock"]:
-            if (
-                now - state["candidate_at"] > 2.0
-                or state["candidate_plate"] != plate
-            ):
-                state["candidate_plate"] = plate
-                state["candidate_count"] = 1
-            else:
-                state["candidate_count"] += 1
-            state["candidate_at"] = now
-            candidate_count = state["candidate_count"]
-            confirmed = candidate_count >= 2
-            if confirmed:
-                state["candidate_plate"] = ""
-                state["candidate_count"] = 0
-                state["candidate_at"] = 0.0
+            reads = state["candidate_reads"]
+            reads[:] = [read for read in reads if now - read[2] <= 3.0]
+            reads.append((plate, confidence, now, ocr_result))
+            if len(reads) > 5:
+                reads[:] = reads[-5:]
 
-        vision_logger.info(
-            "Vision OCR candidate source=%s plate=%s count=%s confirmed=%s",
-            source,
-            plate,
-            candidate_count,
-            confirmed,
-        )
-
-        if not confirmed:
-            return None
-
-        _upload_accepted_frame_in_background(frame_for_upload, ocr_result)
-        if VISION_DEBUG:
-            vision_logger.info(
-                "[OCR] id=%s source=%s predict=%.1fms validation=%.1fms accepted=%s",
-                request_id or "n/a",
-                source,
-                predict_ms,
-                0.0,
-                ocr_result.get("plate") or "n/a",
+            latest_two = reads[-2:]
+            fast_confirmed = (
+                len(latest_two) == 2
+                and latest_two[0][0] == latest_two[1][0]
+                and latest_two[0][1] >= 0.85
+                and latest_two[1][1] >= 0.85
             )
-        return ocr_result
+
+            confirmed = False
+            winner = None
+            winner_votes = 0
+            winner_confidence = 0.0
+            mode = "pending"
+
+            if fast_confirmed:
+                winner = latest_two[-1][0]
+                winner_votes = 2
+                winner_confidence = float(
+                    sum(
+                        conf
+                        for plate_name, conf, _, _ in latest_two
+                        if plate_name == winner
+                    )
+                    / max(
+                        1,
+                        len(
+                            [
+                                1
+                                for plate_name, _, _, _ in latest_two
+                                if plate_name == winner
+                            ]
+                        ),
+                    )
+                )
+                mode = "fast"
+                confirmed = True
+            else:
+                grouped = {}
+                for read_plate, read_confidence, _, _ in reads:
+                    grouped.setdefault(read_plate, []).append(read_confidence)
+
+                if grouped:
+                    for candidate_plate, candidate_confidences in grouped.items():
+                        vote_count = len(candidate_confidences)
+                        avg_conf = sum(candidate_confidences) / vote_count
+                        if (
+                            vote_count >= 3
+                            and avg_conf >= 0.75
+                            and (
+                                winner is None
+                                or vote_count > winner_votes
+                                or (
+                                    vote_count == winner_votes
+                                    and avg_conf > winner_confidence
+                                )
+                            )
+                        ):
+                            winner = candidate_plate
+                            winner_votes = vote_count
+                            winner_confidence = avg_conf
+
+                    if winner is not None:
+                        other_max_votes = 0
+                        for candidate_plate, candidate_confidences in grouped.items():
+                            if candidate_plate != winner:
+                                other_max_votes = max(
+                                    other_max_votes, len(candidate_confidences)
+                                )
+
+                        if winner_votes > other_max_votes:
+                            mode = "majority"
+                            confirmed = True
+
+            if confirmed:
+                vote_window_snapshot = list(reads)
+                vote_window_count = len(vote_window_snapshot)
+                vote_window_preview = [
+                    (read_plate, round(read_confidence, 4), read_timestamp)
+                    for read_plate, read_confidence, read_timestamp, _ in vote_window_snapshot
+                ]
+                winner_vote_reads = [
+                    read for read in vote_window_snapshot if read[0] == winner
+                ]
+                winning_read = max(winner_vote_reads, key=lambda item: item[1])
+                confirmed_metadata = winning_read[3].copy()
+                confirmed_metadata["plate"] = winner
+                confirmed_metadata["confidence"] = float(winning_read[1])
+
+                vision_logger.info(
+                    "Vision OCR vote source=%s window_count=%s window=%s winner=%s votes=%s avg_confidence=%.3f confirmed=%s mode=%s",
+                    source,
+                    vote_window_count,
+                    vote_window_preview,
+                    winner,
+                    winner_votes,
+                    winner_confidence,
+                    confirmed,
+                    mode,
+                )
+                state["candidate_reads"].clear()
+
+                _upload_accepted_frame_in_background(
+                    frame_for_upload, confirmed_metadata
+                )
+                if VISION_DEBUG:
+                    vision_logger.info(
+                        "[OCR] id=%s source=%s predict=%.1fms vote_total=%.1fms accepted=%s",
+                        request_id or "n/a",
+                        source,
+                        predict_ms,
+                        (time.perf_counter() - started_at) * 1000,
+                        winner,
+                    )
+                return confirmed_metadata
+
+            vision_logger.info(
+                "Vision OCR vote source=%s reads=%s winner=%s votes=%s avg_confidence=%.3f confirmed=%s mode=%s",
+                source,
+                len(reads),
+                winner,
+                winner_votes,
+                winner_confidence,
+                False,
+                mode,
+            )
+            return None
     finally:
         with state["lock"]:
             state["ocr_in_flight"] = False
