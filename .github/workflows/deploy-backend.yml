@@ -40,9 +40,9 @@ jobs:
             alembic upgrade head
 
             echo "Restarting backend..."
-            sudo systemctl restart parking-backend
+            sudo systemctl restart parking-api
 
             echo "Checking backend status..."
-            sudo systemctl is-active --quiet parking-backend
+            sudo systemctl is-active --quiet parking-api
 
             echo "Backend deployment successful!"
