@@ -37,7 +37,9 @@ MODEL_PATH = os.path.abspath(
     )
 )
 
-CONFIDENCE_THRESHOLD = 0.30
+CONFIDENCE_THRESHOLD = float(
+    os.getenv("YOLO_CONFIDENCE_THRESHOLD", "0.20")
+)
 YOLO_IMGSZ = int(os.getenv("YOLO_IMGSZ", "640"))
 YOLO_DEVICE = os.getenv("YOLO_DEVICE") or None
 VISION_DEBUG = os.getenv("VISION_DEBUG", "").lower() in {"1", "true", "yes"}
@@ -337,6 +339,9 @@ def _ocr_state(source):
             source,
             {
                 "ocr_in_flight": False,
+                "candidate_plate": "",
+                "candidate_count": 0,
+                "candidate_at": 0.0,
                 "vision_lock": threading.Lock(),
                 "lock": threading.RLock(),
             },
@@ -624,6 +629,36 @@ def _run_ocr_vote(
             predict_ms = (time.perf_counter() - timing_started_at) * 1000
 
         if not ocr_result:
+            return None
+
+        plate = ocr_result["plate"]
+        now = time.monotonic()
+        with state["lock"]:
+            if (
+                now - state["candidate_at"] > 2.0
+                or state["candidate_plate"] != plate
+            ):
+                state["candidate_plate"] = plate
+                state["candidate_count"] = 1
+            else:
+                state["candidate_count"] += 1
+            state["candidate_at"] = now
+            candidate_count = state["candidate_count"]
+            confirmed = candidate_count >= 2
+            if confirmed:
+                state["candidate_plate"] = ""
+                state["candidate_count"] = 0
+                state["candidate_at"] = 0.0
+
+        vision_logger.info(
+            "Vision OCR candidate source=%s plate=%s count=%s confirmed=%s",
+            source,
+            plate,
+            candidate_count,
+            confirmed,
+        )
+
+        if not confirmed:
             return None
 
         _upload_accepted_frame_in_background(frame_for_upload, ocr_result)
