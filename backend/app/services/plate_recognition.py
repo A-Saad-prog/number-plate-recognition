@@ -43,6 +43,7 @@ YOLO_DEVICE = os.getenv("YOLO_DEVICE") or None
 VISION_DEBUG = os.getenv("VISION_DEBUG", "").lower() in {"1", "true", "yes"}
 
 OCR_CONFIDENCE_THRESHOLD = 0.50
+OCR_ACCEPT_CONFIDENCE_THRESHOLD = 0.80
 OCR_RECOGNITION_MODEL = os.getenv(
     "OCR_RECOGNITION_MODEL", "en_PP-OCRv5_mobile_rec"
 )
@@ -543,8 +544,15 @@ def read_plate(plate_crop, source=None, request_id=None):
 
         result = classify_plate("\n".join(texts), max(scores))
 
-        if result is None:
-            _vision_debug("OCR rejected: %s", " ".join(texts))
+        if (
+            result is None
+            or result["confidence"] < OCR_ACCEPT_CONFIDENCE_THRESHOLD
+        ):
+            _vision_debug(
+                "OCR rejected: %s (confidence: %.2f)",
+                " ".join(texts),
+                max(scores),
+            )
 
             return None
 
