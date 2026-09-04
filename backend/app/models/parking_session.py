@@ -17,9 +17,9 @@ class ParkingSession(Base):
         nullable=False,
     )
 
-    parking_space_id: Mapped[int] = mapped_column(
+    parking_space_id: Mapped[int | None] = mapped_column(
         ForeignKey("parking_spaces.id"),
-        nullable=False,
+        nullable=True,
     )
 
     entry_time: Mapped[datetime] = mapped_column(

@@ -18,6 +18,7 @@ def payment_required_for_exit(
     billing_enabled: bool,
     tenant_id: int,
     rate_per_minute: float = PARKING_RATE_PER_MINUTE,
+    rate_unit: str = "minute",
 ) -> bool:
     if not billing_enabled:
         return False
@@ -34,7 +35,7 @@ def payment_required_for_exit(
     if session is None:
         raise ValueError("No active parking session found")
 
-    amount, _ = calculate_parking_fee(session.entry_time, pakistan_now(), rate_per_minute)
+    amount, _ = calculate_parking_fee(session.entry_time, pakistan_now(), rate_per_minute, rate_unit)
     whitelist_entry = db.query(WhitelistEntry).filter(
         WhitelistEntry.license_plate == vehicle.license_plate,
         WhitelistEntry.tenant_id == tenant_id,
@@ -49,6 +50,7 @@ def process_vehicle_exit_by_plate(
     payment_method: str | None,
     billing_enabled: bool = True,
     rate_per_minute: float = PARKING_RATE_PER_MINUTE,
+    rate_unit: str = "minute",
     tenant_id: int | None = None,
 ):
     """
@@ -86,6 +88,7 @@ def process_vehicle_exit_by_plate(
         payment_method=payment_method,
         billing_enabled=billing_enabled,
         rate_per_minute=rate_per_minute,
+        rate_unit=rate_unit,
         tenant_id=tenant_id,
     )
 
@@ -97,6 +100,7 @@ def complete_parking_session(
     payment_method: str | None,
     billing_enabled: bool = True,
     rate_per_minute: float = PARKING_RATE_PER_MINUTE,
+    rate_unit: str = "minute",
     tenant_id: int | None = None,
 ):
     """
@@ -112,6 +116,7 @@ def complete_parking_session(
             session.entry_time,
             exit_time,
             rate_per_minute,
+            rate_unit,
         )
 
         whitelist_entry = (
@@ -140,11 +145,8 @@ def complete_parking_session(
         .first()
     )
 
-    if parking_space is None:
-        db.rollback()
-        raise ValueError("Parking space associated with session was not found")
-
-    parking_space.is_occupied = False
+    if parking_space:
+        parking_space.is_occupied = False
 
     try:
         db.commit()
@@ -161,11 +163,12 @@ def complete_parking_session(
         "exit_time": session.exit_time,
         "duration_minutes": billed_minutes,
         "rate_per_minute": rate_per_minute,
+        "rate_unit": rate_unit,
         "amount": session.amount,
         "discount_percent": discount_percent,
         "payment_method": session.payment_method,
         "billing_enabled": billing_enabled,
-        "level": parking_space.level,
-        "space": parking_space.space_number,
+        "level": parking_space.level if parking_space else None,
+        "space": parking_space.space_number if parking_space else None,
         "status": session.status,
     }

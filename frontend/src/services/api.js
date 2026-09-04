@@ -403,3 +403,24 @@ export async function getParkingActivity(token) {
     if (!response.ok) throw new Error(data.detail || `Failed to load parking activity: ${response.status}`);
     return data;
 }
+
+export async function removeParkingSession(token, sessionId) {
+    const response = await fetch(`${API_BASE_URL}/admin/activity/${sessionId}/remove`, { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw requestError(response, data, "Unable to remove parking.");
+    return data;
+}
+
+export async function updateParkingVehicle(token, sessionId, licensePlate) {
+    const response = await fetch(`${API_BASE_URL}/admin/activity/${sessionId}/vehicle`, { method: "PUT", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ license_plate: licensePlate }) });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw requestError(response, data, "Unable to update vehicle.");
+    return data;
+}
+
+export async function getAnalytics(token, period = "7d") {
+    const response = await fetch(`${API_BASE_URL}/admin/analytics?period=${encodeURIComponent(period)}`, { headers: { Authorization: `Bearer ${token}` } });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw requestError(response, data, `Failed to load analytics: ${response.status}`);
+    return data;
+}

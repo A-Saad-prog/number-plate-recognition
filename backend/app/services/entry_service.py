@@ -15,6 +15,7 @@ def create_vehicle_entry(
     license_plate: str,
     tenant_id: int,
     parking_space_id: int | None = None,
+    tracking_only: bool = False,
 ):
     """
     Create a parking session using a license plate
@@ -39,7 +40,9 @@ def create_vehicle_entry(
     # Validate selected parking space
     # ============================================================
 
-    if parking_space_id is None:
+    if tracking_only:
+        space = None
+    elif parking_space_id is None:
         space = next(iter(get_available_spaces(db, tenant_id)), None)
 
         if space is None:
@@ -83,12 +86,13 @@ def create_vehicle_entry(
     # Create parking session
     # ============================================================
 
-    space.is_occupied = True
+    if space:
+        space.is_occupied = True
 
     session = ParkingSession(
         tenant_id=tenant_id,
         vehicle_id=vehicle.id,
-        parking_space_id=space.id,
+        parking_space_id=space.id if space else None,
         entry_time=pakistan_now(),
         status="active",
     )
@@ -103,13 +107,14 @@ def create_vehicle_entry(
 
     db.refresh(session)
     db.refresh(vehicle)
-    db.refresh(space)
+    if space:
+        db.refresh(space)
 
     return {
         "session_id": session.id,
         "license_plate": vehicle.license_plate,
         "entry_time": session.entry_time,
-        "level": space.level,
-        "space": space.space_number,
+        "level": space.level if space else None,
+        "space": space.space_number if space else None,
         "status": session.status,
     }

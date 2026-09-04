@@ -5,4 +5,4 @@ from app.models.admin_user import AdminUser
 from app.models.whitelist_entry import WhitelistEntry
 from app.models.admin_settings import AdminSettings
 from app.models.tenant import Tenant
-from app.models.admin_activity import AdminActivity
+from app.models.daily_parking_analytics import DailyParkingAnalytics

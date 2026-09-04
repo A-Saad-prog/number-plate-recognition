@@ -15,6 +15,7 @@ from app.models.vehicle import Vehicle
 from app.models.admin_user import AdminUser
 from app.models.whitelist_entry import WhitelistEntry
 from app.models.admin_settings import AdminSettings
+from app.models.daily_parking_analytics import DailyParkingAnalytics
 
 
 load_dotenv()

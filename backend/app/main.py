@@ -244,6 +244,7 @@ def vehicle_entry(
             license_plate=request.license_plate,
             parking_space_id=request.parking_space_id,
             tenant_id=admin.tenant_id,
+            tracking_only=settings_response(get_admin_settings(db, admin.tenant_id))["garage_settings"].get("mode") == "tracking",
         )
 
         return {
@@ -273,6 +274,7 @@ def exit_payment_required(
     billing_config = settings_response(get_admin_settings(db, admin.tenant_id))["billing_config"]
     billing_enabled = bool(billing_config.get("payments_enabled"))
     rate_per_minute = float(billing_config.get("rate_per_minute", PARKING_RATE_PER_MINUTE))
+    rate_unit = billing_config.get("rate_unit", "minute")
     try:
         payment_required = payment_required_for_exit(
             db,
@@ -280,6 +282,7 @@ def exit_payment_required(
             billing_enabled,
             admin.tenant_id,
             rate_per_minute,
+            rate_unit,
         )
     except ValueError:
         raise HTTPException(
@@ -291,6 +294,7 @@ def exit_payment_required(
         "success": True,
         "payment_required": payment_required,
         "rate_per_minute": rate_per_minute,
+        "rate_unit": rate_unit,
     }
 
 
@@ -314,6 +318,7 @@ def vehicle_exit(
         rate_per_minute = float(
             billing_config.get("rate_per_minute", PARKING_RATE_PER_MINUTE)
         )
+        rate_unit = billing_config.get("rate_unit", "minute")
 
         payment_required = payment_required_for_exit(
             db,
@@ -321,6 +326,7 @@ def vehicle_exit(
             bool(billing_config.get("payments_enabled")),
             admin.tenant_id,
             rate_per_minute,
+            rate_unit,
         )
 
         if payment_required and not request.payment_method:
@@ -339,6 +345,7 @@ def vehicle_exit(
             ),
             billing_enabled=bool(billing_config.get("payments_enabled")),
             rate_per_minute=rate_per_minute,
+            rate_unit=rate_unit,
             tenant_id=admin.tenant_id,
         )
 

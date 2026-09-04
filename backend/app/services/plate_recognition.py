@@ -44,6 +44,9 @@ VISION_DEBUG = os.getenv("VISION_DEBUG", "").lower() in {"1", "true", "yes"}
 
 OCR_CONFIDENCE_THRESHOLD = 0.50
 OCR_ACCEPT_CONFIDENCE_THRESHOLD = 0.80
+OCR_STRONG_FORMAT_CONFIDENCE_THRESHOLD = float(
+    os.getenv("OCR_STRONG_FORMAT_CONFIDENCE_THRESHOLD", "0.60")
+)
 OCR_RECOGNITION_MODEL = os.getenv(
     "OCR_RECOGNITION_MODEL", "en_PP-OCRv5_mobile_rec"
 )
@@ -132,204 +135,14 @@ def update_fps():
 
 
 # ============================================================
-# License Plate Validation
+# License Plate Validation / Normalization
 # ============================================================
 
-PLATE_FORMATS = {
-    "AJK": {
-        "car": [("AA999", r"^[A-Z]{2}[0-9]{3}$")],
-        "motorcycle": [("AABB000", r"^[A-Z]{4}[0-9]{3}$")],
-        "public_transport": [("AABB000", r"^[A-Z]{4}[0-9]{3}$")],
-        "government": [("AABB000", r"^[A-Z]{4}[0-9]{3}$")],
-    },
-    "Balochistan": {
-        "car": [("AA999", r"^[A-Z]{2}[0-9]{3}$")],
-        "motorcycle": [("AA0000", r"^[A-Z]{2}[0-9]{4}$")],
-        "public_transport": [("AA0000", r"^[A-Z]{2}[0-9]{4}$")],
-        "government": [("AAAA000", r"^[A-Z]{4}[0-9]{3}$")],
-    },
-    "Gilgit-Baltistan": {
-        "car": [("AAA00", r"^[A-Z]{3}[0-9]{2}$")],
-    },
-    "Islamabad": {
-        "car": [("AA999", r"^[A-Z]{2}[0-9]{3}$")],
-        "motorcycle": [("AA999", r"^[A-Z]{2}[0-9]{3}$")],
-        "government": [("alphanumeric", r"^[A-Z0-9]+$")],
-    },
-    "Khyber Pakhtunkhwa": {
-        "car": [("AA9999", r"^[A-Z]{2}[0-9]{4}$")],
-        "motorcycle": [("AA000", r"^[A-Z]{2}[0-9]{3}$")],
-        "public_transport": [("AA000", r"^[A-Z]{2}[0-9]{3}$")],
-        "government": [("AA000", r"^[A-Z]{2}[0-9]{3}$")],
-    },
-    "Punjab": {
-        "car": [
-            ("AA999", r"^[A-Z]{2}[0-9]{3}$"),
-            ("A9999", r"^[A-Z][0-9]{4}$"),
-        ],
-        "motorcycle": [("AA/AAA0000", r"^[A-Z]{2,3}[0-9]{4}$")],
-        "public_transport": [("AAA000", r"^[A-Z]{3}[0-9]{3}$")],
-        "government": [("alphanumeric", r"^[A-Z0-9]+$")],
-    },
-    "Sindh": {
-        "car": [
-            ("AAA000", r"^[A-Z]{3}[0-9]{3}$"),
-            ("AAA0000", r"^[A-Z]{3}[0-9]{4}$"),
-        ],
-        "motorcycle": [("AAA0000", r"^[A-Z]{3}[0-9]{4}$")],
-        "public_transport": [("AA0000", r"^[A-Z]{2}[0-9]{4}$")],
-        "government": [("AA000", r"^[A-Z]{2}[0-9]{3}$")],
-    },
-}
-
-GENERIC_PLATE_FORMATS = [
-    ("AA999", r"^[A-Z]{2}[0-9]{3}$"),
-    ("AA9999", r"^[A-Z]{2}[0-9]{4}$"),
-    ("AAA00", r"^[A-Z]{3}[0-9]{2}$"),
-    ("AAA000", r"^[A-Z]{3}[0-9]{3}$"),
-    ("AAA0000", r"^[A-Z]{3}[0-9]{4}$"),
-    ("AABB000", r"^[A-Z]{4}[0-9]{3}$"),
-    ("A9999", r"^[A-Z][0-9]{4}$"),
-    ("AA/AAA0000", r"^[A-Z]{2,3}[0-9]{4}$"),
-]
-
-PLATE_PROVINCES = {
-    "AJK": "AJK",
-    "AJ&K": "AJK",
-    "BALOCHISTAN": "Balochistan",
-    "GILGITBALTISTAN": "Gilgit-Baltistan",
-    "GB": "Gilgit-Baltistan",
-    "ISLAMABAD": "Islamabad",
-    "ICT": "Islamabad",
-    "PUNJAB": "Punjab",
-    "SINDH": "Sindh",
-    "KP": "Khyber Pakhtunkhwa",
-    "KPK": "Khyber Pakhtunkhwa",
-    "KHYBERPAKHTUNKHWA": "Khyber Pakhtunkhwa",
-}
-
-PLATE_LABELS = set(PLATE_PROVINCES) | {
-    "PARKING",
-    "POLICE",
-    "GOVERNMENT",
-    "DEPARTMENT",
-    "EXCISE",
-    "ETNC",
-    "TRANSPORT",
-    "MOTOR",
-    "VEHICLE",
-    "REGISTRATION",
-    "LAHORE",
-    "KARACHI",
-    "RAWALPINDI",
-    "FAISALABAD",
-    "MULTAN",
-    "GUJRANWALA",
-    "SIALKOT",
-    "HYDERABAD",
-    "SUKKUR",
-    "QUETTA",
-    "PESHAWAR",
-    "ABBOTTABAD",
-    "GILGIT",
-    "MUZAFFARABAD",
-    "SKARDU",
-    "CHITRAL",
-    "BAHAWALPUR",
-}
-
-OCR_CONFUSIONS = {"O": "0", "I": "1", "L": "1", "S": "5", "B": "8", "Z": "2", "G": "6"}
-
-
-def _plate_province(raw_text):
-    compact_text = re.sub(r"[\s\-./]+", "", raw_text.upper())
-    for label, province in sorted(
-        PLATE_PROVINCES.items(), key=lambda item: -len(item[0])
-    ):
-        if re.sub(r"[\s\-./]+", "", label) in compact_text:
-            return province
-    return None
-
-
-def _plate_tokens(raw_text):
-    tokens = re.findall(r"[A-Z0-9]+", raw_text.upper())
-    return [token for token in tokens if token not in PLATE_LABELS]
-
-
-def _correct_for_format(value, format_name):
-    template = re.sub(r"[^A-Z0-9]", "", format_name)
-    if len(value) != len(template):
-        return value
-
-    corrected = []
-    for character, expected in zip(value, template):
-        if expected == "0" and character in OCR_CONFUSIONS:
-            character = OCR_CONFUSIONS[character]
-        elif expected == "A":
-            reverse = {digit: letter for letter, digit in OCR_CONFUSIONS.items()}
-            character = reverse.get(character, character)
-        corrected.append(character)
-    return "".join(corrected)
-
-
-def _display_plate(value):
-    """Add the visual separator between the letter and number sections."""
-    match = re.fullmatch(r"([A-Z]+)([0-9]+)", value)
-    return f"{match.group(1)}-{match.group(2)}" if match else value
-
-
-def classify_plate(text: str, confidence: float = 0.0) -> dict | None:
-    """Normalize OCR text and match the supplied Pakistani plate formats."""
-    raw_text = text or ""
-    province = _plate_province(raw_text)
-    tokens = _plate_tokens(raw_text)
-    candidates = list(dict.fromkeys(tokens + (["".join(tokens)] if tokens else [])))
-    options = (
-        [item for values in PLATE_FORMATS[province].values() for item in values]
-        if province
-        else GENERIC_PLATE_FORMATS
-    )
-
-    for candidate in candidates:
-        for format_name, pattern in options:
-            normalized = _correct_for_format(
-                re.sub(r"[\s\-./]+", "", candidate), format_name
-            )
-            if re.fullmatch(pattern, normalized):
-                display_plate = _display_plate(normalized)
-                matching_types = [
-                    vehicle_type
-                    for vehicle_type, formats in PLATE_FORMATS.get(province, {}).items()
-                    if any(
-                        name == format_name and re.fullmatch(regex, normalized)
-                        for name, regex in formats
-                    )
-                ]
-                return {
-                    "raw_text": raw_text,
-                    "plate": display_plate,
-                    "province": province or "unknown",
-                    "vehicle_type": (
-                        matching_types[0] if len(matching_types) == 1 else "unknown"
-                    ),
-                    "format": format_name,
-                    "confidence": round(max(0.0, min(1.0, float(confidence))), 4),
-                }
-    return None
-
-
-def is_valid_plate(text: str) -> bool:
-    return classify_plate(text, 1.0) is not None
-
-
-# ============================================================
-# Normalize Plate
-# ============================================================
-
-
-def normalize_plate(text: str) -> str:
-    result = classify_plate(text, 1.0)
-    return result["plate"] if result else ""
+from app.services.plate_formats import (
+    classify_plate,
+    is_valid_plate,
+    normalize_plate,
+)
 
 
 def _ocr_state(source):
@@ -544,16 +357,21 @@ def read_plate(plate_crop, source=None, request_id=None):
 
         result = classify_plate("\n".join(texts), max(scores))
 
-        if (
-            result is None
-            or result["confidence"] < OCR_ACCEPT_CONFIDENCE_THRESHOLD
+        strong_format_accept = (
+            result is not None
+            and result["confidence"] >= OCR_STRONG_FORMAT_CONFIDENCE_THRESHOLD
+            and result.get("corrections", 0) <= 1
+        )
+
+        if result is None or (
+            result["confidence"] < OCR_ACCEPT_CONFIDENCE_THRESHOLD
+            and not strong_format_accept
         ):
             _vision_debug(
                 "OCR rejected: %s (confidence: %.2f)",
                 " ".join(texts),
                 max(scores),
             )
-
             return None
 
         _vision_debug(

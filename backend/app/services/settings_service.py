@@ -4,6 +4,7 @@ from app.models.admin_settings import AdminSettings
 
 
 DEFAULT_GARAGE_SETTINGS = {
+    "mode": "parking",
     "level_count": 0,
     "spaces_per_level": 0,
     "levels": [],
@@ -18,6 +19,7 @@ DEFAULT_BILLING_CONFIG = {
     "cash_enabled": False,
     "card_enabled": False,
     "rate_per_minute": 1.67,
+    "rate_unit": "minute",
 }
 
 
@@ -46,8 +48,10 @@ def settings_response(settings: AdminSettings | None) -> dict:
     billing_config = DEFAULT_BILLING_CONFIG.copy()
     billing_config.update(settings.billing_config or {})
 
+    garage_settings = DEFAULT_GARAGE_SETTINGS.copy()
+    garage_settings.update(settings.garage_settings or {})
     return {
-        "garage_settings": settings.garage_settings,
+        "garage_settings": garage_settings,
         "camera_config": settings.camera_config,
         "billing_config": billing_config,
         "updated_at": settings.updated_at,

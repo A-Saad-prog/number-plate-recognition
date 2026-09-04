@@ -5,14 +5,18 @@ import {
     getAdminSession,
     getAdminSettings,
     getParkingActivity,
+    getAnalytics,
     getWhitelist,
     loginAdmin,
     removeWhitelistEntry,
     saveBillingConfig,
     saveCameraConfig,
     saveGarageSettings,
+    removeParkingSession,
+    updateParkingVehicle,
 } from "../services/api";
 import "../styles/AdminPage.css";
+import { localPlateImageSupport, savedPlateImageFolderName, selectPlateImageFolder } from "../services/localPlateImages";
 
 const TOKEN_KEY = "parking_admin_token";
 const LANGUAGE_KEY = "parking_admin_language";
@@ -88,6 +92,7 @@ function AdminPage() {
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState("");
     const [activeFeature, setActiveFeature] = useState(null);
+    const [accountMenuOpen, setAccountMenuOpen] = useState(false);
     const [plate, setPlate] = useState("");
     const [vehicleName, setVehicleName] = useState("");
     const [discount, setDiscount] = useState("");
@@ -100,7 +105,9 @@ function AdminPage() {
     const whitelistFetchInFlightRef = useRef(false);
     const [whitelistError, setWhitelistError] = useState("");
     const [whitelistMessage, setWhitelistMessage] = useState("");
-    const [garageSettings, setGarageSettings] = useState({ level_count: "", levels: [], spaces_per_level: "" });
+    const [garageSettings, setGarageSettings] = useState({ mode: "parking", level_count: "", levels: [], spaces_per_level: "" });
+    const [localImageFolder, setLocalImageFolder] = useState("");
+    const [localImageStatus, setLocalImageStatus] = useState("");
     const [garageSettingsMessage, setGarageSettingsMessage] = useState("");
     const [garageSettingsAlreadyApplied, setGarageSettingsAlreadyApplied] = useState(false);
     const [savedGarageSettings, setSavedGarageSettings] = useState(null);
@@ -131,13 +138,17 @@ function AdminPage() {
     const [confirmationOpen, setConfirmationOpen] = useState(false);
     const [confirmationSection, setConfirmationSection] = useState(null);
     const [settingsSubmitting, setSettingsSubmitting] = useState(null);
-    const [billingConfig, setBillingConfig] = useState({ payments_enabled: false, cash_enabled: false, card_enabled: false, rate_per_minute: 1.67 });
+    const [billingConfig, setBillingConfig] = useState({ payments_enabled: false, cash_enabled: false, card_enabled: false, rate_per_minute: 1.67, rate_unit: "minute" });
     const [billingMessage, setBillingMessage] = useState("");
     const [billingRateError, setBillingRateError] = useState("");
     const [savedBillingConfig, setSavedBillingConfig] = useState(null);
     const [parkingActivity, setParkingActivity] = useState(null);
     const [activityLoading, setActivityLoading] = useState(false);
     const [activityError, setActivityError] = useState("");
+    const [analytics, setAnalytics] = useState(null);
+    const [analyticsMetric, setAnalyticsMetric] = useState("earnings");
+    const [analyticsPeriod, setAnalyticsPeriod] = useState("7d");
+    const [activeSessionMenuId, setActiveSessionMenuId] = useState(null);
     const activityLoadingRef = useRef(false);
 
     useEffect(() => {
@@ -182,7 +193,8 @@ function AdminPage() {
                 const garage = settings.garage_settings;
                 if (garage?.level_count > 0) {
                     const normalizedGarageSettings = {
-                        level_count: String(garage.level_count),
+                        mode: garage.mode || "parking", level_count: String(garage.level_count),
+                        local_image_saving: Boolean(garage.local_image_saving),
                         spaces_per_level: String(garage.spaces_per_level),
                         automatic_entry: Boolean(garage.automatic_entry),
                         levels: (garage.levels || []).map((level) => ({
@@ -203,9 +215,9 @@ function AdminPage() {
                     setSavedCameraSetup(normalizeCameraSetup(normalizedCameraConfig, cameraAssignments));
                 }
                 if (settings.billing_config) {
-                    const normalizedBillingConfig = {
+            const normalizedBillingConfig = {
                         ...settings.billing_config,
-                        rate_per_minute: settings.billing_config.rate_per_minute ?? 1.67,
+                        rate_per_minute: settings.billing_config.rate_per_minute ?? 1.67, rate_unit: settings.billing_config.rate_unit || "minute",
                     };
                     setBillingConfig(normalizedBillingConfig);
                     setSavedBillingConfig(normalizeBillingConfig(normalizedBillingConfig));
@@ -213,6 +225,7 @@ function AdminPage() {
             })
             .catch(() => { });
     }, [token]);
+    useEffect(() => { savedPlateImageFolderName().then((name) => setLocalImageFolder(name || "")).catch(() => {}); }, []);
     useEffect(() => {
         setGarageSettingsAlreadyApplied(
             isGarageSettingsAlreadyApplied(
@@ -266,9 +279,20 @@ function AdminPage() {
         if (activeFeature !== "parking-activity" || !token) return undefined;
         const interval = window.setInterval(() => {
             void loadParkingActivity();
-        }, 2500);
+        }, 10000);
         return () => window.clearInterval(interval);
     }, [activeFeature, token]);
+
+    useEffect(() => {
+        const closeMenus = (event) => {
+            if (!event.target.closest(".account-menu")) setAccountMenuOpen(false);
+            if (!event.target.closest(".vehicle-menu")) setActiveSessionMenuId(null);
+        };
+        const closeOnEscape = (event) => { if (event.key === "Escape") { setAccountMenuOpen(false); setActiveSessionMenuId(null); } };
+        document.addEventListener("mousedown", closeMenus);
+        document.addEventListener("keydown", closeOnEscape);
+        return () => { document.removeEventListener("mousedown", closeMenus); document.removeEventListener("keydown", closeOnEscape); };
+    }, []);
 
     async function submitWhitelist(event) {
         event.preventDefault();
@@ -351,6 +375,29 @@ function AdminPage() {
         }
     }
 
+    async function chooseLocalImageFolder() {
+        try { setLocalImageFolder(await selectPlateImageFolder()); setLocalImageStatus("Folder ready for confirmed plate images."); }
+        catch (error) { setLocalImageStatus(error?.message || "Folder selection was cancelled."); }
+    }
+
+    async function removeLiveSession(sessionId) {
+        if (!window.confirm("Remove this vehicle from parking and free its space?")) return;
+        try { await removeParkingSession(token, sessionId); await loadParkingActivity(); }
+        catch (err) { setActivityError(err.message || "Unable to remove parking."); }
+    }
+
+    async function editLiveSession(session) {
+        const nextPlate = window.prompt("Number plate", session.plate);
+        if (!nextPlate || nextPlate.trim().toUpperCase() === session.plate) return;
+        try { await updateParkingVehicle(token, session.session_id, nextPlate.trim().toUpperCase()); await loadParkingActivity(); }
+        catch (err) { setActivityError(err.message || "Unable to update vehicle."); }
+    }
+
+    async function loadAnalytics(period = analyticsPeriod) {
+        try { setAnalytics(await getAnalytics(token, period)); }
+        catch (err) { setActivityError(err.message || "Unable to load analytics."); }
+    }
+
     function showWhitelist() {
         if (whitelistVisible) {
             setWhitelistVisible(false);
@@ -376,6 +423,7 @@ function AdminPage() {
 
     function handleCameraConfigChange(field, value) {
         const nextValue = value.replace(/[^\d]/g, "");
+        const nextConfig = { ...cameraConfig, [field]: nextValue };
         setCameraConfig((current) => ({
             ...current,
             [field]: nextValue,
@@ -395,7 +443,9 @@ function AdminPage() {
         }
 
         if (errorMessage === "") {
-            setCameraMessage("");
+            const total = Number(nextConfig.entry_lane_cameras) + Number(nextConfig.exit_lane_cameras);
+            setCameraMessage(total > 4 ? "🛡 Camera limit exceeded. A maximum of 4 cameras can be assigned across entry and exit lanes." : "");
+            setCameraMessageType(total > 4 ? "warning" : "success");
         }
     }
 
@@ -410,9 +460,9 @@ function AdminPage() {
         setCameraErrors(nextErrors);
 
         const hasError = Object.values(nextErrors).some((message) => Boolean(message));
-        if (hasError) {
+        if (hasError || Number(cameraConfig.entry_lane_cameras) + Number(cameraConfig.exit_lane_cameras) > 4) {
             setCameraMessageType("warning");
-            setCameraMessage(t.fixCameraErrors);
+            setCameraMessage(Number(cameraConfig.entry_lane_cameras) + Number(cameraConfig.exit_lane_cameras) > 4 ? "🛡 Camera limit exceeded. A maximum of 4 cameras can be assigned across entry and exit lanes." : t.fixCameraErrors);
             return;
         }
 
@@ -525,6 +575,7 @@ function AdminPage() {
             cash_enabled: Boolean(config?.cash_enabled),
             card_enabled: Boolean(config?.card_enabled),
             rate_per_minute: Number(config?.rate_per_minute ?? 1.67),
+            rate_unit: config?.rate_unit || "minute",
         });
     }
 
@@ -619,6 +670,9 @@ function AdminPage() {
         }
 
         if (Boolean(currentSettings.automatic_entry) !== Boolean(savedSettings.automatic_entry)) {
+            return false;
+        }
+        if (Boolean(currentSettings.local_image_saving) !== Boolean(savedSettings.local_image_saving)) {
             return false;
         }
 
@@ -818,6 +872,17 @@ function AdminPage() {
 
     async function confirmGarageSettings() {
         if (settingsSubmitting) return;
+        if (garageSettings.mode === "tracking") {
+            setSettingsSubmitting("garage");
+            try {
+                const result = await saveGarageSettings(token, { mode: "tracking", level_count: 0, spaces_per_level: 0, levels: [], automatic_entry: Boolean(garageSettings.automatic_entry), local_image_saving: Boolean(garageSettings.local_image_saving) });
+                const saved = result.garage_settings;
+                setGarageSettings({ mode: "tracking", level_count: "0", spaces_per_level: "0", levels: [], automatic_entry: Boolean(saved.automatic_entry) });
+                setSavedGarageSettings({ mode: "tracking", level_count: "0", spaces_per_level: "0", levels: [], automatic_entry: Boolean(saved.automatic_entry) });
+                setGarageSettingsMessageType("success"); setGarageSettingsMessage("Plate tracking mode applied."); localStorage.setItem(GARAGE_SETTINGS_UPDATED_KEY, String(Date.now())); setConfirmationOpen(false); return;
+            } catch (err) { setGarageSettingsMessageType("warning"); setGarageSettingsMessage(err?.message || t.requestFailed); return; }
+            finally { setSettingsSubmitting(null); }
+        }
         const levelCountVal = garageSettings.level_count !== undefined
             ? garageSettings.level_count
             : (garageSettings.levels?.length ? String(garageSettings.levels.length) : "");
@@ -852,21 +917,28 @@ function AdminPage() {
         setSettingsSubmitting("garage");
         try {
             const result = await saveGarageSettings(token, {
+                mode: "parking",
                 level_count: count,
                 spaces_per_level: defaultSpaces,
                 levels: payloadLevels,
                 automatic_entry: Boolean(garageSettings.automatic_entry),
+                local_image_saving: Boolean(garageSettings.local_image_saving),
             });
             const savedSettings = result?.garage_settings || {
+                mode: "parking",
                 level_count: count,
                 spaces_per_level: defaultSpaces,
                 levels: payloadLevels,
                 automatic_entry: Boolean(garageSettings.automatic_entry),
+                local_image_saving: Boolean(garageSettings.local_image_saving),
+                local_image_saving: Boolean(garageSettings.local_image_saving),
             };
             setSavedGarageSettings({
+                mode: savedSettings.mode || "parking",
                 level_count: String(savedSettings.level_count),
                 spaces_per_level: String(savedSettings.spaces_per_level),
                 automatic_entry: Boolean(savedSettings.automatic_entry),
+                local_image_saving: Boolean(savedSettings.local_image_saving),
                 levels: (savedSettings.levels || payloadLevels).map((level) => ({
                     ...level,
                     spaces: String(level.spaces),
@@ -874,9 +946,11 @@ function AdminPage() {
             });
             setGarageSettings((current) => ({
                 ...current,
+                mode: savedSettings.mode || "parking",
                 level_count: String(count),
                 spaces_per_level: String(defaultSpaces),
                 automatic_entry: Boolean(savedSettings.automatic_entry),
+                local_image_saving: Boolean(savedSettings.local_image_saving),
                 levels: payloadLevels.map((l) => ({ ...l, spaces: String(l.spaces) })),
             }));
             setGarageSettingsMessageType("success");
@@ -901,7 +975,7 @@ function AdminPage() {
             <main className={`admin-shell admin-theme-${appliedTheme}`} dir={isUrdu ? "rtl" : "ltr"} lang={language}>
                 <header className="admin-header">
                     <a href="/" className="admin-logo">PARKING<span>OS</span></a>
-                    <div className="admin-header-actions"><DisplayControls theme={theme} language={language} onLanguageChange={setLanguage} onThemeChange={setTheme} /><button type="button" className="theme-toggle" onClick={() => window.open("/", "_blank", "noopener,noreferrer")}>Open Garage</button><div className="admin-user">{adminName}<button type="button" onClick={signOut}>{t.signOut}</button></div></div>
+                    <div className="admin-header-actions"><button type="button" className="theme-toggle" onClick={() => window.open("/", "_blank", "noopener,noreferrer")}>Open Garage</button><div className="account-menu"><button type="button" className="admin-user" aria-expanded={accountMenuOpen} onClick={() => setAccountMenuOpen((open) => !open)}>{adminName}</button>{accountMenuOpen && <div className="account-dropdown"><strong>Appearance</strong><button onClick={() => { setTheme("system"); setAccountMenuOpen(false); }}>System Default</button><button onClick={() => { setTheme("light"); setAccountMenuOpen(false); }}>Light</button><button onClick={() => { setTheme("dark"); setAccountMenuOpen(false); }}>Dark</button><strong>Language</strong><button onClick={() => { setLanguage("en"); setAccountMenuOpen(false); }}>English</button><button onClick={() => { setLanguage("ur"); setAccountMenuOpen(false); }}>Urdu</button><button className="sign-out" onClick={signOut}>{t.signOut}</button></div>}</div></div>
                 </header>
                 <div className="admin-app-body">
                     <aside className="admin-sidebar">
@@ -921,22 +995,25 @@ function AdminPage() {
                         <button type="button" className={`sidebar-feature ${activeFeature === "parking-activity" ? "active" : ""}`} onClick={() => { setActiveFeature("parking-activity"); loadParkingActivity(); }}>
                             <span className="feature-number">05</span><span>Parking Activity</span><span className="feature-arrow">+</span>
                         </button>
+                        <button type="button" className={`sidebar-feature ${activeFeature === "analytics" ? "active" : ""}`} onClick={() => { setActiveFeature("analytics"); loadAnalytics(); }}><span className="feature-number">06</span><span>Analytics</span><span className="feature-arrow">+</span></button>
                     </aside>
                     <section className="admin-dashboard">
                         {activeFeature === "parking-activity" ? (
                             <div className="feature-view">
                                 <h1>Parking<br /><span>activity.</span></h1>
                                 <p className="admin-message">Live parking, recent visits, and active space status.</p>
-                                <button type="button" className="show-list-button" onClick={loadParkingActivity} disabled={activityLoading}>{activityLoading ? "Refreshing..." : "Refresh activity"}</button>
+                                <button type="button" className="activity-refresh" onClick={loadParkingActivity} disabled={activityLoading} aria-label="Refresh activity"><span className={activityLoading ? "spinning" : ""}>↻</span></button>
                                 {activityError && <p className="admin-error whitelist-feedback">{activityError}</p>}
                                 {parkingActivity && <>
                                     <p className="admin-message">Capacity: {parkingActivity.space_status.total_active_capacity} · Occupied: {parkingActivity.space_status.occupied} · Available: {parkingActivity.space_status.available}</p>
-                                    <div className="whitelist-table-wrap"><table><thead><tr><th>Live plate</th><th>Space</th><th>Entry time</th><th>Duration</th></tr></thead><tbody>{parkingActivity.live_sessions.map((session) => <tr key={`${session.plate}-${session.entry_time}`}><td>{session.plate}</td><td>{session.space || "-"}</td><td>{new Date(session.entry_time).toLocaleString()}</td><td>{session.duration_minutes} min</td></tr>)}</tbody></table></div>
+                                    <div className="whitelist-table-wrap"><table><thead><tr><th>Live plate</th><th>Space</th><th>Entry time</th><th>Duration</th><th>Actions</th></tr></thead><tbody>{parkingActivity.live_sessions.map((session) => <tr key={session.session_id}><td>{session.plate}</td><td>{session.space || "Tracking"}</td><td>{new Date(session.entry_time).toLocaleString()}</td><td>{session.duration_minutes} min</td><td><div className="vehicle-menu"><button type="button" className="vehicle-menu-trigger" aria-label="Vehicle actions" aria-expanded={activeSessionMenuId === session.session_id} onClick={() => setActiveSessionMenuId((id) => id === session.session_id ? null : session.session_id)}>⋮</button>{activeSessionMenuId === session.session_id && <div className="vehicle-menu-dropdown"><button onClick={() => { setActiveSessionMenuId(null); removeLiveSession(session.session_id); }}>Remove Parking</button><button onClick={() => { setActiveSessionMenuId(null); editLiveSession(session); }}>Edit Info</button><button onClick={() => { setActiveSessionMenuId(null); setPlate(session.plate); setActiveFeature("whitelist"); }}>Add to Whitelist</button></div>}</div></td></tr>)}</tbody></table></div>
                                     <div className="whitelist-table-wrap"><table><thead><tr><th>Level</th><th>Space</th><th>Status</th><th>Plate</th></tr></thead><tbody>{parkingActivity.space_status.spaces.map((space) => <tr key={`${space.level}-${space.space}`}><td>{space.level}</td><td>{space.space}</td><td>{space.is_occupied ? "Occupied" : "Available"}</td><td>{space.plate || "-"}</td></tr>)}</tbody></table></div>
                                     <div className="whitelist-table-wrap"><table><thead><tr><th>Plate</th><th>Visits</th><th>Last entry</th><th>Last exit</th><th>Parked</th><th>Whitelist</th></tr></thead><tbody>{parkingActivity.vehicles.map((vehicle) => <tr key={vehicle.plate}><td>{vehicle.plate}</td><td>{vehicle.total_visits}</td><td>{vehicle.last_entry ? new Date(vehicle.last_entry).toLocaleString() : "-"}</td><td>{vehicle.last_exit ? new Date(vehicle.last_exit).toLocaleString() : "-"}</td><td>{vehicle.currently_parked ? "Yes" : "No"}</td><td>{vehicle.whitelisted ? "Yes" : "No"}</td></tr>)}</tbody></table></div>
                                     <div className="whitelist-table-wrap"><table><thead><tr><th>Plate</th><th>Entry</th><th>Exit</th><th>Duration</th><th>Space</th>{parkingActivity.billing_enabled && <><th>Payment</th><th>Amount</th><th>Discount</th></>}</tr></thead><tbody>{parkingActivity.history.map((item, index) => <tr key={`${item.plate}-${index}`}><td>{item.plate}</td><td>{new Date(item.entry_time).toLocaleString()}</td><td>{item.exit_time ? new Date(item.exit_time).toLocaleString() : "-"}</td><td>{item.duration_minutes} min</td><td>{item.space || "-"}</td>{parkingActivity.billing_enabled && <><td>{item.payment_method || "-"}</td><td>{item.amount ?? "-"}</td><td>{item.discount_percent ? `${item.discount_percent}%` : "-"}</td></>}</tr>)}</tbody></table></div>
                                 </>}
                             </div>
+                        ) : activeFeature === "analytics" ? (
+                            <div className="feature-view"><h1>Garage<br /><span>analytics.</span></h1>{analytics ? <><div className="analytics-grid"><article>Total Earnings<strong>Rs {Number(analytics.total_earnings).toLocaleString("en-PK", { minimumFractionDigits: 2 })}</strong></article><article>Average Duration<strong>{analytics.average_duration_minutes >= 60 ? `${Math.floor(analytics.average_duration_minutes / 60)} hr ${Math.round(analytics.average_duration_minutes % 60) || ""} min` : `${Math.round(analytics.average_duration_minutes)} min`}</strong></article><article>Rush Hour<strong>{analytics.rush_hour ? `${(Number(analytics.rush_hour.slice(0, 2)) % 12) || 12} ${Number(analytics.rush_hour.slice(0, 2)) >= 12 ? "PM" : "AM"} – ${(Number(analytics.rush_hour.slice(0, 2)) + 1) % 12 || 12} ${Number(analytics.rush_hour.slice(0, 2)) >= 11 ? "PM" : "AM"}` : "No data"}</strong></article><article>Occupancy<strong>{analytics.occupancy.occupied}/{analytics.occupancy.total}</strong></article><article>Vehicles Today<strong>{analytics.vehicles_today}</strong></article></div><section className="analytics-panel"><div className="analytics-switcher">{[["earnings","Earnings"],["rush","Rush Hour"],["duration","Average Duration"],["traffic","Vehicles / Traffic"]].map(([key,label]) => <button key={key} className={analyticsMetric === key ? "active" : ""} onClick={() => setAnalyticsMetric(key)}>{label}</button>)}</div><h3>{({ earnings: "Earnings trend (Rs)", rush: "Hourly vehicle activity (vehicles)", duration: "Average parking duration (minutes)", traffic: "Vehicle traffic (vehicles)" })[analyticsMetric]}</h3><div className="analytics-bars">{(() => { const rows = analyticsMetric === "rush" ? analytics.hourly_activity : analytics.trend; const values = rows.map((point) => analyticsMetric === "earnings" ? point.earnings : analyticsMetric === "traffic" || analyticsMetric === "rush" ? point.vehicles : analytics.average_duration_minutes); const max = Math.max(...values, 0); return rows.map((point, index) => { const value = values[index]; const height = max > 0 ? Math.max(4, value / max * 100) : 0; return <div key={point.date || point.hour || index} title={analyticsMetric === "earnings" ? `Rs ${Number(value).toLocaleString("en-PK", { minimumFractionDigits: 2 })}` : `${value} ${analyticsMetric === "duration" ? "min" : "vehicles"}`}><i style={{ height: `${height}%` }} /><small>{point.date?.slice(5) || `${point.hour}:00`}</small></div>; }); })()}</div></section></> : <p className="admin-message">Loading analytics…</p>}</div>
                         ) : activeFeature === "whitelist" ? (
                             <div className="feature-view">
                                 <h1>{t.vehicleTitle}<br /><span>{t.whitelistTitle}</span></h1>
@@ -956,6 +1033,8 @@ function AdminPage() {
                                 <p className="admin-message">{t.garageIntro}</p>
 
                                 <form className="garage-settings-form" onSubmit={handleGarageSettingsApply}>
+                                    <div className="garage-mode-options"><p>Choose how this site is operated.</p><label><input type="radio" checked={(garageSettings.mode || "parking") === "parking"} onChange={() => setGarageSettings((current) => ({ ...current, mode: "parking" }))} /> <strong>Parking Garage</strong><small>Manage levels, spaces, entry, exit and billing.</small></label><label><input type="radio" checked={garageSettings.mode === "tracking"} onChange={() => setGarageSettings((current) => ({ ...current, mode: "tracking", level_count: "0", spaces_per_level: "0", levels: [] }))} /> <strong>Plate Tracking Only</strong><small>Recognize and log plates without parking-space assignment.</small></label></div>
+                                    {(garageSettings.mode || "parking") === "parking" && <>
                                     <div className="level-config-block">
                                         <div className="level-config-header">
                                             <label className="level-count-field garage-field-group">
@@ -997,6 +1076,7 @@ function AdminPage() {
                                             />
                                             <span>Automatic Entry</span>
                                         </label>
+                                        <div className="local-image-setting"><label><input type="checkbox" checked={Boolean(garageSettings.local_image_saving)} onChange={(event) => setGarageSettings((current) => ({ ...current, local_image_saving: event.target.checked }))} /> <span>Enable Local Plate Images</span></label><button type="button" className="camera-refresh-button" onClick={chooseLocalImageFolder}>Select Folder</button><small>{localImageFolder ? `Selected: ${localImageFolder}` : localPlateImageSupport() ? "No local folder selected." : "Local folder saving requires Chromium."}</small>{localImageStatus && <small>{localImageStatus}</small>}</div>
                                     </div>
 
                                     {advancedGarageSettings && (
@@ -1037,7 +1117,7 @@ function AdminPage() {
                                         </div>
                                     )}
 
-                                    {garageSettingsMessage && (
+                                    </>}{garageSettingsMessage && (
                                         <p className={garageSettingsMessageType === "warning" ? "admin-error whitelist-feedback" : "whitelist-success"}>{garageSettingsMessage}</p>
                                     )}
 
@@ -1074,6 +1154,7 @@ function AdminPage() {
                             <div className="feature-view">
                                 <h1>{t.cameraTitle}<br /><span>{t.cameraSetupTitle}</span></h1>
                                 <p className="admin-message">{t.cameraIntro}</p>
+                                <p className="form-hint">Up to 4 cameras can be assigned across entry and exit lanes. {Number(cameraConfig.entry_lane_cameras || 0) + Number(cameraConfig.exit_lane_cameras || 0)} of 4 assigned.</p>
 
                                 <form className="garage-settings-form" onSubmit={handleCameraConfigSubmit}>
                                     <div className="level-config-block">
@@ -1184,8 +1265,8 @@ function AdminPage() {
                                     {billingConfig.payments_enabled && (
                                         <>
                                             <div className="billing-rate-field">
-                                                <label htmlFor="parking-rate-per-minute">Parking rate per minute</label>
-                                                <div><span>Rs</span><input id="parking-rate-per-minute" type="number" min="0.01" step="0.01" value={billingConfig.rate_per_minute} onChange={(event) => handleBillingRateChange(event.target.value)} aria-invalid={Boolean(billingRateError)} /> <span>/ minute</span></div>
+                                                <label htmlFor="parking-rate-per-minute">Parking rate</label>
+                                                <div><span>Rs</span><input id="parking-rate-per-minute" type="number" min="0.01" step="0.01" value={billingConfig.rate_per_minute} onChange={(event) => handleBillingRateChange(event.target.value)} aria-invalid={Boolean(billingRateError)} /><select value={billingConfig.rate_unit || "minute"} onChange={(event) => setBillingConfig((current) => ({ ...current, rate_unit: event.target.value }))}><option value="minute">Per minute</option><option value="hour">Per hour</option><option value="day">Per day</option></select></div>
                                                 <small className="admin-error whitelist-feedback error-space">{billingRateError || "\u00A0"}</small>
                                             </div>
                                             <div className="billing-payment-methods">

@@ -10,6 +10,7 @@ import {
 } from "../services/api";
 
 import VehicleInformation from "../components/VehicleInformation";
+import { saveConfirmedPlateImage } from "../services/localPlateImages";
 
 import "../styles/App.css";
 
@@ -40,6 +41,12 @@ function GaragePage() {
     const lastCompletedPlateRef = useRef({});
     const plateCandidateRef = useRef("");
     const plateCandidateCountRef = useRef(0);
+    const plateVoteHistoryRef = useRef({});
+
+    // PARTIAL_PLATE_LOCK_GUARD_V2
+    const plateCandidateFirstSeenRef = useRef({});
+    const confirmedPlateLockRef = useRef({});
+    const confirmedPlateLastDetectedAtRef = useRef({});
     const activeDetectionSourceRef = useRef("entry-1");
     const entrySubmittingRef = useRef(false);
     const exitSubmittingRef = useRef(false);
@@ -59,6 +66,12 @@ function GaragePage() {
     const [paymentMethod, setPaymentMethod] = useState(null);
     const [exitPaymentRequired, setExitPaymentRequired] = useState(false);
     const [exitRatePerMinute, setExitRatePerMinute] = useState(null);
+
+    function clearPlateCandidates(source) {
+        for (const key of Object.keys(plateCandidateFirstSeenRef.current)) {
+            if (key.startsWith(`${source}:`)) delete plateCandidateFirstSeenRef.current[key];
+        }
+    }
 
     function prefetchExitPaymentRequired(plate) {
         const cached = exitPaymentPrefetchRef.current;
@@ -242,6 +255,10 @@ function GaragePage() {
                 setExitDetectionBox((current) => boxesEqual(current, result.box) ? current : result.box || null);
             }
 
+            if (result.detected && confirmedPlateLockRef.current[source]) {
+                confirmedPlateLastDetectedAtRef.current[source] = Date.now();
+            }
+
             if (
                 result.detected &&
                 result.license_plate
@@ -266,26 +283,108 @@ function GaragePage() {
                     return;
                 }
 
+                const voteState =
+                    plateVoteHistoryRef.current[source] || {
+                        reads: [],
+                        lastSeenAt: 0,
+                    };
+
+                const now = Date.now();
+
                 if (
-                    plate ===
-                    plateCandidateRef.current
+                    voteState.lastSeenAt &&
+                    now - voteState.lastSeenAt > 1500
                 ) {
-                    plateCandidateCountRef.current += 1;
-                } else {
-                    plateCandidateRef.current = plate;
-                    plateCandidateCountRef.current = 1;
+                    voteState.reads = [];
                 }
 
-                // The system should react as quickly as possible.
-                // A single confirmed read is enough to keep the UI
-                // responsive while still avoiding duplicate repeats.
-                if (
-                    plateCandidateCountRef.current >= 1
-                ) {
-                    detectedPlateRef.current[source] = plate;
+                voteState.lastSeenAt = now;
+                voteState.reads.push({
+                    plate,
+                    confidence: Number(result.confidence || 0),
+                });
+
+                voteState.reads = voteState.reads.slice(-5);
+                plateVoteHistoryRef.current[source] = voteState;
+
+                const lockedPlate = confirmedPlateLockRef.current[source];
+
+                if (lockedPlate) {
+                    confirmedPlateLastDetectedAtRef.current[source] = now;
+                    detectedPlateRef.current[source] = lockedPlate;
+                    setDetectedPlate(lockedPlate);
+                    setDetectionSource(source);
+
+                    console.log("[Vision locked]", {
+                        source,
+                        incoming: plate,
+                        locked: lockedPlate,
+                        ignoredFluctuation: plate !== lockedPlate,
+                    });
+
+                    return true;
+                }
+
+                const voteCounts = {};
+                for (const read of voteState.reads) {
+                    voteCounts[read.plate] =
+                        (voteCounts[read.plate] || 0) + 1;
+                }
+
+                const bestVote = Object.entries(voteCounts)
+                    .sort((a, b) => b[1] - a[1])[0];
+
+                const bestPlate = bestVote?.[0] || plate;
+                const bestCount = bestVote?.[1] || 1;
+
+                const normalizedBest = bestPlate.replace(/[^A-Z0-9]/gi, "").toUpperCase();
+                const longerCompatiblePlate = voteState.reads
+                    .map((read) => read.plate)
+                    .filter(Boolean)
+                    .find((candidate) => {
+                        const normalizedCandidate = candidate.replace(/[^A-Z0-9]/gi, "").toUpperCase();
+                        if (normalizedCandidate.length <= normalizedBest.length) return false;
+                        if (normalizedCandidate.startsWith(normalizedBest) || normalizedCandidate.endsWith(normalizedBest)) return true;
+                        let index = 0;
+                        for (const character of normalizedCandidate) {
+                            if (character === normalizedBest[index]) index += 1;
+                        }
+                        return index === normalizedBest.length;
+                    });
+                const candidateKey = `${source}:${bestPlate}`;
+                if (!plateCandidateFirstSeenRef.current[candidateKey]) {
+                    plateCandidateFirstSeenRef.current[candidateKey] = now;
+                }
+                const isCustomNumeric = /^\d{1,4}$/.test(normalizedBest);
+                const requiredVotes = isCustomNumeric ? 4 : 3;
+                const requiredAgeMs = isCustomNumeric ? 1200 : 650;
+                const stablePlate = bestCount >= requiredVotes &&
+                    now - plateCandidateFirstSeenRef.current[candidateKey] >= requiredAgeMs &&
+                    !longerCompatiblePlate;
+
+                if (VISION_DEBUG) {
+                    console.debug("[Plate vote]", {
+                        source,
+                        reads: voteState.reads,
+                        bestPlate,
+                        bestCount,
+                        requiredVotes,
+                        windowSize: 5,
+                        stablePlate,
+                    });
+                }
+
+                if (stablePlate) {
+                    detectedPlateRef.current[source] = bestPlate;
 
                     plateCandidateRef.current = "";
                     plateCandidateCountRef.current = 0;
+                    plateVoteHistoryRef.current[source] = {
+                        reads: [],
+                        lastSeenAt: now,
+                    };
+
+                    const plate = bestPlate;
 
                     if (VISION_DEBUG) {
                         console.debug("[Plate accepted]", { source, plate });
@@ -294,6 +393,12 @@ function GaragePage() {
                     setDetectedPlate(plate);
                     setDetectionSource(source);
                     setVehicleAction(null);
+
+                    confirmedPlateLockRef.current[source] = plate;
+                    confirmedPlateLastDetectedAtRef.current[source] = now;
+                    if (adminSettings?.garage_settings?.local_image_saving) {
+                        void saveConfirmedPlateImage({ plate, source, imageDataUrl: image }).catch(() => {});
+                    }
                     if (source.startsWith("entry-")) {
                         setAlreadyParked(false);
                         setEntryError("");
@@ -340,6 +445,42 @@ function GaragePage() {
                 }
             } else {
                 lastCompletedPlateRef.current[source] = "";
+
+                const now = Date.now();
+                const voteState = plateVoteHistoryRef.current[source];
+
+                if (
+                    voteState?.lastSeenAt &&
+                    now - voteState.lastSeenAt > 1500
+                ) {
+                    plateVoteHistoryRef.current[source] = {
+                        reads: [],
+                        lastSeenAt: 0,
+                    };
+                }
+
+                if (
+                    !result.detected &&
+                    confirmedPlateLockRef.current[source]
+                ) {
+                    const lastDetectedAt =
+                        confirmedPlateLastDetectedAtRef.current[source] || 0;
+
+                    if (now - lastDetectedAt > 500) {
+                        console.log("[Vision unlock]", {
+                            source,
+                            plate: confirmedPlateLockRef.current[source],
+                        });
+
+                        delete confirmedPlateLockRef.current[source];
+                        delete confirmedPlateLastDetectedAtRef.current[source];
+                        clearPlateCandidates(source);
+                        plateVoteHistoryRef.current[source] = { reads: [], lastSeenAt: 0 };
+                        detectedPlateRef.current[source] = "";
+                        setDetectedPlate("");
+                        setDetectionSource(null);
+                    }
+                }
             }
 
         } catch (error) {
@@ -479,6 +620,10 @@ function GaragePage() {
         exitPaymentPrefetchRef.current = { plate: "", promise: null, result: null, error: null };
         plateCandidateRef.current = "";
         plateCandidateCountRef.current = 0;
+        plateVoteHistoryRef.current = {};
+        plateCandidateFirstSeenRef.current = {};
+        confirmedPlateLockRef.current = {};
+        confirmedPlateLastDetectedAtRef.current = {};
 
         setDetectedPlate("");
         setDetectionSource(null);
@@ -1666,7 +1811,252 @@ function GaragePage() {
                         return { ...current, [cameraId]: { ...currentView, active: true, box: result.box || null } };
                     });
                     const plate = result.license_plate?.trim().toUpperCase();
-                    if (plate && plate !== detectedPlateRef.current[cameraId] && plate !== lastCompletedPlateRef.current[cameraId]) {
+
+                    // Per-camera temporal confirmation and lock.
+                    {
+                        const now = Date.now();
+                        const lockedPlate = confirmedPlateLockRef.current[cameraId];
+
+                        if (result.detected) {
+                            confirmedPlateLastDetectedAtRef.current[cameraId] = now;
+                        }
+
+                        if (lockedPlate) {
+                            detectedPlateRef.current[cameraId] = lockedPlate;
+                            setDetectedPlate(lockedPlate);
+                            setDetectionSource(cameraId);
+
+                            if (plate) {
+                                console.log("[Vision locked]", {
+                                    source: cameraId,
+                                    incoming: plate,
+                                    locked: lockedPlate,
+                                    ignoredFluctuation: plate !== lockedPlate,
+                                });
+                            }
+                        } else if (plate) {
+                            const voteState =
+                                plateVoteHistoryRef.current[cameraId] || {
+                                    reads: [],
+                                    lastSeenAt: 0,
+                                };
+
+                            if (
+                                voteState.lastSeenAt &&
+                                now - voteState.lastSeenAt > 1500
+                            ) {
+                                voteState.reads = [];
+                            }
+
+                            voteState.lastSeenAt = now;
+                            voteState.reads.push({
+                                plate,
+                                confidence: Number(result.confidence || 0),
+                            });
+                            voteState.reads = voteState.reads.slice(-5);
+                            plateVoteHistoryRef.current[cameraId] = voteState;
+
+                            const voteCounts = {};
+                            for (const read of voteState.reads) {
+                                voteCounts[read.plate] =
+                                    (voteCounts[read.plate] || 0) + 1;
+                            }
+
+                            const bestVote = Object.entries(voteCounts)
+                                .sort((a, b) => b[1] - a[1])[0];
+
+                            const bestPlate = bestVote?.[0] || plate;
+                            const bestCount = bestVote?.[1] || 1;
+
+                            console.log("[Vision confirming]", {
+                                source: cameraId,
+                                incoming: plate,
+                                reads: voteState.reads.map((read) => read.plate),
+                                bestPlate,
+                                bestCount,
+                                requiredVotes: 3,
+                                windowSize: 5,
+                            });
+
+                            // PARTIAL_PLATE_LOCK_GUARD_V2
+                            const normalizedBest = bestPlate
+                                .replace(/[^A-Z0-9]/gi, "")
+                                .toUpperCase();
+
+                            const longerCompatiblePlate = voteState.reads
+                                .map((read) => read.plate)
+                                .filter(Boolean)
+                                .find((candidate) => {
+                                    const normalizedCandidate = candidate
+                                        .replace(/[^A-Z0-9]/gi, "")
+                                        .toUpperCase();
+
+                                    if (
+                                        normalizedCandidate.length <=
+                                        normalizedBest.length
+                                    ) {
+                                        return false;
+                                    }
+
+                                    const directExtension =
+                                        normalizedCandidate.startsWith(normalizedBest) ||
+                                        normalizedCandidate.endsWith(normalizedBest);
+
+                                    let shortIndex = 0;
+
+                                    for (const ch of normalizedCandidate) {
+                                        if (
+                                            shortIndex < normalizedBest.length &&
+                                            ch === normalizedBest[shortIndex]
+                                        ) {
+                                            shortIndex += 1;
+                                        }
+                                    }
+
+                                    const orderedExtension =
+                                        shortIndex === normalizedBest.length;
+
+                                    return directExtension || orderedExtension;
+                                });
+
+                            const candidateKey = `${cameraId}:${bestPlate}`;
+
+                            if (!plateCandidateFirstSeenRef.current[candidateKey]) {
+                                plateCandidateFirstSeenRef.current[candidateKey] = now;
+                            }
+
+                            const candidateAgeMs =
+                                now -
+                                plateCandidateFirstSeenRef.current[candidateKey];
+
+                            // CUSTOM_SHORT_PLATE_TIER_V2
+                            // Legit premium/custom numeric plates (1, 2, 001, 007, 100)
+                            // are allowed, but require stronger evidence than normal plates.
+                            const isCustomShortCandidate =
+                                /^\d{1,4}$/.test(normalizedBest);
+
+                            const requiredVotesForCandidate =
+                                isCustomShortCandidate ? 4 : 3;
+
+                            const requiredAgeMsForCandidate =
+                                isCustomShortCandidate ? 1200 : 650;
+
+                            const matureEnough =
+                                candidateAgeMs >= requiredAgeMsForCandidate;
+
+                            if (
+                                bestCount >= requiredVotesForCandidate &&
+                                matureEnough &&
+                                !longerCompatiblePlate
+                            ) {
+                                confirmedPlateLockRef.current[cameraId] = bestPlate;
+                                confirmedPlateLastDetectedAtRef.current[cameraId] = now;
+                                detectedPlateRef.current[cameraId] = bestPlate;
+
+                                setDetectedPlate(bestPlate);
+                                setDetectionSource(cameraId);
+                                setVehicleAction(null);
+                                if (adminSettings?.garage_settings?.local_image_saving) {
+                                    void saveConfirmedPlateImage({ plate: bestPlate, source: cameraId, imageDataUrl: canvas.toDataURL("image/jpeg", 0.82) }).catch(() => {});
+                                }
+
+                                console.log("[Vision confirmed lock]", {
+                                    source: cameraId,
+                                    plate: bestPlate,
+                                    bestCount,
+                                    requiredVotes: requiredVotesForCandidate,
+                                    windowSize: 5,
+                                    partialGuard: true,
+                                    customShortCandidate: isCustomShortCandidate,
+                                    requiredAgeMs: requiredAgeMsForCandidate,
+                                    candidateAgeMs,
+                                });
+
+                                if (cameraId.startsWith("entry-")) {
+                                    setAlreadyParked(false);
+                                    setEntryError("");
+                                    setEntryResult(null);
+                                } else {
+                                    setExitError("");
+                                    setExitResult(null);
+                                    setPaymentMethod(null);
+                                    setExitRatePerMinute(null);
+                                    void prefetchExitPaymentRequired(bestPlate);
+                                    void startAutomaticExit(bestPlate, cameraId);
+                                }
+
+                                const parkedSpace = cameraId.startsWith("entry-")
+                                    ? parkingSpacesRef.current.find(
+                                        (space) => space.is_occupied && space.license_plate === bestPlate
+                                    )
+                                    : null;
+
+                                if (parkedSpace) {
+                                    setAlreadyParked(true);
+                                    setEntryError("Car is already parked in the garage.");
+                                } else if (cameraId.startsWith("entry-")) {
+                                    const automaticSpace = getAutomaticParkingSpace();
+                                    if (automaticSpace) {
+                                        setSelectedSpaceId(automaticSpace.id);
+                                        if (automaticEntryRef.current) {
+                                            setVehicleAction("entry");
+                                            void handleConfirmEntry(bestPlate, automaticSpace.id, cameraId);
+                                        }
+                                    } else {
+                                        setSelectedSpaceId(null);
+                                    }
+                                }
+                            } else if (
+                                bestCount >= requiredVotesForCandidate &&
+                                (!matureEnough || longerCompatiblePlate)
+                            ) {
+                                console.log("[Vision partial guard]", {
+                                    source: cameraId,
+                                    plate: bestPlate,
+                                    bestCount,
+                                    requiredVotes: requiredVotesForCandidate,
+                                    customShortCandidate: isCustomShortCandidate,
+                                    requiredAgeMs: requiredAgeMsForCandidate,
+                                    candidateAgeMs,
+                                    matureEnough,
+                                    longerCompatiblePlate:
+                                        longerCompatiblePlate || null,
+                                });
+                            }
+                        }
+
+                        if (
+                            !result.detected &&
+                            confirmedPlateLockRef.current[cameraId]
+                        ) {
+                            const lastDetectedAt =
+                                confirmedPlateLastDetectedAtRef.current[cameraId] || 0;
+
+                            if (now - lastDetectedAt > 500) {
+                                console.log("[Vision unlock]", {
+                                    source: cameraId,
+                                    plate: confirmedPlateLockRef.current[cameraId],
+                                });
+
+                                delete confirmedPlateLockRef.current[cameraId];
+                                delete confirmedPlateLastDetectedAtRef.current[cameraId];
+                                clearPlateCandidates(cameraId);
+                                plateVoteHistoryRef.current[cameraId] = {
+                                    reads: [],
+                                    lastSeenAt: 0,
+                                };
+                                detectedPlateRef.current[cameraId] = "";
+
+                                setDetectedPlate("");
+                                setDetectionSource(null);
+                            }
+                        }
+                    }
+                    if (
+                        plate &&
+                        plate !== detectedPlateRef.current[cameraId] &&
+                        plate !== lastCompletedPlateRef.current[cameraId]
+                    ) {
                         detectedPlateRef.current[cameraId] = plate;
                         setDetectedPlate(plate);
                         setDetectionSource(cameraId);
