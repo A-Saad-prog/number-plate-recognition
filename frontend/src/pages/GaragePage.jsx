@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+﻿import { useEffect, useRef, useState } from "react";
 
 import {
     getParkingSpaces,
@@ -81,7 +81,7 @@ function GaragePage() {
         const action = source.startsWith("exit-") ? "exit" : "entry";
         const saveKey = `${source}:${lockId}:${action}`;
         const logPrefix = `[Local image] ${action.toUpperCase()} save`;
-        if (!adminSettings?.garage_settings?.local_image_saving) {
+        if (!localImageSavingRef.current) {
             console.info(`${logPrefix} skipped: local saving is disabled in Garage settings`);
             return;
         }
@@ -150,6 +150,7 @@ function GaragePage() {
     const [parkingError, setParkingError] = useState("");
     const [openLevel, setOpenLevel] = useState(1);
     const [adminSettings, setAdminSettings] = useState(null);
+    const localImageSavingRef = useRef(false);
     const automaticEntryRef = useRef(false);
     const [garageAuthFailed, setGarageAuthFailed] = useState(false);
     const garageAuthFailedRef = useRef(false);
@@ -429,7 +430,6 @@ function GaragePage() {
                     confirmedPlateLockRef.current[source] = plate;
                     confirmedPlateLastDetectedAtRef.current[source] = now;
                     confirmedLockImageRef.current[source] = image;
-                    console.info(`[Local image] ${source.startsWith("exit-") ? "EXIT" : "ENTRY"} frame cached`, { source, plate });
                     if (source.startsWith("entry-")) {
                         setAlreadyParked(false);
                         setEntryError("");
@@ -848,6 +848,7 @@ function GaragePage() {
 
             if (result?.success) {
                 automaticEntryRef.current = Boolean(result.garage_settings?.automatic_entry);
+                localImageSavingRef.current = Boolean(result.garage_settings?.local_image_saving);
                 setAdminSettings(result);
                 return true;
             }
@@ -2004,7 +2005,6 @@ function GaragePage() {
                                 setDetectionSource(cameraId);
                                 setVehicleAction(null);
                                 confirmedLockImageRef.current[cameraId] = canvas.toDataURL("image/jpeg", 0.82);
-                                console.info(`[Local image] ${cameraId.startsWith("exit-") ? "EXIT" : "ENTRY"} frame cached`, { source: cameraId, plate: bestPlate });
 
                                 console.log("[Vision confirmed lock]", {
                                     source: cameraId,
@@ -2848,6 +2848,5 @@ function GaragePage() {
         </div>
     );
 }
-
 
 export default GaragePage;
