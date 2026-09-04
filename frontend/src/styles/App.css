@@ -1867,7 +1867,164 @@ body {
 .camera-slot-grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
 .legacy-camera-grid { display: none; }
 .lane-switch-button { margin-top: 14px; border: 1px solid #b8dfc8; border-radius: 999px; background: var(--green-soft); color: var(--green-dark); cursor: pointer; font: 700 12px 'Manrope', sans-serif; padding: 9px 14px; }
-.garage-admin-link { position: absolute; right: clamp(20px, 5vw, 76px); top: 24px; z-index: 2; border: 1px solid rgba(231, 244, 237, .38); border-radius: 999px; background: transparent; color: #f8fbf6; cursor: pointer; font-size: 12px; font-weight: 700; padding: 8px 13px; }
+.garage-header-controls { position: absolute; right: clamp(20px, 5vw, 76px); top: 24px; z-index: 2; }
+.garage-admin-link { border: 1px solid rgba(231, 244, 237, .38); border-radius: 999px; background: transparent; color: #f8fbf6; cursor: pointer; font-size: 12px; font-weight: 700; padding: 8px 13px; }
+
+/* Garage visual system: aligned with the Admin workspace. */
+.app.garage-theme-light,
+.app.garage-theme-dark {
+    font-family: 'Manrope', sans-serif;
+    min-height: 100vh;
+    text-rendering: optimizeLegibility;
+}
+
+.app.garage-theme-light {
+    --garage-bg: #e8efe6;
+    --garage-ink: #10231c;
+    --garage-muted: #587066;
+    --garage-surface: #f8faf7;
+    --garage-secondary: #edf2ee;
+    --garage-line: #d3ded4;
+    --garage-input-line: #bdcbc0;
+    --garage-shadow: 0 18px 42px rgba(16, 35, 28, .08);
+    background: #e8efe6;
+    color: #10231c;
+}
+
+.app.garage-theme-dark {
+    --garage-bg: #081511;
+    --garage-ink: #edf7f2;
+    --garage-muted: #afc1b5;
+    --garage-surface: rgba(20, 43, 35, .88);
+    --garage-secondary: rgba(44, 82, 67, .58);
+    --garage-line: rgba(145, 199, 174, .18);
+    --garage-input-line: rgba(145, 199, 174, .35);
+    --garage-shadow: 0 18px 42px rgba(0, 0, 0, .18);
+    background: radial-gradient(circle at 85% -10%, #1f5647 0, transparent 32%), #081511;
+    color: #edf7f2;
+}
+
+.app.garage-theme-light .header,
+.app.garage-theme-dark .header {
+    background: #10231c;
+    color: #edf7f2;
+}
+
+.app.garage-theme-light .header h1,
+.app.garage-theme-dark .header h1 {
+    font-family: 'Manrope', sans-serif;
+    font-weight: 800;
+    letter-spacing: -.04em;
+}
+
+.app.garage-theme-light .header p,
+.app.garage-theme-dark .header p { color: #afc1b5; font-family: 'DM Mono', monospace; }
+
+.app.garage-theme-light .container,
+.app.garage-theme-dark .container { color: var(--garage-ink); }
+
+.app.garage-theme-light .card,
+.app.garage-theme-light .camera-panel,
+.app.garage-theme-light .vehicle-info-panel,
+.app.garage-theme-light .status-message,
+.app.garage-theme-light .parking-legend,
+.app.garage-theme-light .selected-space-info,
+.app.garage-theme-light .payment-option,
+.app.garage-theme-dark .card,
+.app.garage-theme-dark .camera-panel,
+.app.garage-theme-dark .vehicle-info-panel,
+.app.garage-theme-dark .status-message,
+.app.garage-theme-dark .parking-legend,
+.app.garage-theme-dark .selected-space-info,
+.app.garage-theme-dark .payment-option {
+    background: var(--garage-surface);
+    border-color: var(--garage-line);
+    box-shadow: var(--garage-shadow);
+    color: var(--garage-ink);
+}
+
+.app.garage-theme-light .card,
+.app.garage-theme-dark .card { border: 1px solid var(--garage-line); border-radius: 7px; }
+
+.app.garage-theme-light .card h2,
+.app.garage-theme-light .card h3,
+.app.garage-theme-dark .card h2,
+.app.garage-theme-dark .card h3,
+.app.garage-theme-light .camera-panel strong,
+.app.garage-theme-dark .camera-panel strong { color: var(--garage-ink); font-family: 'Manrope', sans-serif; }
+
+.app.garage-theme-light .description,
+.app.garage-theme-light .field-label,
+.app.garage-theme-light .parking-legend,
+.app.garage-theme-light .vehicle-info-row strong,
+.app.garage-theme-dark .description,
+.app.garage-theme-dark .field-label,
+.app.garage-theme-dark .parking-legend,
+.app.garage-theme-dark .vehicle-info-row strong { color: var(--garage-muted); }
+
+.app.garage-theme-light .card h2::before,
+.app.garage-theme-dark .card h2::before,
+.app.garage-theme-light .parking-level button.active,
+.app.garage-theme-dark .parking-level button.active { background: #e05b35; }
+
+.app.garage-theme-light input,
+.app.garage-theme-light select,
+.app.garage-theme-dark input,
+.app.garage-theme-dark select {
+    background: var(--garage-secondary);
+    border-color: var(--garage-input-line);
+    color: var(--garage-ink);
+    font-family: 'Manrope', sans-serif;
+}
+
+.app.garage-theme-dark select option { background: #10251d; color: #edf7f2; }
+
+.app.garage-theme-light .confirm-button,
+.app.garage-theme-light .exit-button,
+.app.garage-theme-light .garage-admin-link,
+.app.garage-theme-dark .confirm-button,
+.app.garage-theme-dark .exit-button,
+.app.garage-theme-dark .garage-admin-link {
+    background: #10231c;
+    border-color: #10231c;
+    color: #edf7f2;
+}
+
+.app.garage-theme-light .confirm-button:hover:not(:disabled),
+.app.garage-theme-light .exit-button:hover:not(:disabled),
+.app.garage-theme-light .garage-admin-link:hover,
+.app.garage-theme-dark .confirm-button:hover:not(:disabled),
+.app.garage-theme-dark .exit-button:hover:not(:disabled),
+.app.garage-theme-dark .garage-admin-link:hover { background: #e05b35; border-color: #e05b35; }
+
+.app.garage-theme-light .garage-theme-select,
+.app.garage-theme-dark .garage-theme-select,
+.app.garage-theme-light .garage-admin-link,
+.app.garage-theme-dark .garage-admin-link {
+    border-radius: 999px;
+    font: 700 10px 'Manrope', sans-serif;
+}
+
+.app.garage-theme-dark .garage-theme-select { background: #10251d; border-color: rgba(145, 199, 174, .35); color: #edf7f2; }
+.app.garage-theme-light .garage-theme-select { background: transparent; border-color: rgba(231, 244, 237, .38); color: #edf7f2; }
+
+.app.garage-theme-light .parking-space.selected,
+.app.garage-theme-dark .parking-space.selected { background: #f9dfd5; border-color: #e05b35; box-shadow: inset 0 0 0 2px #e05b35; }
+.app.garage-theme-dark .parking-space.selected { color: #10231c; }
+.app.garage-theme-light .selected-box,
+.app.garage-theme-dark .selected-box { background: #f9dfd5; border-color: #e05b35; }
+
+.app.garage-theme-light .detected-info,
+.app.garage-theme-dark .detected-info { background: var(--garage-secondary); border-color: var(--garage-line); }
+.app.garage-theme-light .detected-info h3,
+.app.garage-theme-light .detected-info .vehicle-info-header span,
+.app.garage-theme-dark .detected-info h3,
+.app.garage-theme-dark .detected-info .vehicle-info-header span { color: #e05b35; }
+
+.app.garage-theme-light .vehicle-info-row,
+.app.garage-theme-dark .vehicle-info-row { border-color: var(--garage-line); }
+.app.garage-theme-dark .space-status.available,
+.app.garage-theme-dark .space-status.unavailable { background: var(--garage-secondary); border-color: var(--garage-line); }
 
 @media (max-width: 720px) {
     .camera-lane-groups {

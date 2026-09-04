@@ -47,6 +47,9 @@ function GaragePage() {
     const plateCandidateFirstSeenRef = useRef({});
     const confirmedPlateLockRef = useRef({});
     const confirmedPlateLastDetectedAtRef = useRef({});
+    const confirmedLockImageRef = useRef({});
+    const completedLockActionRef = useRef({});
+    const savedLockImageRef = useRef({});
     const activeDetectionSourceRef = useRef("entry-1");
     const entrySubmittingRef = useRef(false);
     const exitSubmittingRef = useRef(false);
@@ -71,6 +74,35 @@ function GaragePage() {
         for (const key of Object.keys(plateCandidateFirstSeenRef.current)) {
             if (key.startsWith(`${source}:`)) delete plateCandidateFirstSeenRef.current[key];
         }
+    }
+
+    function saveConfirmedLockImageAfterAction(plate, source) {
+        const lockId = confirmedPlateLockRef.current[source] || plate;
+        const action = source.startsWith("exit-") ? "exit" : "entry";
+        const saveKey = `${source}:${lockId}:${action}`;
+        const logPrefix = `[Local image] ${action.toUpperCase()} save`;
+        if (!adminSettings?.garage_settings?.local_image_saving) {
+            console.info(`${logPrefix} skipped: local saving is disabled in Garage settings`);
+            return;
+        }
+        if (savedLockImageRef.current[saveKey]) {
+            console.info(`${logPrefix} skipped: this lock lifecycle was already saved`);
+            return;
+        }
+        const imageDataUrl = confirmedLockImageRef.current[source];
+        if (!imageDataUrl) {
+            console.info(`${logPrefix} skipped: no cached confirmed-lock frame for ${source}`);
+            return;
+        }
+        savedLockImageRef.current[saveKey] = true;
+        console.info(`${logPrefix} start`, { plate, source, lockId });
+        void saveConfirmedPlateImage({ plate, source, imageDataUrl })
+            .then((saved) => {
+                console.info(saved ? `${logPrefix} success` : `${logPrefix} skipped: folder handle or write permission is unavailable`);
+            })
+            .catch((error) => {
+                console.info(`${logPrefix} skipped: ${error?.message || "write failed"}`);
+            });
     }
 
     function prefetchExitPaymentRequired(plate) {
@@ -396,9 +428,8 @@ function GaragePage() {
 
                     confirmedPlateLockRef.current[source] = plate;
                     confirmedPlateLastDetectedAtRef.current[source] = now;
-                    if (adminSettings?.garage_settings?.local_image_saving) {
-                        void saveConfirmedPlateImage({ plate, source, imageDataUrl: image }).catch(() => {});
-                    }
+                    confirmedLockImageRef.current[source] = image;
+                    console.info(`[Local image] ${source.startsWith("exit-") ? "EXIT" : "ENTRY"} frame cached`, { source, plate });
                     if (source.startsWith("entry-")) {
                         setAlreadyParked(false);
                         setEntryError("");
@@ -474,6 +505,12 @@ function GaragePage() {
 
                         delete confirmedPlateLockRef.current[source];
                         delete confirmedPlateLastDetectedAtRef.current[source];
+                        delete confirmedLockImageRef.current[source];
+                        delete completedLockActionRef.current[source];
+                        Object.keys(savedLockImageRef.current).forEach((key) => {
+                            if (key.startsWith(`${source}:`)) delete savedLockImageRef.current[key];
+                        });
+                        delete lastCompletedPlateRef.current[source];
                         clearPlateCandidates(source);
                         plateVoteHistoryRef.current[source] = { reads: [], lastSeenAt: 0 };
                         detectedPlateRef.current[source] = "";
@@ -624,6 +661,9 @@ function GaragePage() {
         plateCandidateFirstSeenRef.current = {};
         confirmedPlateLockRef.current = {};
         confirmedPlateLastDetectedAtRef.current = {};
+        confirmedLockImageRef.current = {};
+        completedLockActionRef.current = {};
+        savedLockImageRef.current = {};
 
         setDetectedPlate("");
         setDetectionSource(null);
@@ -1178,6 +1218,8 @@ function GaragePage() {
             // Keep this plate blocked until
             // the camera no longer sees it.
             lastCompletedPlateRef.current[sourceOverride] = plateOverride;
+            completedLockActionRef.current[sourceOverride] = plateOverride;
+            saveConfirmedLockImageAfterAction(plateOverride, sourceOverride);
 
             const nextSpaces =
                 parkingSpacesRef.current.map(
@@ -1280,6 +1322,8 @@ function GaragePage() {
             const receipt = result.vehicle;
 
             lastCompletedPlateRef.current[sourceOverride] = plateOverride;
+            completedLockActionRef.current[sourceOverride] = plateOverride;
+            saveConfirmedLockImageAfterAction(plateOverride, sourceOverride);
             delete automaticExitAttemptRef.current[sourceOverride];
             pendingAutomaticExitRef.current = { plate: "", source: "" };
 
@@ -1705,14 +1749,17 @@ function GaragePage() {
 
     void renderVehicleInformation;
 
-    const entryCameraCount = Math.max(
+    const configuredEntryCameraCount = Math.min(4, Math.max(
         1,
         Number(adminSettings?.camera_config?.entry_lane_cameras) || 1
-    );
-    const exitCameraCount = Math.max(
+    ));
+    const configuredExitCameraCount = Math.min(4, Math.max(
         1,
         Number(adminSettings?.camera_config?.exit_lane_cameras) || 1
-    );
+    ));
+    // Backend validation prevents this case; retain this guard for old or malformed saved settings.
+    const entryCameraCount = configuredEntryCameraCount;
+    const exitCameraCount = Math.min(configuredExitCameraCount, Math.max(0, 4 - entryCameraCount));
     function renderSharedCamera(cameraId, label, streamRef, isActive) {
         return (
             <div className="camera-panel" key={cameraId} data-camera-id={cameraId}>
@@ -1956,9 +2003,8 @@ function GaragePage() {
                                 setDetectedPlate(bestPlate);
                                 setDetectionSource(cameraId);
                                 setVehicleAction(null);
-                                if (adminSettings?.garage_settings?.local_image_saving) {
-                                    void saveConfirmedPlateImage({ plate: bestPlate, source: cameraId, imageDataUrl: canvas.toDataURL("image/jpeg", 0.82) }).catch(() => {});
-                                }
+                                confirmedLockImageRef.current[cameraId] = canvas.toDataURL("image/jpeg", 0.82);
+                                console.info(`[Local image] ${cameraId.startsWith("exit-") ? "EXIT" : "ENTRY"} frame cached`, { source: cameraId, plate: bestPlate });
 
                                 console.log("[Vision confirmed lock]", {
                                     source: cameraId,
@@ -2040,6 +2086,12 @@ function GaragePage() {
 
                                 delete confirmedPlateLockRef.current[cameraId];
                                 delete confirmedPlateLastDetectedAtRef.current[cameraId];
+                                delete confirmedLockImageRef.current[cameraId];
+                                delete completedLockActionRef.current[cameraId];
+                                Object.keys(savedLockImageRef.current).forEach((key) => {
+                                    if (key.startsWith(`${cameraId}:`)) delete savedLockImageRef.current[key];
+                                });
+                                delete lastCompletedPlateRef.current[cameraId];
                                 clearPlateCandidates(cameraId);
                                 plateVoteHistoryRef.current[cameraId] = {
                                     reads: [],
@@ -2049,50 +2101,6 @@ function GaragePage() {
 
                                 setDetectedPlate("");
                                 setDetectionSource(null);
-                            }
-                        }
-                    }
-                    if (
-                        plate &&
-                        plate !== detectedPlateRef.current[cameraId] &&
-                        plate !== lastCompletedPlateRef.current[cameraId]
-                    ) {
-                        detectedPlateRef.current[cameraId] = plate;
-                        setDetectedPlate(plate);
-                        setDetectionSource(cameraId);
-                        setVehicleAction(null);
-                        if (cameraId.startsWith("entry-")) {
-                            setAlreadyParked(false);
-                            setEntryError("");
-                            setEntryResult(null);
-                        } else {
-                            setExitError("");
-                            setExitResult(null);
-                            setPaymentMethod(null);
-                            setExitRatePerMinute(null);
-                            void prefetchExitPaymentRequired(plate);
-                            void startAutomaticExit(plate, cameraId);
-                        }
-
-                        const parkedSpace = cameraId.startsWith("entry-")
-                            ? parkingSpacesRef.current.find(
-                                (space) => space.is_occupied && space.license_plate === plate
-                            )
-                            : null;
-
-                        if (parkedSpace) {
-                            setAlreadyParked(true);
-                            setEntryError("Car is already parked in the garage.");
-                        } else if (cameraId.startsWith("entry-")) {
-                            const automaticSpace = getAutomaticParkingSpace();
-                            if (automaticSpace) {
-                                setSelectedSpaceId(automaticSpace.id);
-                                if (automaticEntryRef.current) {
-                                    setVehicleAction("entry");
-                                    void handleConfirmEntry(plate, automaticSpace.id, cameraId);
-                                }
-                            } else {
-                                setSelectedSpaceId(null);
                             }
                         }
                     }
@@ -2148,6 +2156,9 @@ function GaragePage() {
     );
     const showCashPayment = showPaymentSelection;
     const showCardPayment = showPaymentSelection;
+    const lockActionAlreadyCompleted = Boolean(
+        detectionSource && completedLockActionRef.current[detectionSource] === detectedPlate
+    );
 
     return (
         <div className="app">
@@ -2165,7 +2176,7 @@ function GaragePage() {
                         ParkingOS
                     </h1>
 
-                    <button type="button" className="garage-admin-link" onClick={() => window.open("/admin", "_blank", "noopener,noreferrer")}>Open Admin</button>
+                    <div className="garage-header-controls"><button type="button" className="garage-admin-link" onClick={() => { const adminWindow = window.open("/admin", "parkingos-admin"); adminWindow?.focus(); }}>Open Admin</button></div>
 
                     <p>
                         Parking
@@ -2576,7 +2587,7 @@ function GaragePage() {
                                     </div>
                                 )}
 
-                                {!vehicleAction && !alreadyParked && (
+                                {!vehicleAction && !alreadyParked && !lockActionAlreadyCompleted && (
                                     <div className="action-selection">
 
                                         <p className="action-title">

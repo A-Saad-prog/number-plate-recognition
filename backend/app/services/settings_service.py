@@ -9,6 +9,7 @@ DEFAULT_GARAGE_SETTINGS = {
     "spaces_per_level": 0,
     "levels": [],
     "automatic_entry": False,
+    "local_image_saving": False,
 }
 DEFAULT_CAMERA_CONFIG = {
     "entry_lane_cameras": 1,
