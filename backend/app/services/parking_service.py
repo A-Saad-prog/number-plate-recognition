@@ -6,13 +6,45 @@ from app.models.parking_session import ParkingSession
 from app.models.vehicle import Vehicle
 
 
+def space_has_active_session(
+    db: Session,
+    space_id: int,
+    tenant_id: int,
+) -> bool:
+    return (
+        db.query(ParkingSession.id)
+        .filter(
+            ParkingSession.parking_space_id == space_id,
+            ParkingSession.tenant_id == tenant_id,
+            ParkingSession.status == "active",
+        )
+        .first()
+        is not None
+    )
+
+
 def get_available_spaces(
     db: Session,
     tenant_id: int,
 ) -> list[ParkingSpace]:
     """
-    Return all available parking spaces.
+    Return all truly available parking spaces.
+
+    A space is available only when:
+    - it is active
+    - is_occupied is False
+    - no active parking session references it
     """
+
+    active_session_exists = (
+        db.query(ParkingSession.id)
+        .filter(
+            ParkingSession.parking_space_id == ParkingSpace.id,
+            ParkingSession.tenant_id == tenant_id,
+            ParkingSession.status == "active",
+        )
+        .exists()
+    )
 
     return (
         db.query(ParkingSpace)
@@ -20,10 +52,17 @@ def get_available_spaces(
             ParkingSpace.is_occupied == False,
             ParkingSpace.is_active == True,
             ParkingSpace.tenant_id == tenant_id,
+            ~active_session_exists,
         )
         .order_by(
             ParkingSpace.level.asc(),
-            func.cast(func.substring(ParkingSpace.space_number, r"\d+$"), Integer).asc(),
+            func.cast(
+                func.substring(
+                    ParkingSpace.space_number,
+                    r"\d+$",
+                ),
+                Integer,
+            ).asc(),
         )
         .all()
     )
@@ -34,16 +73,25 @@ def get_all_spaces(
     tenant_id: int,
 ):
     """
-    Return all parking spaces with active vehicle
-    information for occupied spaces.
+    Return all active parking spaces with current
+    active vehicle information.
     """
 
     spaces = (
         db.query(ParkingSpace)
-        .filter(ParkingSpace.tenant_id == tenant_id, ParkingSpace.is_active == True)
+        .filter(
+            ParkingSpace.tenant_id == tenant_id,
+            ParkingSpace.is_active == True,
+        )
         .order_by(
             ParkingSpace.level.asc(),
-            func.cast(func.substring(ParkingSpace.space_number, r"\d+$"), Integer).asc(),
+            func.cast(
+                func.substring(
+                    ParkingSpace.space_number,
+                    r"\d+$",
+                ),
+                Integer,
+            ).asc(),
         )
         .all()
     )
@@ -51,45 +99,44 @@ def get_all_spaces(
     result = []
 
     for space in spaces:
-
         license_plate = None
         entry_time = None
 
-        if space.is_occupied:
+        session = (
+            db.query(ParkingSession)
+            .filter(
+                ParkingSession.parking_space_id == space.id,
+                ParkingSession.tenant_id == tenant_id,
+                ParkingSession.status == "active",
+                ParkingSession.exit_time == None,
+            )
+            .order_by(ParkingSession.entry_time.asc())
+            .first()
+        )
 
-            session = (
-                db.query(ParkingSession)
+        actually_occupied = session is not None
+
+        if session:
+            vehicle = (
+                db.query(Vehicle)
                 .filter(
-                    ParkingSession.parking_space_id == space.id,
-                    ParkingSession.tenant_id == tenant_id,
-                    ParkingSession.status == "active",
-                    ParkingSession.exit_time == None,
+                    Vehicle.id == session.vehicle_id,
+                    Vehicle.tenant_id == tenant_id,
                 )
                 .first()
             )
 
-            if session:
+            if vehicle:
+                license_plate = vehicle.license_plate
 
-                vehicle = (
-                    db.query(Vehicle)
-                    .filter(
-                        Vehicle.id == session.vehicle_id,
-                        Vehicle.tenant_id == tenant_id,
-                    )
-                    .first()
-                )
-
-                if vehicle:
-                    license_plate = vehicle.license_plate
-
-                entry_time = session.entry_time
+            entry_time = session.entry_time
 
         result.append(
             {
                 "id": space.id,
                 "level": space.level,
                 "space": space.space_number,
-                "is_occupied": space.is_occupied,
+                "is_occupied": actually_occupied,
                 "license_plate": license_plate,
                 "entry_time": entry_time,
             }
@@ -121,7 +168,11 @@ def validate_available_space(
             "Parking space does not exist"
         )
 
-    if space.is_occupied:
+    if space.is_occupied or space_has_active_session(
+        db,
+        space.id,
+        tenant_id,
+    ):
         raise ValueError(
             "Parking space is already occupied"
         )

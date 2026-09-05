@@ -23,25 +23,56 @@ def payment_required_for_exit(
     if not billing_enabled:
         return False
 
-    vehicle = db.query(Vehicle).filter(Vehicle.tenant_id == tenant_id, Vehicle.license_plate == license_plate.strip().upper()).first()
+    vehicle = (
+        db.query(Vehicle)
+        .filter(
+            Vehicle.tenant_id == tenant_id,
+            Vehicle.license_plate == license_plate.strip().upper(),
+        )
+        .first()
+    )
+
     if vehicle is None:
         raise ValueError("Vehicle not found")
 
-    session = db.query(ParkingSession).filter(
-        ParkingSession.vehicle_id == vehicle.id,
-        ParkingSession.tenant_id == tenant_id,
-        ParkingSession.status == "active",
-    ).first()
-    if session is None:
-        raise ValueError("No active parking session found")
+    session = (
+        db.query(ParkingSession)
+        .filter(
+            ParkingSession.vehicle_id == vehicle.id,
+            ParkingSession.tenant_id == tenant_id,
+            ParkingSession.status == "active",
+        )
+        .first()
+    )
 
-    amount, _ = calculate_parking_fee(session.entry_time, pakistan_now(), rate_per_minute, rate_unit)
-    whitelist_entry = db.query(WhitelistEntry).filter(
-        WhitelistEntry.license_plate == vehicle.license_plate,
-        WhitelistEntry.tenant_id == tenant_id,
-    ).first()
+    if session is None:
+        raise ValueError("This vehicle is not parked in the garage.")
+
+    amount, _ = calculate_parking_fee(
+        session.entry_time,
+        pakistan_now(),
+        rate_per_minute,
+        rate_unit,
+    )
+
+    whitelist_entry = (
+        db.query(WhitelistEntry)
+        .filter(
+            WhitelistEntry.license_plate == vehicle.license_plate,
+            WhitelistEntry.tenant_id == tenant_id,
+        )
+        .first()
+    )
+
     discount_percent = whitelist_entry.discount_percent if whitelist_entry else 0
-    return apply_discount(amount, discount_percent) > 0
+
+    return (
+        apply_discount(
+            amount,
+            discount_percent,
+        )
+        > 0
+    )
 
 
 def process_vehicle_exit_by_plate(
@@ -63,7 +94,14 @@ def process_vehicle_exit_by_plate(
     if not license_plate:
         raise ValueError("License plate was not recognized")
 
-    vehicle = db.query(Vehicle).filter(Vehicle.tenant_id == tenant_id, Vehicle.license_plate == license_plate).first()
+    vehicle = (
+        db.query(Vehicle)
+        .filter(
+            Vehicle.tenant_id == tenant_id,
+            Vehicle.license_plate == license_plate,
+        )
+        .first()
+    )
 
     if vehicle is None:
         raise ValueError("Vehicle not found")
@@ -111,6 +149,10 @@ def complete_parking_session(
 
     exit_time = pakistan_now()
 
+    # ============================================================
+    # Calculate payment
+    # ============================================================
+
     if billing_enabled:
         amount, billed_minutes = calculate_parking_fee(
             session.entry_time,
@@ -121,16 +163,28 @@ def complete_parking_session(
 
         whitelist_entry = (
             db.query(WhitelistEntry)
-            .filter(WhitelistEntry.license_plate == vehicle.license_plate)
-            .filter(WhitelistEntry.tenant_id == tenant_id)
+            .filter(
+                WhitelistEntry.license_plate == vehicle.license_plate,
+                WhitelistEntry.tenant_id == tenant_id,
+            )
             .first()
         )
+
         discount_percent = whitelist_entry.discount_percent if whitelist_entry else 0
-        amount = apply_discount(amount, discount_percent)
+
+        amount = apply_discount(
+            amount,
+            discount_percent,
+        )
+
     else:
         amount = 0.0
         billed_minutes = 0
         discount_percent = 0
+
+    # ============================================================
+    # Complete session
+    # ============================================================
 
     session.exit_time = exit_time
     session.amount = amount
@@ -138,23 +192,66 @@ def complete_parking_session(
     session.payment_method = payment_method
     session.status = "completed"
 
-    parking_space = (
-        db.query(ParkingSpace)
-        .filter(ParkingSpace.id == session.parking_space_id)
-        .filter(ParkingSpace.tenant_id == tenant_id)
-        .first()
-    )
+    # ============================================================
+    # Find associated parking space
+    # ============================================================
+
+    parking_space = None
+
+    if session.parking_space_id is not None:
+        parking_space = (
+            db.query(ParkingSpace)
+            .filter(
+                ParkingSpace.id == session.parking_space_id,
+                ParkingSpace.tenant_id == tenant_id,
+            )
+            .with_for_update()
+            .first()
+        )
+
+    # ============================================================
+    # Safely recalculate occupancy
+    # ============================================================
 
     if parking_space:
-        parking_space.is_occupied = False
+
+        other_active_session = (
+            db.query(ParkingSession.id)
+            .filter(
+                ParkingSession.parking_space_id == parking_space.id,
+                ParkingSession.tenant_id == tenant_id,
+                ParkingSession.status == "active",
+                ParkingSession.id != session.id,
+            )
+            .first()
+        )
+
+        parking_space.is_occupied = other_active_session is not None
+
+    # ============================================================
+    # Commit transaction
+    # ============================================================
 
     try:
+        db.flush()
         db.commit()
+
     except Exception:
         db.rollback()
         raise
 
+    # ============================================================
+    # Refresh committed objects
+    # ============================================================
+
     db.refresh(session)
+
+    if parking_space:
+        db.refresh(parking_space)
+
+    # ============================================================
+    # Response
+    # ============================================================
 
     return {
         "session_id": session.id,

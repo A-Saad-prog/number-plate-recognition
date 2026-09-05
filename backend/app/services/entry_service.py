@@ -19,12 +19,14 @@ def create_vehicle_entry(
 ):
     """
     Create a parking session using a license plate
-    recognized by the CV system. A selected space is
-    used when provided; otherwise the first available
-    space is assigned automatically.
+    recognized by the CV system.
 
-    The backend validates the selected space before
-    creating the session.
+    If a parking space is explicitly provided, validate
+    and lock that space.
+
+    If no parking space is provided, automatically select
+    the first truly available space while safely handling
+    concurrent entry requests.
     """
 
     # ============================================================
@@ -34,27 +36,50 @@ def create_vehicle_entry(
     license_plate = license_plate.strip().upper()
 
     if not license_plate:
-        raise ValueError("License plate was not recognized")
+        raise ValueError(
+            "License plate was not recognized"
+        )
 
-    # ============================================================
-    # Validate selected parking space
-    # ============================================================
-
-    # SQLAlchemy autobegins the transaction; hold space locks through commit.
     try:
+        # ========================================================
+        # Select / validate parking space
+        # ========================================================
+
         if tracking_only:
             space = None
+
         elif parking_space_id is None:
+
+            # Do not trust only ParkingSpace.is_occupied.
+            # A stale flag must never allow a space with an
+            # existing active session to be allocated again.
+            active_session_exists = (
+                db.query(ParkingSession.id)
+                .filter(
+                    ParkingSession.parking_space_id == ParkingSpace.id,
+                    ParkingSession.tenant_id == tenant_id,
+                    ParkingSession.status == "active",
+                )
+                .exists()
+            )
+
             space = (
                 db.query(ParkingSpace)
                 .filter(
                     ParkingSpace.is_occupied == False,
                     ParkingSpace.is_active == True,
                     ParkingSpace.tenant_id == tenant_id,
+                    ~active_session_exists,
                 )
                 .order_by(
                     ParkingSpace.level.asc(),
-                    func.cast(func.substring(ParkingSpace.space_number, r"\d+$"), Integer).asc(),
+                    func.cast(
+                        func.substring(
+                            ParkingSpace.space_number,
+                            r"\d+$",
+                        ),
+                        Integer,
+                    ).asc(),
                 )
                 .populate_existing()
                 .with_for_update(skip_locked=True)
@@ -62,28 +87,42 @@ def create_vehicle_entry(
             )
 
             if space is None:
-                raise ValueError("No available parking space")
+                raise ValueError(
+                    "No available parking space"
+                )
+
         else:
             space = validate_available_space(
                 db,
-                parking_space_id, tenant_id,
+                parking_space_id,
+                tenant_id,
             )
 
-        # ============================================================
+        # ========================================================
         # Find or create vehicle
-        # ============================================================
+        # ========================================================
 
-        vehicle = db.query(Vehicle).filter(Vehicle.tenant_id == tenant_id, Vehicle.license_plate == license_plate).first()
+        vehicle = (
+            db.query(Vehicle)
+            .filter(
+                Vehicle.tenant_id == tenant_id,
+                Vehicle.license_plate == license_plate,
+            )
+            .first()
+        )
 
         if vehicle is None:
-            vehicle = Vehicle(tenant_id=tenant_id, license_plate=license_plate)
+            vehicle = Vehicle(
+                tenant_id=tenant_id,
+                license_plate=license_plate,
+            )
 
             db.add(vehicle)
             db.flush()
 
-        # ============================================================
-        # Prevent duplicate active parking sessions
-        # ============================================================
+        # ========================================================
+        # Prevent duplicate active session for same vehicle
+        # ========================================================
 
         active_session = (
             db.query(ParkingSession)
@@ -96,14 +135,36 @@ def create_vehicle_entry(
         )
 
         if active_session is not None:
-            raise ValueError("This vehicle is already inside the parking garage")
+            raise ValueError(
+                "This vehicle is already inside the parking garage"
+            )
 
-        # ============================================================
-        # Create parking session
-        # ============================================================
+        # ========================================================
+        # Extra defensive space check
+        # ========================================================
 
-        if space:
+        if space is not None:
+
+            conflicting_session = (
+                db.query(ParkingSession.id)
+                .filter(
+                    ParkingSession.parking_space_id == space.id,
+                    ParkingSession.tenant_id == tenant_id,
+                    ParkingSession.status == "active",
+                )
+                .first()
+            )
+
+            if conflicting_session is not None:
+                raise ValueError(
+                    "Parking space is already occupied"
+                )
+
             space.is_occupied = True
+
+        # ========================================================
+        # Create parking session
+        # ========================================================
 
         session = ParkingSession(
             tenant_id=tenant_id,
@@ -115,15 +176,29 @@ def create_vehicle_entry(
 
         db.add(session)
 
+        # Flush first so DB-level constraints fail here inside
+        # the controlled transaction rather than later.
+        db.flush()
+
         db.commit()
+
     except Exception:
         db.rollback()
         raise
 
+    # ============================================================
+    # Refresh committed objects
+    # ============================================================
+
     db.refresh(session)
     db.refresh(vehicle)
+
     if space:
         db.refresh(space)
+
+    # ============================================================
+    # Response
+    # ============================================================
 
     return {
         "session_id": session.id,

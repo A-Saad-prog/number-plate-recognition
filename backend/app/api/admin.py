@@ -297,21 +297,69 @@ def parking_activity(db: Session = Depends(get_db), admin=Depends(current_admin)
 
 
 @router.post("/activity/{session_id}/remove")
-def remove_active_parking(session_id: int, db: Session = Depends(get_db), admin=Depends(current_admin)):
-    session = db.query(ParkingSession).filter(ParkingSession.id == session_id, ParkingSession.tenant_id == admin.tenant_id, ParkingSession.status == "active").first()
+def remove_active_parking(
+    session_id: int,
+    db: Session = Depends(get_db),
+    admin=Depends(current_admin),
+):
+    session = (
+        db.query(ParkingSession)
+        .filter(
+            ParkingSession.id == session_id,
+            ParkingSession.tenant_id == admin.tenant_id,
+            ParkingSession.status == "active",
+        )
+        .first()
+    )
+
     if not session:
-        raise HTTPException(status_code=404, detail="Active parking session not found.")
-    space = db.query(ParkingSpace).filter(ParkingSpace.id == session.parking_space_id, ParkingSpace.tenant_id == admin.tenant_id).first()
+        raise HTTPException(
+            status_code=404,
+            detail="Active parking session not found.",
+        )
+
+    space = None
+
+    if session.parking_space_id is not None:
+        space = (
+            db.query(ParkingSpace)
+            .filter(
+                ParkingSpace.id == session.parking_space_id,
+                ParkingSpace.tenant_id == admin.tenant_id,
+            )
+            .with_for_update()
+            .first()
+        )
+
     session.exit_time = pakistan_now()
     session.status = "removed"
     session.amount = 0
     session.payment_method = None
+
     if space:
-        space.is_occupied = False
-    db.commit()
+        other_active_session = (
+            db.query(ParkingSession.id)
+            .filter(
+                ParkingSession.parking_space_id == space.id,
+                ParkingSession.tenant_id == admin.tenant_id,
+                ParkingSession.status == "active",
+                ParkingSession.id != session.id,
+            )
+            .first()
+        )
+
+        space.is_occupied = (
+            other_active_session is not None
+        )
+
+    try:
+        db.flush()
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
     return {"success": True}
-
-
 class VehiclePlateUpdateRequest(BaseModel):
     license_plate: str = Field(min_length=1, max_length=20)
 

@@ -287,7 +287,7 @@ def exit_payment_required(
     except ValueError:
         raise HTTPException(
             status_code=404,
-            detail="Car is not entered in the garage.",
+            detail="This vehicle is not parked in the garage.",
         ) from None
 
     return {
