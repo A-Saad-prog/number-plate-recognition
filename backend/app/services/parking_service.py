@@ -111,6 +111,8 @@ def validate_available_space(
             ParkingSpace.tenant_id == tenant_id,
             ParkingSpace.is_active == True,
         )
+        .populate_existing()
+        .with_for_update()
         .first()
     )
 

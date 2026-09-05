@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+﻿import { useEffect, useRef, useState } from "react";
 
 import {
     getParkingSpaces,
@@ -11,7 +11,6 @@ import {
 
 import VehicleInformation from "../components/VehicleInformation";
 import { saveConfirmedPlateImage } from "../services/localPlateImages";
-import { createMultiCameraVisionTestScheduler } from "../services/multiCameraVisionTestScheduler";
 
 import "../styles/App.css";
 
@@ -19,7 +18,6 @@ const MAX_INFERENCE_FRAME_WIDTH = 960;
 const VISION_REQUEST_INTERVAL_MS = 333;
 const VISION_DEBUG = import.meta.env.DEV && import.meta.env.VITE_VISION_DEBUG === "true";
 const GARAGE_SETTINGS_UPDATED_KEY = "parking_garage_settings_updated";
-const MULTI_CAMERA_ORCHESTRATION_TEST = false;
 
 function boxesEqual(first, second) {
     if (first === second) return true;
@@ -53,8 +51,8 @@ function GaragePage() {
     const completedLockActionRef = useRef({});
     const savedLockImageRef = useRef({});
     const activeDetectionSourceRef = useRef("entry-1");
-    const entrySubmittingRef = useRef({});
-    const exitSubmittingRef = useRef({});
+    const entrySubmittingRef = useRef(false);
+    const exitSubmittingRef = useRef(false);
     const automaticExitAttemptRef = useRef({});
     const pendingAutomaticExitRef = useRef({ plate: "", source: "" });
     const exitPaymentPrefetchRef = useRef({ plate: "", promise: null, result: null, error: null });
@@ -168,13 +166,6 @@ function GaragePage() {
     const cameraStartingRefBySlot = useRef({});
     const cameraLaneGenerationRef = useRef(0);
     const activeVisionLoopsRef = useRef({});
-    const multiCameraTestSchedulerRef = useRef(null);
-
-    if (!multiCameraTestSchedulerRef.current) {
-        multiCameraTestSchedulerRef.current = createMultiCameraVisionTestScheduler({
-            maxConcurrent: 2,
-        });
-    }
 
     function debugVisionLoopStatus(source, phase) {
         if (!VISION_DEBUG) return;
@@ -335,8 +326,7 @@ function GaragePage() {
 
                 if (
                     voteState.lastSeenAt &&
-                    now - voteState.lastSeenAt >
-                    (MULTI_CAMERA_ORCHESTRATION_TEST ? 5000 : 1500)
+                    now - voteState.lastSeenAt > 1500
                 ) {
                     voteState.reads = [];
                 }
@@ -467,10 +457,6 @@ function GaragePage() {
                         setAlreadyParked(true);
                         setEntryError("Car is already parked in the garage.");
                     } else if (source.startsWith("entry-")) {
-                        if (automaticEntryRef.current) {
-                            setVehicleAction("entry");
-                            void handleConfirmEntry(plate, null, source, true);
-                        } else {
                         const automaticSpace =
                             getAutomaticParkingSpace();
 
@@ -482,6 +468,9 @@ function GaragePage() {
                             setSelectedSpaceId(null);
                         }
 
+                        if (automaticEntryRef.current && automaticSpace) {
+                            setVehicleAction("entry");
+                            void handleConfirmEntry(plate, automaticSpace.id, source);
                         }
                     }
                 }
@@ -1102,7 +1091,7 @@ function GaragePage() {
         if (
             !source.startsWith("exit-") ||
             automaticExitAttemptRef.current[source] === plate ||
-            exitSubmittingRef.current[source]
+            exitSubmittingRef.current
         ) {
             return;
         }
@@ -1189,8 +1178,8 @@ function GaragePage() {
     }
 
 
-    async function handleConfirmEntry(plateOverride = detectedPlate, spaceOverride = selectedSpaceId, sourceOverride = detectionSource || activeDetectionSourceRef.current, automatic = false) {
-        if (entrySubmittingRef.current[sourceOverride]) return;
+    async function handleConfirmEntry(plateOverride = detectedPlate, spaceOverride = selectedSpaceId, sourceOverride = detectionSource || activeDetectionSourceRef.current) {
+        if (entrySubmittingRef.current) return;
         if (!plateOverride) {
             setEntryError(
                 "No vehicle license plate has been detected."
@@ -1198,22 +1187,21 @@ function GaragePage() {
             return;
         }
 
-        if (!automatic && !spaceOverride) {
+        if (!spaceOverride) {
             setEntryError(
                 "No parking space is available for this vehicle."
             );
             return;
         }
 
-        entrySubmittingRef.current[sourceOverride] = true;
+        entrySubmittingRef.current = true;
         setEntryLoading(true);
         setEntryError("");
         setEntryResult(null);
 
         try {
-            const result = automatic
-                ? await registerEntry(plateOverride)
-                : await registerEntry(
+            const result =
+                await registerEntry(
                     plateOverride,
                     spaceOverride
                 );
@@ -1237,9 +1225,7 @@ function GaragePage() {
             const nextSpaces =
                 parkingSpacesRef.current.map(
                     (space) =>
-                        (automatic
-                            ? space.level === vehicle.level && space.space === vehicle.space
-                            : space.id === spaceOverride)
+                        space.id === spaceOverride
                             ? {
                                 ...space,
                                 is_occupied: true,
@@ -1283,7 +1269,7 @@ function GaragePage() {
             );
 
         } finally {
-            delete entrySubmittingRef.current[sourceOverride];
+            entrySubmittingRef.current = false;
             setEntryLoading(false);
         }
     }
@@ -1295,7 +1281,7 @@ function GaragePage() {
         plateOverride = detectedPlate,
         sourceOverride = detectionSource || activeDetectionSourceRef.current
     ) {
-        if (exitSubmittingRef.current[sourceOverride]) return;
+        if (exitSubmittingRef.current) return;
         if (!plateOverride) {
             setExitError(
                 "No vehicle license plate has been detected."
@@ -1315,7 +1301,7 @@ function GaragePage() {
             return;
         }
 
-        exitSubmittingRef.current[sourceOverride] = true;
+        exitSubmittingRef.current = true;
         setExitLoading(true);
         setExitError("");
 
@@ -1392,7 +1378,7 @@ function GaragePage() {
             );
 
         } finally {
-            delete exitSubmittingRef.current[sourceOverride];
+            exitSubmittingRef.current = false;
             setExitLoading(false);
         }
     }
@@ -1824,14 +1810,14 @@ function GaragePage() {
     }
 
     async function startSlotCamera(cameraId) {
-        if (!MULTI_CAMERA_ORCHESTRATION_TEST && !cameraId.startsWith(`${activeLaneRef.current}-`)) return;
+        if (!cameraId.startsWith(`${activeLaneRef.current}-`)) return;
         const deviceId = cameraAssignments[cameraId];
         const video = cameraNodesRef.current[cameraId];
         if (!deviceId || !video || cameraStreamsRef.current[cameraId] || cameraStartingRefBySlot.current[cameraId]) return;
         cameraStartingRefBySlot.current[cameraId] = true;
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: deviceId } }, audio: false });
-            if (!MULTI_CAMERA_ORCHESTRATION_TEST && !cameraId.startsWith(`${activeLaneRef.current}-`)) {
+            if (!cameraId.startsWith(`${activeLaneRef.current}-`)) {
                 stream.getTracks().forEach((track) => track.stop());
                 return;
             }
@@ -1848,7 +1834,7 @@ function GaragePage() {
     }
 
     async function runSlotDetection(cameraId) {
-        if (!MULTI_CAMERA_ORCHESTRATION_TEST && !cameraId.startsWith(`${activeLaneRef.current}-`)) return;
+        if (!cameraId.startsWith(`${activeLaneRef.current}-`)) return;
         const laneGeneration = cameraLaneGenerationRef.current;
         const video = cameraNodesRef.current[cameraId];
         if (!cameraStreamsRef.current[cameraId] || !video || cameraRequestsRef.current[cameraId]) return;
@@ -1857,40 +1843,15 @@ function GaragePage() {
         cameraCanvasesRef.current[cameraId] = canvas;
         try {
             if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
-                const result = await multiCameraTestSchedulerRef.current.schedule(
-                    cameraId,
-                    async () => {
-                        if (
-                            !cameraStreamsRef.current[cameraId] ||
-                            video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
-                            !video.videoWidth ||
-                            !video.videoHeight
-                        ) {
-                            return { detected: false, license_plate: null, box: null };
-                        }
-
-                        const scale = Math.min(1, MAX_INFERENCE_FRAME_WIDTH / video.videoWidth);
-                        canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
-                        canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
-                        canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
-
-                        const image = canvas.toDataURL("image/jpeg", 0.82);
-                        return detectPlateFromFrame(
-                            image,
-                            cameraId,
-                            `mc-test-${cameraId}-${Date.now()}`
-                        );
-                    }
-                );
+                const scale = Math.min(1, MAX_INFERENCE_FRAME_WIDTH / video.videoWidth);
+                canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+                canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+                canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+                const result = await detectPlateFromFrame(canvas.toDataURL("image/jpeg", 0.82), cameraId);
                 if (
                     cameraStreamsRef.current[cameraId] &&
-                    (
-                        MULTI_CAMERA_ORCHESTRATION_TEST ||
-                        (
-                            laneGeneration === cameraLaneGenerationRef.current &&
-                            cameraId.startsWith(`${activeLaneRef.current}-`)
-                        )
-                    )
+                    laneGeneration === cameraLaneGenerationRef.current &&
+                    cameraId.startsWith(`${activeLaneRef.current}-`)
                 ) {
                     setCameraViews((current) => {
                         const currentView = current[cameraId] || {};
@@ -1929,12 +1890,12 @@ function GaragePage() {
                                 };
 
                             if (
-                                !MULTI_CAMERA_ORCHESTRATION_TEST &&
                                 voteState.lastSeenAt &&
                                 now - voteState.lastSeenAt > 1500
                             ) {
                                 voteState.reads = [];
                             }
+
                             voteState.lastSeenAt = now;
                             voteState.reads.push({
                                 plate,
@@ -2066,16 +2027,8 @@ function GaragePage() {
                                     setExitResult(null);
                                     setPaymentMethod(null);
                                     setExitRatePerMinute(null);
-                                    if (!MULTI_CAMERA_ORCHESTRATION_TEST) {
-                                        void prefetchExitPaymentRequired(bestPlate);
-                                        void startAutomaticExit(bestPlate, cameraId);
-                                    } else {
-                                        console.log("[MC TEST] Exit action blocked", {
-                                            source: cameraId,
-                                            plate: bestPlate,
-                                        });
-                                    }
-
+                                    void prefetchExitPaymentRequired(bestPlate);
+                                    void startAutomaticExit(bestPlate, cameraId);
                                 }
 
                                 const parkedSpace = cameraId.startsWith("entry-")
@@ -2088,23 +2041,15 @@ function GaragePage() {
                                     setAlreadyParked(true);
                                     setEntryError("Car is already parked in the garage.");
                                 } else if (cameraId.startsWith("entry-")) {
-                                    if (automaticEntryRef.current && !MULTI_CAMERA_ORCHESTRATION_TEST) {
-                                        setVehicleAction("entry");
-                                        void handleConfirmEntry(bestPlate, null, cameraId, true);
-                                    } else {
                                     const automaticSpace = getAutomaticParkingSpace();
                                     if (automaticSpace) {
                                         setSelectedSpaceId(automaticSpace.id);
                                         if (automaticEntryRef.current) {
-                                            console.log("[MC TEST] Entry action blocked", {
-                                                source: cameraId,
-                                                plate: bestPlate,
-                                                space: automaticSpace.id,
-                                            });
+                                            setVehicleAction("entry");
+                                            void handleConfirmEntry(bestPlate, automaticSpace.id, cameraId);
                                         }
                                     } else {
                                         setSelectedSpaceId(null);
-                                    }
                                     }
                                 }
                             } else if (
@@ -2165,16 +2110,10 @@ function GaragePage() {
             if (VISION_DEBUG) console.debug("Vision processing error:", error);
         } finally {
             cameraRequestsRef.current[cameraId] = false;
-
             if (
                 cameraStreamsRef.current[cameraId] &&
-                (
-                    MULTI_CAMERA_ORCHESTRATION_TEST ||
-                    (
-                        laneGeneration === cameraLaneGenerationRef.current &&
-                        cameraId.startsWith(`${activeLaneRef.current}-`)
-                    )
-                )
+                laneGeneration === cameraLaneGenerationRef.current &&
+                cameraId.startsWith(`${activeLaneRef.current}-`)
             ) {
                 cameraTimersRef.current[cameraId] = window.setTimeout(
                     () => runSlotDetection(cameraId),
@@ -2187,7 +2126,7 @@ function GaragePage() {
     function renderSlotCamera(slot) {
         const view = cameraViews[slot.id] || {};
         const assigned = Boolean(cameraAssignments[slot.id]);
-        const isActiveLane = MULTI_CAMERA_ORCHESTRATION_TEST || slot.lane.toLowerCase() === activeLane;
+        const isActiveLane = slot.lane.toLowerCase() === activeLane;
         return <div className="camera-panel" key={slot.id}>
             <div className="camera-panel-header"><div><span className="camera-kicker">{slot.id}</span><strong>{slot.label}</strong></div></div>
             <div className="camera-preview">
@@ -2198,724 +2137,716 @@ function GaragePage() {
         </div>;
     }
 
-        function switchActiveLane() {
-            const nextLane = activeLane === "entry" ? "exit" : "entry";
-            cameraLaneGenerationRef.current += 1;
-            cameraSlots.filter((slot) => slot.lane.toLowerCase() === activeLane).forEach((slot) => stopSlotCamera(slot.id));
-            clearVehicleDetectionState();
-            activeLaneRef.current = nextLane;
-            setActiveLane(nextLane);
-        }
+    function switchActiveLane() {
+        const nextLane = activeLane === "entry" ? "exit" : "entry";
+        cameraLaneGenerationRef.current += 1;
+        cameraSlots.filter((slot) => slot.lane.toLowerCase() === activeLane).forEach((slot) => stopSlotCamera(slot.id));
+        clearVehicleDetectionState();
+        activeLaneRef.current = nextLane;
+        setActiveLane(nextLane);
+    }
 
 
-        const billingConfig = adminSettings?.billing_config;
-        const isDetectedVehicleParked = parkingSpaces.some(
-            (space) => space.is_occupied && space.license_plate === detectedPlate
-        );
-        const showPaymentSelection = isDetectedVehicleParked && exitPaymentRequired && Boolean(
-            billingConfig?.payments_enabled && billingConfig?.cash_enabled && billingConfig?.card_enabled
-        );
-        const showCashPayment = showPaymentSelection;
-        const showCardPayment = showPaymentSelection;
-        const lockActionAlreadyCompleted = Boolean(
-            detectionSource && completedLockActionRef.current[detectionSource] === detectedPlate
-        );
+    const billingConfig = adminSettings?.billing_config;
+    const isDetectedVehicleParked = parkingSpaces.some(
+        (space) => space.is_occupied && space.license_plate === detectedPlate
+    );
+    const showPaymentSelection = isDetectedVehicleParked && exitPaymentRequired && Boolean(
+        billingConfig?.payments_enabled && billingConfig?.cash_enabled && billingConfig?.card_enabled
+    );
+    const showCashPayment = showPaymentSelection;
+    const showCardPayment = showPaymentSelection;
+    const lockActionAlreadyCompleted = Boolean(
+        detectionSource && completedLockActionRef.current[detectionSource] === detectedPlate
+    );
 
-        return (
-            <div className="app">
-                {showSettingsReloadNotice && (
-                    <div className="settings-reload-notice" role="status">
-                        <span>Admin changes applied. Reload Garage to use the latest configuration.</span>
-                        <button type="button" onClick={() => window.location.reload()}>Reload</button>
-                        <button type="button" onClick={() => setShowSettingsReloadNotice(false)}>Dismiss</button>
-                    </div>
-                )}
-                {garageAuthFailed && <div className="settings-reload-notice" role="alert">Your admin session has expired. <a href="/admin">Sign in again</a></div>}
-                <header className="header">
-                    <div>
-                        <h1>
-                            ParkingOS
-                        </h1>
+    return (
+        <div className="app">
+            {showSettingsReloadNotice && (
+                <div className="settings-reload-notice" role="status">
+                    <span>Admin changes applied. Reload Garage to use the latest configuration.</span>
+                    <button type="button" onClick={() => window.location.reload()}>Reload</button>
+                    <button type="button" onClick={() => setShowSettingsReloadNotice(false)}>Dismiss</button>
+                </div>
+            )}
+            {garageAuthFailed && <div className="settings-reload-notice" role="alert">Your admin session has expired. <a href="/admin">Sign in again</a></div>}
+            <header className="header">
+                <div>
+                    <h1>
+                        ParkingOS
+                    </h1>
 
-                        <div className="garage-header-controls"><button type="button" className="garage-admin-link" onClick={() => { const adminWindow = window.open("/admin", "parkingos-admin"); adminWindow?.focus(); }}>Open Admin</button></div>
+                    <div className="garage-header-controls"><button type="button" className="garage-admin-link" onClick={() => { const adminWindow = window.open("/admin", "parkingos-admin"); adminWindow?.focus(); }}>Open Admin</button></div>
 
-                        <p>
-                            Parking
-                            Management System
-                        </p>
-                    </div>
-                </header>
+                    <p>
+                        Parking
+                        Management System
+                    </p>
+                </div>
+            </header>
 
 
-                <main className="container">
+            <main className="container">
 
-                    <section className="card parking-status">
-                        <h2>
-                            Parking Status
-                        </h2>
+                <section className="card parking-status">
+                    <h2>
+                        Parking Status
+                    </h2>
 
-                        <p className="description">
-                            Current parking garage occupancy.
-                        </p>
+                    <p className="description">
+                        Current parking garage occupancy.
+                    </p>
 
-                        {parkingLoading &&
-                            parkingSpaces.length === 0 && (
-                                <div className="status-message">
-                                    Loading parking status...
-                                </div>
-                            )}
-
-                        {parkingError && (
-                            <div className="error">
-                                {parkingError}
+                    {parkingLoading &&
+                        parkingSpaces.length === 0 && (
+                            <div className="status-message">
+                                Loading parking status...
                             </div>
                         )}
 
-                        {parkingSpaces.length > 0 && (
-                            <>
-                                <div className="parking-summary">
-                                    <div
-                                        className={
-                                            `space-status ${garageFull
-                                                ? "unavailable"
-                                                : "available"
-                                            }`
-                                        }
-                                    >
-                                        <span className="status-indicator">
-                                            ●
-                                        </span>
+                    {parkingError && (
+                        <div className="error">
+                            {parkingError}
+                        </div>
+                    )}
 
-                                        <div>
-                                            <strong>
-                                                {garageFull
-                                                    ? "Parking Full"
-                                                    : `${availableSpaces} Spaces Available`}
-                                            </strong>
-
-                                            <p>
-                                                {occupiedSpaces}{" "}
-                                                of{" "}
-                                                {totalSpaces}{" "}
-                                                spaces occupied
-                                            </p>
-                                        </div>
-                                    </div>
-                                </div>
-
-
-                                <div className="parking-legend">
-                                    <div>
-                                        <span className="legend-box available-box" />
-                                        Available
-                                    </div>
+                    {parkingSpaces.length > 0 && (
+                        <>
+                            <div className="parking-summary">
+                                <div
+                                    className={
+                                        `space-status ${garageFull
+                                            ? "unavailable"
+                                            : "available"
+                                        }`
+                                    }
+                                >
+                                    <span className="status-indicator">
+                                        ●
+                                    </span>
 
                                     <div>
-                                        <span className="legend-box occupied-box" />
-                                        Occupied
-                                    </div>
-
-                                    <div>
-                                        <span className="legend-box selected-box" />
-                                        Selected
-                                    </div>
-                                </div>
-
-                                <div className="level-tabs" role="tablist">
-                                    {[
-                                        ...new Set(
-                                            parkingSpaces.map(
-                                                (space) => Number(space.level)
-                                            )
-                                        ),
-                                    ]
-                                        .sort((a, b) => a - b)
-                                        .map((level) => (
-                                            <button
-                                                key={level}
-                                                type="button"
-                                                className={`level-toggle ${openLevel === level
-                                                    ? "active"
-                                                    : ""
-                                                    }`}
-                                                onClick={() => setOpenLevel(level)}
-                                                role="tab"
-                                                aria-selected={openLevel === level}
-                                            >
-                                                Level {level}
-                                            </button>
-                                        ))}
-                                </div>
-
-                                {openLevel && renderLevel(openLevel)}
-                            </>
-                        )}
-                    </section>
-
-
-                    <section className="vehicle-section">
-
-                        <section className="card entry-card">
-
-                            <h2>
-                                Vehicle Detection
-                            </h2>
-
-                            <p className="description">
-                                The camera automatically detects the
-                                vehicle's license plate.
-                            </p>
-
-
-                            <div className="camera-lane-groups">
-                                <section><p className="camera-kicker">Entry</p><div className="camera-slot-grid">{cameraSlots.filter((slot) => slot.lane === "Entry").map(renderSlotCamera)}</div></section>
-                                <section><p className="camera-kicker">Exit</p><div className="camera-slot-grid">{cameraSlots.filter((slot) => slot.lane === "Exit").map(renderSlotCamera)}</div></section>
-                            </div>
-                            {MULTI_CAMERA_ORCHESTRATION_TEST ? (
-                                <div className="status-message">
-                                    Multi-camera test mode: all assigned camera slots are active. Parking entry/exit writes are blocked.
-                                </div>
-                            ) : (
-                                <button type="button" className="lane-switch-button" onClick={switchActiveLane}>
-                                    {activeLane === "entry" ? "Open Exit" : "Open Entry"}
-                                </button>
-                            )}
-
-                            <div className="camera-grid legacy-camera-grid">
-
-                                <div className="camera-panel">
-
-                                    <div className="camera-panel-header">
-                                        <div>
-                                            <span className="camera-kicker">
-                                                Lane 01
-                                            </span>
-
-                                            <strong>
-                                                Entry Camera 1
-                                            </strong>
-                                        </div>
-
-                                    </div>
-
-
-                                    <div className="camera-preview">
-                                        <span
-                                            className={`camera-feed-status camera-status ${cameraActive
-                                                ? "active"
-                                                : "standby"
-                                                }`}
-                                        >
-                                            {cameraActive ? (
-                                                <>
-                                                    <span className="live-dot">●</span>
-                                                    {" Live"}
-                                                </>
-                                            ) : (
-                                                "Standby"
-                                            )}
-                                        </span>
-
-                                        {renderDetectionBox(
-                                            entryDetectionBox,
-                                            videoRef
-                                        )}
-
-                                        {exitCameraActive ? (
-                                            <div className="camera-standby">
-                                                <span className="camera-icon">▣</span>
-                                                <strong>Entry camera is closed</strong>
-                                                <p>Close the exit camera to resume entry monitoring.</p>
-                                            </div>
-                                        ) : (
-                                            <video
-                                                ref={videoRef}
-                                                autoPlay
-                                                playsInline
-                                                muted
-                                                onCanPlay={(event) =>
-                                                    event.currentTarget
-                                                        .play()
-                                                        .catch(
-                                                            () => { }
-                                                        )
-                                                }
-                                            />
-                                        )}
-                                    </div>
-
-                                </div>
-
-                                {Array.from({ length: entryCameraCount - 1 }, (_, index) =>
-                                    renderSharedCamera(
-                                        `entry-${index + 2}`,
-                                        `Entry Camera ${index + 2}`,
-                                        videoRef,
-                                        cameraActive && !exitCameraActive
-                                    )
-                                )}
-
-
-                                <div className="camera-panel">
-
-                                    <div className="camera-panel-header">
-                                        <div>
-                                            <span className="camera-kicker">
-                                                Lane 02
-                                            </span>
-
-                                            <strong>
-                                                Exit Camera 1
-                                            </strong>
-                                        </div>
-
-                                    </div>
-
-
-                                    <div className="camera-preview exit-camera-preview">
-                                        <span
-                                            className={`camera-feed-status camera-status ${exitCameraActive
-                                                ? "active"
-                                                : "standby"
-                                                }`}
-                                        >
-                                            {exitCameraActive ? (
-                                                <>
-                                                    <span className="live-dot">●</span>
-                                                    {" Live"}
-                                                </>
-                                            ) : (
-                                                "Standby"
-                                            )}
-                                        </span>
-
-                                        {renderDetectionBox(
-                                            exitDetectionBox,
-                                            exitVideoRef
-                                        )}
-
-                                        {exitCameraActive ? (
-                                            <video
-                                                ref={exitVideoRef}
-                                                autoPlay
-                                                playsInline
-                                                muted
-                                                onCanPlay={(event) =>
-                                                    event.currentTarget
-                                                        .play()
-                                                        .catch(
-                                                            () => { }
-                                                        )
-                                                }
-                                            />
-                                        ) : (
-                                            <div className="camera-standby">
-                                                <span className="camera-icon">
-                                                    ▣
-                                                </span>
-
-                                                <strong>
-                                                    Exit camera is closed
-                                                </strong>
-
-                                                <p>
-                                                    Open it when a vehicle
-                                                    is leaving.
-                                                </p>
-                                            </div>
-                                        )}
-
-                                    </div>
-
-
-                                    {!exitCameraActive ? (
-                                        <button
-                                            type="button"
-                                            className="open-camera-button"
-                                            onClick={
-                                                openExitCamera
-                                            }
-                                        >
-                                            Open Exit Camera
-                                        </button>
-                                    ) : (
-                                        <button
-                                            type="button"
-                                            className="close-camera-button"
-                                            onClick={
-                                                closeExitCamera
-                                            }
-                                        >
-                                            Close Exit Camera
-                                        </button>
-                                    )}
-
-
-                                    {exitCameraError && (
-                                        <div className="error">
-                                            {exitCameraError}
-                                        </div>
-                                    )}
-
-                                </div>
-
-                                {Array.from({ length: exitCameraCount - 1 }, (_, index) =>
-                                    renderSharedCamera(
-                                        `exit-${index + 2}`,
-                                        `Exit Camera ${index + 2}`,
-                                        exitVideoRef,
-                                        exitCameraActive
-                                    )
-                                )}
-
-                            </div>
-
-
-                            <canvas
-                                ref={canvasRef}
-                                style={{
-                                    display: "none",
-                                }}
-                            />
-
-
-                            {cameraError && (
-                                <div className="error">
-                                    {cameraError}
-                                </div>
-                            )}
-
-
-                            {!detectedPlate &&
-                                !exitResult &&
-                                !entryResult && (
-                                    <div className="waiting-panel">
-
-                                        <div className="camera-icon">
-                                            📷
-                                        </div>
-
                                         <strong>
-                                            Waiting for vehicle...
+                                            {garageFull
+                                                ? "Parking Full"
+                                                : `${availableSpaces} Spaces Available`}
                                         </strong>
 
                                         <p>
-                                            Position a vehicle in front
-                                            of the camera.
+                                            {occupiedSpaces}{" "}
+                                            of{" "}
+                                            {totalSpaces}{" "}
+                                            spaces occupied
                                         </p>
+                                    </div>
+                                </div>
+                            </div>
+
+
+                            <div className="parking-legend">
+                                <div>
+                                    <span className="legend-box available-box" />
+                                    Available
+                                </div>
+
+                                <div>
+                                    <span className="legend-box occupied-box" />
+                                    Occupied
+                                </div>
+
+                                <div>
+                                    <span className="legend-box selected-box" />
+                                    Selected
+                                </div>
+                            </div>
+
+                            <div className="level-tabs" role="tablist">
+                                {[
+                                    ...new Set(
+                                        parkingSpaces.map(
+                                            (space) => Number(space.level)
+                                        )
+                                    ),
+                                ]
+                                    .sort((a, b) => a - b)
+                                    .map((level) => (
+                                        <button
+                                            key={level}
+                                            type="button"
+                                            className={`level-toggle ${openLevel === level
+                                                    ? "active"
+                                                    : ""
+                                                }`}
+                                            onClick={() => setOpenLevel(level)}
+                                            role="tab"
+                                            aria-selected={openLevel === level}
+                                        >
+                                            Level {level}
+                                        </button>
+                                    ))}
+                            </div>
+
+                            {openLevel && renderLevel(openLevel)}
+                        </>
+                    )}
+                </section>
+
+
+                <section className="vehicle-section">
+
+                    <section className="card entry-card">
+
+                        <h2>
+                            Vehicle Detection
+                        </h2>
+
+                        <p className="description">
+                            The camera automatically detects the
+                            vehicle's license plate.
+                        </p>
+
+
+                        <div className="camera-lane-groups">
+                            <section><p className="camera-kicker">Entry</p><div className="camera-slot-grid">{cameraSlots.filter((slot) => slot.lane === "Entry").map(renderSlotCamera)}</div></section>
+                            <section><p className="camera-kicker">Exit</p><div className="camera-slot-grid">{cameraSlots.filter((slot) => slot.lane === "Exit").map(renderSlotCamera)}</div></section>
+                        </div>
+                        <button type="button" className="lane-switch-button" onClick={switchActiveLane}>{activeLane === "entry" ? "Open Exit" : "Open Entry"}</button>
+
+                        <div className="camera-grid legacy-camera-grid">
+
+                            <div className="camera-panel">
+
+                                <div className="camera-panel-header">
+                                    <div>
+                                        <span className="camera-kicker">
+                                            Lane 01
+                                        </span>
+
+                                        <strong>
+                                            Entry Camera 1
+                                        </strong>
+                                    </div>
+
+                                </div>
+
+
+                                <div className="camera-preview">
+                                    <span
+                                        className={`camera-feed-status camera-status ${cameraActive
+                                                ? "active"
+                                                : "standby"
+                                            }`}
+                                    >
+                                        {cameraActive ? (
+                                            <>
+                                                <span className="live-dot">●</span>
+                                                {" Live"}
+                                            </>
+                                        ) : (
+                                            "Standby"
+                                        )}
+                                    </span>
+
+                                    {renderDetectionBox(
+                                        entryDetectionBox,
+                                        videoRef
+                                    )}
+
+                                    {exitCameraActive ? (
+                                        <div className="camera-standby">
+                                            <span className="camera-icon">▣</span>
+                                            <strong>Entry camera is closed</strong>
+                                            <p>Close the exit camera to resume entry monitoring.</p>
+                                        </div>
+                                    ) : (
+                                        <video
+                                            ref={videoRef}
+                                            autoPlay
+                                            playsInline
+                                            muted
+                                            onCanPlay={(event) =>
+                                                event.currentTarget
+                                                    .play()
+                                                    .catch(
+                                                        () => { }
+                                                    )
+                                            }
+                                        />
+                                    )}
+                                </div>
+
+                            </div>
+
+                            {Array.from({ length: entryCameraCount - 1 }, (_, index) =>
+                                renderSharedCamera(
+                                    `entry-${index + 2}`,
+                                    `Entry Camera ${index + 2}`,
+                                    videoRef,
+                                    cameraActive && !exitCameraActive
+                                )
+                            )}
+
+
+                            <div className="camera-panel">
+
+                                <div className="camera-panel-header">
+                                    <div>
+                                        <span className="camera-kicker">
+                                            Lane 02
+                                        </span>
+
+                                        <strong>
+                                            Exit Camera 1
+                                        </strong>
+                                    </div>
+
+                                </div>
+
+
+                                <div className="camera-preview exit-camera-preview">
+                                    <span
+                                        className={`camera-feed-status camera-status ${exitCameraActive
+                                                ? "active"
+                                                : "standby"
+                                            }`}
+                                    >
+                                        {exitCameraActive ? (
+                                            <>
+                                                <span className="live-dot">●</span>
+                                                {" Live"}
+                                            </>
+                                        ) : (
+                                            "Standby"
+                                        )}
+                                    </span>
+
+                                    {renderDetectionBox(
+                                        exitDetectionBox,
+                                        exitVideoRef
+                                    )}
+
+                                    {exitCameraActive ? (
+                                        <video
+                                            ref={exitVideoRef}
+                                            autoPlay
+                                            playsInline
+                                            muted
+                                            onCanPlay={(event) =>
+                                                event.currentTarget
+                                                    .play()
+                                                    .catch(
+                                                        () => { }
+                                                    )
+                                            }
+                                        />
+                                    ) : (
+                                        <div className="camera-standby">
+                                            <span className="camera-icon">
+                                                ▣
+                                            </span>
+
+                                            <strong>
+                                                Exit camera is closed
+                                            </strong>
+
+                                            <p>
+                                                Open it when a vehicle
+                                                is leaving.
+                                            </p>
+                                        </div>
+                                    )}
+
+                                </div>
+
+
+                                {!exitCameraActive ? (
+                                    <button
+                                        type="button"
+                                        className="open-camera-button"
+                                        onClick={
+                                            openExitCamera
+                                        }
+                                    >
+                                        Open Exit Camera
+                                    </button>
+                                ) : (
+                                    <button
+                                        type="button"
+                                        className="close-camera-button"
+                                        onClick={
+                                            closeExitCamera
+                                        }
+                                    >
+                                        Close Exit Camera
+                                    </button>
+                                )}
+
+
+                                {exitCameraError && (
+                                    <div className="error">
+                                        {exitCameraError}
+                                    </div>
+                                )}
+
+                            </div>
+
+                            {Array.from({ length: exitCameraCount - 1 }, (_, index) =>
+                                renderSharedCamera(
+                                    `exit-${index + 2}`,
+                                    `Exit Camera ${index + 2}`,
+                                    exitVideoRef,
+                                    exitCameraActive
+                                )
+                            )}
+
+                        </div>
+
+
+                        <canvas
+                            ref={canvasRef}
+                            style={{
+                                display: "none",
+                            }}
+                        />
+
+
+                        {cameraError && (
+                            <div className="error">
+                                {cameraError}
+                            </div>
+                        )}
+
+
+                        {!detectedPlate &&
+                            !exitResult &&
+                            !entryResult && (
+                                <div className="waiting-panel">
+
+                                    <div className="camera-icon">
+                                        📷
+                                    </div>
+
+                                    <strong>
+                                        Waiting for vehicle...
+                                    </strong>
+
+                                    <p>
+                                        Position a vehicle in front
+                                        of the camera.
+                                    </p>
+
+                                </div>
+                            )}
+
+
+                        {detectedPlate && (
+                            <div className="detected-panel">
+
+                                <div className="detected-header">
+
+                                    <div>
+                                        <span className="detected-label">
+                                            Vehicle Detected
+                                        </span>
+
+                                        <h3>
+                                            {detectedPlate}
+                                        </h3>
+                                    </div>
+
+                                    <span className="live-indicator">
+                                        ● LIVE
+                                    </span>
+
+                                </div>
+
+
+                                <p className="description">
+                                    License plate detected automatically.
+                                    Select whether the vehicle is entering
+                                    or exiting.
+                                </p>
+
+
+                                <div className="plate-display">
+
+                                    <span className="field-label">
+                                        Detected License Plate
+                                    </span>
+
+                                    <div className="plate-readonly">
+                                        {detectedPlate}
+                                    </div>
+
+                                </div>
+
+
+                                {alreadyParked && (
+                                    <div className="error">
+                                        Car is already parked in the garage.
+                                    </div>
+                                )}
+
+                                {!vehicleAction && !alreadyParked && !lockActionAlreadyCompleted && (
+                                    <div className="action-selection">
+
+                                        <p className="action-title">
+                                            {detectionSource?.startsWith(
+                                                "exit-"
+                                            )
+                                                ? "Confirm vehicle exit"
+                                                : "Confirm vehicle entry"}
+                                        </p>
+
+
+                                        <div className="vehicle-action-buttons">
+
+                                            {detectionSource?.startsWith(
+                                                "entry-"
+                                            ) && (
+                                                    <button
+                                                        className="confirm-button"
+                                                        onClick={
+                                                            handleSelectEntry
+                                                        }
+                                                        disabled={
+                                                            garageFull ||
+                                                            entryLoading ||
+                                                            exitLoading
+                                                        }
+                                                    >
+                                                        {garageFull
+                                                            ? "Garage Full"
+                                                            : "Entry Vehicle"}
+                                                    </button>
+                                                )}
+
+
+                                        </div>
+
+
+                                        {garageFull &&
+                                            detectionSource?.startsWith(
+                                                "entry-"
+                                            ) && (
+                                                <p className="description">
+                                                    The garage is currently
+                                                    full. Entry is unavailable.
+                                                </p>
+                                            )}
 
                                     </div>
                                 )}
 
 
-                            {detectedPlate && (
-                                <div className="detected-panel">
-
-                                    <div className="detected-header">
-
-                                        <div>
-                                            <span className="detected-label">
-                                                Vehicle Detected
-                                            </span>
+                                {vehicleAction ===
+                                    "entry" && (
+                                        <div className="entry-mode">
 
                                             <h3>
-                                                {detectedPlate}
+                                                Select Parking Space
                                             </h3>
-                                        </div>
-
-                                        <span className="live-indicator">
-                                            ● LIVE
-                                        </span>
-
-                                    </div>
 
 
-                                    <p className="description">
-                                        License plate detected automatically.
-                                        Select whether the vehicle is entering
-                                        or exiting.
-                                    </p>
-
-
-                                    <div className="plate-display">
-
-                                        <span className="field-label">
-                                            Detected License Plate
-                                        </span>
-
-                                        <div className="plate-readonly">
-                                            {detectedPlate}
-                                        </div>
-
-                                    </div>
-
-
-                                    {alreadyParked && (
-                                        <div className="error">
-                                            Car is already parked in the garage.
-                                        </div>
-                                    )}
-
-                                    {!vehicleAction && !alreadyParked && !lockActionAlreadyCompleted && (
-                                        <div className="action-selection">
-
-                                            <p className="action-title">
-                                                {detectionSource?.startsWith(
-                                                    "exit-"
-                                                )
-                                                    ? "Confirm vehicle exit"
-                                                    : "Confirm vehicle entry"}
+                                            <p className="description">
+                                                A parking space has been
+                                                automatically assigned.
+                                                Click another available
+                                                space if you want to
+                                                change it.
                                             </p>
 
 
-                                            <div className="vehicle-action-buttons">
+                                            <div className="selected-space-info">
 
-                                                {detectionSource?.startsWith(
-                                                    "entry-"
-                                                ) && (
-                                                        <button
-                                                            className="confirm-button"
-                                                            onClick={
-                                                                handleSelectEntry
-                                                            }
-                                                            disabled={
-                                                                garageFull ||
-                                                                entryLoading ||
-                                                                exitLoading
-                                                            }
-                                                        >
-                                                            {garageFull
-                                                                ? "Garage Full"
-                                                                : "Entry Vehicle"}
-                                                        </button>
-                                                    )}
+                                                <strong>
+                                                    Selected Space:
+                                                </strong>
 
+                                                <span>
+                                                    {selectedSpace
+                                                        ? `Level ${selectedSpace.level} — ${selectedSpace.space}`
+                                                        : "No space available"}
+                                                </span>
 
                                             </div>
 
 
-                                            {garageFull &&
-                                                detectionSource?.startsWith(
-                                                    "entry-"
-                                                ) && (
-                                                    <p className="description">
-                                                        The garage is currently
-                                                        full. Entry is unavailable.
-                                                    </p>
-                                                )}
+                                            {entryError && (
+                                                <div className="error">
+                                                    {entryError}
+                                                </div>
+                                            )}
+
+
+                                            <div className="confirmation-buttons">
+
+                                                <button
+                                                    className="confirm-button"
+                                                    onClick={() => handleConfirmEntry()}
+                                                    disabled={
+                                                        entryLoading ||
+                                                        !selectedSpaceId
+                                                    }
+                                                >
+                                                    {entryLoading
+                                                        ? "Processing Entry..."
+                                                        : "Confirm Entry"}
+                                                </button>
+
+
+                                                <button
+                                                    className="cancel-button"
+                                                    onClick={() => {
+                                                        setVehicleAction(
+                                                            null
+                                                        );
+
+                                                        setSelectedSpaceId(
+                                                            null
+                                                        );
+
+                                                        setEntryError(
+                                                            ""
+                                                        );
+                                                    }}
+                                                    disabled={
+                                                        entryLoading
+                                                    }
+                                                >
+                                                    Back
+                                                </button>
+
+                                            </div>
 
                                         </div>
                                     )}
 
 
-                                    {vehicleAction ===
-                                        "entry" && (
-                                            <div className="entry-mode">
+                                {vehicleAction ===
+                                    "exit" && (
+                                        <div className="exit-mode">
 
-                                                <h3>
-                                                    Select Parking Space
-                                                </h3>
-
-
-                                                <p className="description">
-                                                    A parking space has been
-                                                    automatically assigned.
-                                                    Click another available
-                                                    space if you want to
-                                                    change it.
-                                                </p>
+                                            <h3>
+                                                Exit Vehicle
+                                            </h3>
 
 
-                                                <div className="selected-space-info">
-
-                                                    <strong>
-                                                        Selected Space:
-                                                    </strong>
-
-                                                    <span>
-                                                        {selectedSpace
-                                                            ? `Level ${selectedSpace.level} — ${selectedSpace.space}`
-                                                            : "No space available"}
-                                                    </span>
-
-                                                </div>
+                                            <p className="description">
+                                                {exitPaymentRequired
+                                                    ? `Select a payment method. Parking is billed at ${formatRupees(exitRatePerMinute ?? 1.67)} per minute.`
+                                                    : "Exit is being processed automatically."}
+                                            </p>
 
 
-                                                {entryError && (
-                                                    <div className="error">
-                                                        {entryError}
-                                                    </div>
-                                                )}
+                                            <div className="exit-plate-confirmation">
 
+                                                <strong>
+                                                    Exit plate:
+                                                </strong>
 
-                                                <div className="confirmation-buttons">
-
-                                                    <button
-                                                        className="confirm-button"
-                                                        onClick={() => handleConfirmEntry()}
-                                                        disabled={
-                                                            entryLoading ||
-                                                            !selectedSpaceId
-                                                        }
-                                                    >
-                                                        {entryLoading
-                                                            ? "Processing Entry..."
-                                                            : "Confirm Entry"}
-                                                    </button>
-
-
-                                                    <button
-                                                        className="cancel-button"
-                                                        onClick={() => {
-                                                            setVehicleAction(
-                                                                null
-                                                            );
-
-                                                            setSelectedSpaceId(
-                                                                null
-                                                            );
-
-                                                            setEntryError(
-                                                                ""
-                                                            );
-                                                        }}
-                                                        disabled={
-                                                            entryLoading
-                                                        }
-                                                    >
-                                                        Back
-                                                    </button>
-
-                                                </div>
+                                                <span>
+                                                    {detectedPlate}
+                                                </span>
 
                                             </div>
-                                        )}
 
 
-                                    {vehicleAction ===
-                                        "exit" && (
-                                            <div className="exit-mode">
-
-                                                <h3>
-                                                    Exit Vehicle
-                                                </h3>
+                                            {exitPaymentRequired && (
+                                                <>
+                                                    <p className="action-title">
+                                                        Payment method
+                                                    </p>
 
 
-                                                <p className="description">
-                                                    {exitPaymentRequired
-                                                        ? `Select a payment method. Parking is billed at ${formatRupees(exitRatePerMinute ?? 1.67)} per minute.`
-                                                        : "Exit is being processed automatically."}
-                                                </p>
+                                                    <div className="payment-options">
+
+                                                        {showCashPayment && <button
+                                                            type="button"
+                                                            className={
+                                                                `payment-option ${paymentMethod ===
+                                                                    "cash"
+                                                                    ? "selected"
+                                                                    : ""
+                                                                }`
+                                                            }
+                                                            onClick={() => handlePaymentSelection("cash")}
+                                                            disabled={
+                                                                exitLoading
+                                                            }
+                                                        >
+                                                            <span>💵</span><span>Cash</span>
+                                                        </button>}
 
 
-                                                <div className="exit-plate-confirmation">
+                                                        {showCardPayment && <button
+                                                            type="button"
+                                                            className={
+                                                                `payment-option ${paymentMethod ===
+                                                                    "card"
+                                                                    ? "selected"
+                                                                    : ""
+                                                                }`
+                                                            }
+                                                            onClick={() => handlePaymentSelection("card")}
+                                                            disabled={
+                                                                exitLoading
+                                                            }
+                                                        >
+                                                            <span>💳</span><span>Card</span>
+                                                        </button>}
 
-                                                    <strong>
-                                                        Exit plate:
-                                                    </strong>
-
-                                                    <span>
-                                                        {detectedPlate}
-                                                    </span>
-
-                                                </div>
-
-
-                                                {exitPaymentRequired && (
-                                                    <>
-                                                        <p className="action-title">
-                                                            Payment method
-                                                        </p>
-
-
-                                                        <div className="payment-options">
-
-                                                            {showCashPayment && <button
-                                                                type="button"
-                                                                className={
-                                                                    `payment-option ${paymentMethod ===
-                                                                        "cash"
-                                                                        ? "selected"
-                                                                        : ""
-                                                                    }`
-                                                                }
-                                                                onClick={() => handlePaymentSelection("cash")}
-                                                                disabled={
-                                                                    exitLoading
-                                                                }
-                                                            >
-                                                                <span>💵</span><span>Cash</span>
-                                                            </button>}
-
-
-                                                            {showCardPayment && <button
-                                                                type="button"
-                                                                className={
-                                                                    `payment-option ${paymentMethod ===
-                                                                        "card"
-                                                                        ? "selected"
-                                                                        : ""
-                                                                    }`
-                                                                }
-                                                                onClick={() => handlePaymentSelection("card")}
-                                                                disabled={
-                                                                    exitLoading
-                                                                }
-                                                            >
-                                                                <span>💳</span><span>Card</span>
-                                                            </button>}
-
-                                                        </div>
-                                                    </>
-                                                )}
-
-
-                                                {exitError && (
-                                                    <div className="error">
-                                                        {exitError}
                                                     </div>
-                                                )}
-
-                                                {exitLoading && <p className="description">Processing Exit...</p>}
-
-                                            </div>
-                                        )}
-
-                                </div>
-                            )}
-
-                        </section>
+                                                </>
+                                            )}
 
 
-                        {(exitResult || exitCameraActive && detectionSource?.startsWith("exit-")) && (
-                            <section className="card vehicle-information-card">
+                                            {exitError && (
+                                                <div className="error">
+                                                    {exitError}
+                                                </div>
+                                            )}
 
-                                <h2>
-                                    Receipt
-                                </h2>
+                                            {exitLoading && <p className="description">Processing Exit...</p>}
 
-                                <p className="description">
-                                    Entry and exit details appear here
-                                    after a vehicle is processed.
-                                </p>
+                                        </div>
+                                    )}
 
-                                <VehicleInformation
-                                    exitResult={exitResult}
-                                    entryResult={entryResult}
-                                    detectedPlate={detectedPlate}
-                                    vehicleAction={vehicleAction}
-                                    selectedSpace={selectedSpace}
-                                    onReceiptDone={() => setExitResult(null)}
-                                />
-
-                            </section>
+                            </div>
                         )}
 
                     </section>
 
-                </main>
-            </div>
-        );
-    }
 
-    export default GaragePage;
+                    {(exitResult || exitCameraActive && detectionSource?.startsWith("exit-")) && (
+                        <section className="card vehicle-information-card">
+
+                            <h2>
+                                Receipt
+                            </h2>
+
+                            <p className="description">
+                                Entry and exit details appear here
+                                after a vehicle is processed.
+                            </p>
+
+                            <VehicleInformation
+                                exitResult={exitResult}
+                                entryResult={entryResult}
+                                detectedPlate={detectedPlate}
+                                vehicleAction={vehicleAction}
+                                selectedSpace={selectedSpace}
+                                onReceiptDone={() => setExitResult(null)}
+                            />
+
+                        </section>
+                    )}
+
+                </section>
+
+            </main>
+        </div>
+    );
+}
+
+export default GaragePage;

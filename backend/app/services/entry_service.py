@@ -1,10 +1,10 @@
+from sqlalchemy import Integer, func
 from sqlalchemy.orm import Session
 
 from app.models.parking_session import ParkingSession
 from app.models.parking_space import ParkingSpace
 from app.models.vehicle import Vehicle
 from app.services.parking_service import (
-    get_available_spaces,
     validate_available_space,
 )
 from app.services.time_service import pakistan_now
@@ -40,66 +40,81 @@ def create_vehicle_entry(
     # Validate selected parking space
     # ============================================================
 
-    if tracking_only:
-        space = None
-    elif parking_space_id is None:
-        space = next(iter(get_available_spaces(db, tenant_id)), None)
-
-        if space is None:
-            raise ValueError("No available parking space")
-    else:
-        space = validate_available_space(
-            db,
-            parking_space_id, tenant_id,
-        )
-
-    # ============================================================
-    # Find or create vehicle
-    # ============================================================
-
-    vehicle = db.query(Vehicle).filter(Vehicle.tenant_id == tenant_id, Vehicle.license_plate == license_plate).first()
-
-    if vehicle is None:
-        vehicle = Vehicle(tenant_id=tenant_id, license_plate=license_plate)
-
-        db.add(vehicle)
-        db.flush()
-
-    # ============================================================
-    # Prevent duplicate active parking sessions
-    # ============================================================
-
-    active_session = (
-        db.query(ParkingSession)
-        .filter(
-            ParkingSession.vehicle_id == vehicle.id,
-            ParkingSession.tenant_id == tenant_id,
-            ParkingSession.status == "active",
-        )
-        .first()
-    )
-
-    if active_session is not None:
-        raise ValueError("This vehicle is already inside the parking garage")
-
-    # ============================================================
-    # Create parking session
-    # ============================================================
-
-    if space:
-        space.is_occupied = True
-
-    session = ParkingSession(
-        tenant_id=tenant_id,
-        vehicle_id=vehicle.id,
-        parking_space_id=space.id if space else None,
-        entry_time=pakistan_now(),
-        status="active",
-    )
-
-    db.add(session)
-
+    # SQLAlchemy autobegins the transaction; hold space locks through commit.
     try:
+        if tracking_only:
+            space = None
+        elif parking_space_id is None:
+            space = (
+                db.query(ParkingSpace)
+                .filter(
+                    ParkingSpace.is_occupied == False,
+                    ParkingSpace.is_active == True,
+                    ParkingSpace.tenant_id == tenant_id,
+                )
+                .order_by(
+                    ParkingSpace.level.asc(),
+                    func.cast(func.substring(ParkingSpace.space_number, r"\d+$"), Integer).asc(),
+                )
+                .populate_existing()
+                .with_for_update(skip_locked=True)
+                .first()
+            )
+
+            if space is None:
+                raise ValueError("No available parking space")
+        else:
+            space = validate_available_space(
+                db,
+                parking_space_id, tenant_id,
+            )
+
+        # ============================================================
+        # Find or create vehicle
+        # ============================================================
+
+        vehicle = db.query(Vehicle).filter(Vehicle.tenant_id == tenant_id, Vehicle.license_plate == license_plate).first()
+
+        if vehicle is None:
+            vehicle = Vehicle(tenant_id=tenant_id, license_plate=license_plate)
+
+            db.add(vehicle)
+            db.flush()
+
+        # ============================================================
+        # Prevent duplicate active parking sessions
+        # ============================================================
+
+        active_session = (
+            db.query(ParkingSession)
+            .filter(
+                ParkingSession.vehicle_id == vehicle.id,
+                ParkingSession.tenant_id == tenant_id,
+                ParkingSession.status == "active",
+            )
+            .first()
+        )
+
+        if active_session is not None:
+            raise ValueError("This vehicle is already inside the parking garage")
+
+        # ============================================================
+        # Create parking session
+        # ============================================================
+
+        if space:
+            space.is_occupied = True
+
+        session = ParkingSession(
+            tenant_id=tenant_id,
+            vehicle_id=vehicle.id,
+            parking_space_id=space.id if space else None,
+            entry_time=pakistan_now(),
+            status="active",
+        )
+
+        db.add(session)
+
         db.commit()
     except Exception:
         db.rollback()
