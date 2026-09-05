@@ -16,7 +16,7 @@ import { createMultiCameraVisionTestScheduler } from "../services/multiCameraVis
 import "../styles/App.css";
 
 const MAX_INFERENCE_FRAME_WIDTH = 960;
-const VISION_REQUEST_INTERVAL_MS = 333;
+const VISION_REQUEST_INTERVAL_MS = 300;
 const VISION_DEBUG = import.meta.env.DEV && import.meta.env.VITE_VISION_DEBUG === "true";
 const GARAGE_SETTINGS_UPDATED_KEY = "parking_garage_settings_updated";
 const MULTI_CAMERA_ORCHESTRATION_TEST = false;
@@ -406,9 +406,17 @@ function GaragePage() {
                     plateCandidateFirstSeenRef.current[candidateKey] = now;
                 }
                 const isCustomNumeric = /^\d{1,4}$/.test(normalizedBest);
-                const requiredVotes = isCustomNumeric ? 4 : 3;
-                const requiredAgeMs = isCustomNumeric ? 1200 : 650;
-                const stablePlate = bestCount >= requiredVotes &&
+
+                // Require one extra matching OCR read before locking.
+                // This reduces false locks while keeping latency low.
+                const requiredVotes = 4;
+
+                // Keep normal plates fast.
+                // Short numeric plates remain stricter because they are easier to misread.
+                const requiredAgeMs = isCustomNumeric ? 1200 : 700;
+
+                const stablePlate =
+                    bestCount >= requiredVotes &&
                     now - plateCandidateFirstSeenRef.current[candidateKey] >= requiredAgeMs &&
                     !longerCompatiblePlate;
 
@@ -2064,7 +2072,7 @@ function GaragePage() {
                             if (
                                 !MULTI_CAMERA_ORCHESTRATION_TEST &&
                                 voteState.lastSeenAt &&
-                                now - voteState.lastSeenAt > 1500
+                                now - voteState.lastSeenAt > 2500
                             ) {
                                 voteState.reads = [];
                             }
@@ -2114,10 +2122,9 @@ function GaragePage() {
                                 reads: voteState.reads.map((read) => read.plate),
                                 bestPlate,
                                 bestCount,
-                                requiredVotes: 3,
+                                requiredVotes: 4,
                                 windowSize: 5,
                             });
-
                             // PARTIAL_PLATE_LOCK_GUARD_V2
                             const normalizedBest = bestPlate
                                 .replace(/[^A-Z0-9]/gi, "")
@@ -2220,12 +2227,10 @@ function GaragePage() {
                             const isCustomShortCandidate =
                                 /^\d{1,4}$/.test(normalizedBest);
 
-                            const requiredVotesForCandidate =
-                                isCustomShortCandidate ? 4 : 3;
+                            const requiredVotesForCandidate = 4;
 
                             const requiredAgeMsForCandidate =
-                                isCustomShortCandidate ? 1200 : 650;
-
+                                isCustomShortCandidate ? 1200 : 700;
                             const matureEnough =
                                 candidateAgeMs >= requiredAgeMsForCandidate;
 
@@ -2850,61 +2855,60 @@ function GaragePage() {
 
                                 {alreadyParked && (
                                     <div className="error">
-                                        Car is already parked in the garage.
+                                        Vehicle is already parked in the garage.
                                     </div>
                                 )}
 
-                                {!vehicleAction && !alreadyParked && !lockActionAlreadyCompleted && (
-                                    <div className="action-selection">
-
-                                        <p className="action-title">
-                                            {detectionSource?.startsWith(
-                                                "exit-"
-                                            )
-                                                ? "Confirm vehicle exit"
-                                                : "Confirm vehicle entry"}
-                                        </p>
-
-
-                                        <div className="vehicle-action-buttons">
-
-                                            {detectionSource?.startsWith(
-                                                "entry-"
-                                            ) && (
-                                                    <button
-                                                        className="confirm-button"
-                                                        onClick={
-                                                            handleSelectEntry
-                                                        }
-                                                        disabled={
-                                                            garageFull ||
-                                                            entryLoading ||
-                                                            exitLoading
-                                                        }
-                                                    >
-                                                        {garageFull
-                                                            ? "Garage Full"
-                                                            : "Entry Vehicle"}
-                                                    </button>
-                                                )}
-
-
+                                {detectionSource?.startsWith("exit-") &&
+                                    !vehicleAction &&
+                                    !exitError && (
+                                        <div className="status-message">
+                                            Checking vehicle status...
                                         </div>
+                                    )}
 
+                                {exitError && (
+                                    <div className="error">
+                                        {exitError}
+                                    </div>
+                                )}
 
-                                        {garageFull &&
-                                            detectionSource?.startsWith(
-                                                "entry-"
-                                            ) && (
+                                {!vehicleAction &&
+                                    !alreadyParked &&
+                                    !exitError &&
+                                    !lockActionAlreadyCompleted &&
+                                    detectionSource?.startsWith("entry-") && (
+                                        <div className="action-selection">
+
+                                            <p className="action-title">
+                                                Confirm vehicle entry
+                                            </p>
+
+                                            <div className="vehicle-action-buttons">
+                                                <button
+                                                    className="confirm-button"
+                                                    onClick={handleSelectEntry}
+                                                    disabled={
+                                                        garageFull ||
+                                                        entryLoading ||
+                                                        exitLoading
+                                                    }
+                                                >
+                                                    {garageFull
+                                                        ? "Garage Full"
+                                                        : "Entry Vehicle"}
+                                                </button>
+                                            </div>
+
+                                            {garageFull && (
                                                 <p className="description">
-                                                    The garage is currently
-                                                    full. Entry is unavailable.
+                                                    The garage is currently full.
+                                                    Entry is unavailable.
                                                 </p>
                                             )}
 
-                                    </div>
-                                )}
-
+                                        </div>
+                                    )}
 
                                 {vehicleAction ===
                                     "entry" && (

@@ -20,9 +20,6 @@ def payment_required_for_exit(
     rate_per_minute: float = PARKING_RATE_PER_MINUTE,
     rate_unit: str = "minute",
 ) -> bool:
-    if not billing_enabled:
-        return False
-
     vehicle = (
         db.query(Vehicle)
         .filter(
@@ -33,7 +30,7 @@ def payment_required_for_exit(
     )
 
     if vehicle is None:
-        raise ValueError("Vehicle not found")
+        raise ValueError("This vehicle is not parked in the garage.")
 
     session = (
         db.query(ParkingSession)
@@ -47,6 +44,9 @@ def payment_required_for_exit(
 
     if session is None:
         raise ValueError("This vehicle is not parked in the garage.")
+
+    if not billing_enabled:
+        return False
 
     amount, _ = calculate_parking_fee(
         session.entry_time,
@@ -64,7 +64,11 @@ def payment_required_for_exit(
         .first()
     )
 
-    discount_percent = whitelist_entry.discount_percent if whitelist_entry else 0
+    discount_percent = (
+        whitelist_entry.discount_percent
+        if whitelist_entry
+        else 0
+    )
 
     return (
         apply_discount(
