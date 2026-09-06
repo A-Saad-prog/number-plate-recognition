@@ -16,6 +16,12 @@ import {
     removeParkingSession,
     updateParkingVehicle,
 } from "../services/api";
+
+import {
+    exportParkingActivityCsv,
+    PARKING_ACTIVITY_EXPORT_TABLES,
+} from "../services/parkingActivityExport";
+
 import "../styles/AdminPage.css";
 import { activatePlateImageFolder, localPlateImageSupport, savedPlateImageFolderName, selectPlateImageFolder } from "../services/localPlateImages";
 
@@ -147,6 +153,17 @@ function AdminPage() {
     const [parkingActivity, setParkingActivity] = useState(null);
     const [activityLoading, setActivityLoading] = useState(false);
     const [activityError, setActivityError] = useState("");
+    const [activityExportRange, setActivityExportRange] = useState("24h");
+    const [activityExportCustomStart, setActivityExportCustomStart] = useState("");
+    const [activityExportCustomEnd, setActivityExportCustomEnd] = useState("");
+    const [activityExportTables, setActivityExportTables] = useState({
+        live_sessions: true,
+        space_status: false,
+        vehicles: false,
+        history: true,
+    });
+    const [activityExportError, setActivityExportError] = useState("");
+    const [activityExportOpen, setActivityExportOpen] = useState(false);
     const [analytics, setAnalytics] = useState(null);
     const [analyticsMetric, setAnalyticsMetric] = useState("earnings");
     const [analyticsPeriod, setAnalyticsPeriod] = useState("7d");
@@ -275,6 +292,36 @@ function AdminPage() {
         } finally {
             activityLoadingRef.current = false;
             setActivityLoading(false);
+        }
+    }
+
+    function toggleActivityExportTable(tableId) {
+        setActivityExportTables((current) => ({
+            ...current,
+            [tableId]: !current[tableId],
+        }));
+
+        setActivityExportError("");
+    }
+
+    async function handleParkingActivityExport() {
+        setActivityExportError("");
+
+        try {
+            const tables = PARKING_ACTIVITY_EXPORT_TABLES
+                .filter((table) => activityExportTables[table.id])
+                .map((table) => table.id);
+
+            await exportParkingActivityCsv(parkingActivity, {
+                rangePreset: activityExportRange,
+                customStart: activityExportCustomStart,
+                customEnd: activityExportCustomEnd,
+                tables,
+            });
+        } catch (error) {
+            setActivityExportError(
+                error?.message || "Unable to export parking activity."
+            );
         }
     }
 
@@ -1133,6 +1180,125 @@ function AdminPage() {
                                 <h1>Parking<br /><span>activity.</span></h1>
                                 <p className="admin-message">Live parking, recent visits, and active space status.</p>
                                 <button type="button" className="activity-refresh" onClick={loadParkingActivity} disabled={activityLoading} aria-label="Refresh activity"><span className={activityLoading ? "spinning" : ""}>↻</span></button>
+
+                                <div className="level-config-block">
+                                    <button
+                                        type="button"
+                                        onClick={() => setActivityExportOpen((open) => !open)}
+                                        aria-expanded={activityExportOpen}
+                                        style={{
+                                            width: "100%",
+                                            display: "flex",
+                                            alignItems: "center",
+                                            justifyContent: "space-between",
+                                            gap: "12px",
+                                            padding: "12px 14px",
+                                            border: "0",
+                                            background: "transparent",
+                                            cursor: "pointer",
+                                            textAlign: "left",
+                                            font: "inherit",
+                                            color: "inherit",
+                                        }}
+                                    >
+                                        <strong>Export parking history</strong>
+                                        <span aria-hidden="true">
+                                            {activityExportOpen ? "−" : "+"}
+                                        </span>
+                                    </button>
+
+                                    {activityExportOpen && (
+                                        <>
+                                            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "16px", marginTop: "18px", marginBottom: "32px" }}>
+                                                <label className="level-count-field camera-field-group" style={{ alignItems: "flex-start" }}>
+                                                    <span>Time frame</span>
+                                                    <select
+                                                        className="language-select"
+                                                        value={activityExportRange}
+                                                        onChange={(event) => {
+                                                            setActivityExportRange(event.target.value);
+                                                            setActivityExportError("");
+                                                        }}
+                                                    >
+                                                        <option value="1h">Last hour</option>
+                                                        <option value="24h">Last 24 hours</option>
+                                                        <option value="7d">Last 7 days</option>
+                                                        <option value="30d">Last 30 days</option>
+                                                        <option value="custom">Custom</option>
+                                                    </select>
+                                                </label>
+
+                                                {activityExportRange === "custom" && (
+                                                    <div style={{ display: "flex", flexWrap: "wrap", gap: "16px", alignItems: "flex-start" }}>
+                                                        <label className="level-count-field camera-field-group" style={{ alignItems: "flex-start" }}>
+                                                            <span>From</span>
+                                                            <input
+                                                                type="datetime-local"
+                                                                value={activityExportCustomStart}
+                                                                onChange={(event) => {
+                                                                    setActivityExportCustomStart(event.target.value);
+                                                                    setActivityExportError("");
+                                                                }}
+                                                            />
+                                                        </label>
+
+                                                        <label className="level-count-field camera-field-group" style={{ alignItems: "flex-start" }}>
+                                                            <span>To</span>
+                                                            <input
+                                                                type="datetime-local"
+                                                                value={activityExportCustomEnd}
+                                                                onChange={(event) => {
+                                                                    setActivityExportCustomEnd(event.target.value);
+                                                                    setActivityExportError("");
+                                                                }}
+                                                            />
+                                                        </label>
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            <div className="billing-payment-methods">
+                                                <p className="billing-subtitle">Tables to include</p>
+
+                                                <div className="payment-options">
+                                                    {PARKING_ACTIVITY_EXPORT_TABLES.map((table) => (
+                                                        <label className="payment-option" key={table.id}>
+                                                            <input
+                                                                type="checkbox"
+                                                                className="payment-checkbox"
+                                                                checked={Boolean(activityExportTables[table.id])}
+                                                                onChange={() => toggleActivityExportTable(table.id)}
+                                                            />
+                                                            <span className="payment-method-name">{table.label}</span>
+                                                        </label>
+                                                    ))}
+                                                </div>
+                                            </div>
+
+                                            <p className="form-hint">
+                                                One selected table downloads as a CSV. Multiple selected tables download together in one ZIP file. Space Status is a current snapshot.
+                                            </p>
+
+                                            {activityExportError && (
+                                                <p className="admin-error whitelist-feedback">
+                                                    {activityExportError}
+                                                </p>
+                                            )}
+
+                                            <div className="settings-actions">
+                                                <button
+                                                    type="button"
+                                                    className="settings-save-button"
+                                                    onClick={handleParkingActivityExport}
+                                                    disabled={!parkingActivity || activityLoading}
+                                                >
+                                                    Download Activity <span>↓</span>
+                                                </button>
+                                            </div>
+                                        </>
+                                    )}
+                                </div>
+
                                 {activityError && <p className="admin-error whitelist-feedback">{activityError}</p>}
                                 {parkingActivity && <>
                                     <p className="admin-message">Capacity: {parkingActivity.space_status.total_active_capacity} · Occupied: {parkingActivity.space_status.occupied} · Available: {parkingActivity.space_status.available}</p>
