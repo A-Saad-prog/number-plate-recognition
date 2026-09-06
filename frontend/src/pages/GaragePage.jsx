@@ -164,8 +164,6 @@ function GaragePage() {
     const [garageAuthFailed, setGarageAuthFailed] = useState(false);
     const garageAuthFailedRef = useRef(false);
     const [showSettingsReloadNotice, setShowSettingsReloadNotice] = useState(false);
-    const [activeLane, setActiveLane] = useState("entry");
-    const activeLaneRef = useRef("entry");
     const [cameraViews, setCameraViews] = useState({});
     const cameraStreamsRef = useRef({});
     const cameraNodesRef = useRef({});
@@ -173,7 +171,6 @@ function GaragePage() {
     const cameraRequestsRef = useRef({});
     const cameraTimersRef = useRef({});
     const cameraStartingRefBySlot = useRef({});
-    const cameraLaneGenerationRef = useRef(0);
     const activeVisionLoopsRef = useRef({});
     const multiCameraTestSchedulerRef = useRef(null);
 
@@ -1965,17 +1962,12 @@ function GaragePage() {
     }
 
     async function startSlotCamera(cameraId) {
-        if (!MULTI_CAMERA_ORCHESTRATION_TEST && !cameraId.startsWith(`${activeLaneRef.current}-`)) return;
         const deviceId = cameraAssignments[cameraId];
         const video = cameraNodesRef.current[cameraId];
         if (!deviceId || !video || cameraStreamsRef.current[cameraId] || cameraStartingRefBySlot.current[cameraId]) return;
         cameraStartingRefBySlot.current[cameraId] = true;
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: deviceId } }, audio: false });
-            if (!MULTI_CAMERA_ORCHESTRATION_TEST && !cameraId.startsWith(`${activeLaneRef.current}-`)) {
-                stream.getTracks().forEach((track) => track.stop());
-                return;
-            }
             cameraStreamsRef.current[cameraId] = stream;
             video.srcObject = stream;
             await video.play();
@@ -1989,8 +1981,6 @@ function GaragePage() {
     }
 
     async function runSlotDetection(cameraId) {
-        if (!MULTI_CAMERA_ORCHESTRATION_TEST && !cameraId.startsWith(`${activeLaneRef.current}-`)) return;
-        const laneGeneration = cameraLaneGenerationRef.current;
         const video = cameraNodesRef.current[cameraId];
         if (!cameraStreamsRef.current[cameraId] || !video || cameraRequestsRef.current[cameraId]) return;
         cameraRequestsRef.current[cameraId] = true;
@@ -2023,16 +2013,7 @@ function GaragePage() {
                         );
                     }
                 );
-                if (
-                    cameraStreamsRef.current[cameraId] &&
-                    (
-                        MULTI_CAMERA_ORCHESTRATION_TEST ||
-                        (
-                            laneGeneration === cameraLaneGenerationRef.current &&
-                            cameraId.startsWith(`${activeLaneRef.current}-`)
-                        )
-                    )
-                ) {
+                if (cameraStreamsRef.current[cameraId]) {
                     setCameraViews((current) => {
                         const currentView = current[cameraId] || {};
                         if (currentView.active && boxesEqual(currentView.box, result.box)) return current;
@@ -2369,16 +2350,7 @@ function GaragePage() {
         } finally {
             cameraRequestsRef.current[cameraId] = false;
 
-            if (
-                cameraStreamsRef.current[cameraId] &&
-                (
-                    MULTI_CAMERA_ORCHESTRATION_TEST ||
-                    (
-                        laneGeneration === cameraLaneGenerationRef.current &&
-                        cameraId.startsWith(`${activeLaneRef.current}-`)
-                    )
-                )
-            ) {
+            if (cameraStreamsRef.current[cameraId]) {
                 cameraTimersRef.current[cameraId] = window.setTimeout(
                     () => runSlotDetection(cameraId),
                     VISION_REQUEST_INTERVAL_MS
@@ -2390,24 +2362,46 @@ function GaragePage() {
     function renderSlotCamera(slot) {
         const view = cameraViews[slot.id] || {};
         const assigned = Boolean(cameraAssignments[slot.id]);
-        const isActiveLane = MULTI_CAMERA_ORCHESTRATION_TEST || slot.lane.toLowerCase() === activeLane;
-        return <div className="camera-panel" key={slot.id}>
-            <div className="camera-panel-header"><div><span className="camera-kicker">{slot.id}</span><strong>{slot.label}</strong></div></div>
-            <div className="camera-preview">
-                {assigned && <span className={`camera-feed-status camera-status ${isActiveLane && view.active ? "active" : "standby"}`}>{isActiveLane && view.active ? "Live" : "Standby"}</span>}
-                {!assigned ? <div className="camera-standby"><strong>Camera not assigned</strong></div> : !isActiveLane ? <div className="camera-standby"><strong>{slot.lane} cameras are on standby</strong></div> : <><video ref={(node) => { cameraNodesRef.current[slot.id] = node; if (node) void startSlotCamera(slot.id); }} autoPlay playsInline muted />{renderDetectionBox(view.box, { current: cameraNodesRef.current[slot.id] })}</>}
-            </div>
-            {view.error && <div className="error">{view.error}</div>}
-        </div>;
-    }
 
-    function switchActiveLane() {
-        const nextLane = activeLane === "entry" ? "exit" : "entry";
-        cameraLaneGenerationRef.current += 1;
-        cameraSlots.filter((slot) => slot.lane.toLowerCase() === activeLane).forEach((slot) => stopSlotCamera(slot.id));
-        clearVehicleDetectionState();
-        activeLaneRef.current = nextLane;
-        setActiveLane(nextLane);
+        return (
+            <div className="camera-panel" key={slot.id}>
+                <div className="camera-panel-header">
+                    <div>
+                        <span className="camera-kicker">{slot.id}</span>
+                        <strong>{slot.label}</strong>
+                    </div>
+                </div>
+
+                <div className="camera-preview">
+                    {assigned && (
+                        <span className={`camera-feed-status camera-status ${view.active ? "active" : "standby"}`}>
+                            {view.active ? "Live" : "Standby"}
+                        </span>
+                    )}
+
+                    {!assigned ? (
+                        <div className="camera-standby">
+                            <strong>Camera not assigned</strong>
+                        </div>
+                    ) : (
+                        <>
+                            <video
+                                ref={(node) => {
+                                    cameraNodesRef.current[slot.id] = node;
+                                    if (node) void startSlotCamera(slot.id);
+                                }}
+                                autoPlay
+                                playsInline
+                                muted
+                            />
+                            {renderDetectionBox(view.box, { current: cameraNodesRef.current[slot.id] })}
+                        </>
+                    )}
+                </div>
+
+                {view.error && <div className="error">{view.error}</div>}
+            </div>
+        );
     }
 
 
@@ -2574,205 +2568,11 @@ function GaragePage() {
                             <section><p className="camera-kicker">Entry</p><div className="camera-slot-grid">{cameraSlots.filter((slot) => slot.lane === "Entry").map(renderSlotCamera)}</div></section>
                             <section><p className="camera-kicker">Exit</p><div className="camera-slot-grid">{cameraSlots.filter((slot) => slot.lane === "Exit").map(renderSlotCamera)}</div></section>
                         </div>
-                        {MULTI_CAMERA_ORCHESTRATION_TEST ? (
+                        {MULTI_CAMERA_ORCHESTRATION_TEST && (
                             <div className="status-message">
                                 Multi-camera test mode: all assigned camera slots are active. Parking entry/exit writes are blocked.
                             </div>
-                        ) : (
-                            <button type="button" className="lane-switch-button" onClick={switchActiveLane}>
-                                {activeLane === "entry" ? "Open Exit" : "Open Entry"}
-                            </button>
                         )}
-
-                        <div className="camera-grid legacy-camera-grid">
-
-                            <div className="camera-panel">
-
-                                <div className="camera-panel-header">
-                                    <div>
-                                        <span className="camera-kicker">
-                                            Lane 01
-                                        </span>
-
-                                        <strong>
-                                            Entry Camera 1
-                                        </strong>
-                                    </div>
-
-                                </div>
-
-
-                                <div className="camera-preview">
-                                    <span
-                                        className={`camera-feed-status camera-status ${cameraActive
-                                            ? "active"
-                                            : "standby"
-                                            }`}
-                                    >
-                                        {cameraActive ? (
-                                            <>
-                                                <span className="live-dot">●</span>
-                                                {" Live"}
-                                            </>
-                                        ) : (
-                                            "Standby"
-                                        )}
-                                    </span>
-
-                                    {renderDetectionBox(
-                                        entryDetectionBox,
-                                        videoRef
-                                    )}
-
-                                    {exitCameraActive ? (
-                                        <div className="camera-standby">
-                                            <span className="camera-icon">▣</span>
-                                            <strong>Entry camera is closed</strong>
-                                            <p>Close the exit camera to resume entry monitoring.</p>
-                                        </div>
-                                    ) : (
-                                        <video
-                                            ref={videoRef}
-                                            autoPlay
-                                            playsInline
-                                            muted
-                                            onCanPlay={(event) =>
-                                                event.currentTarget
-                                                    .play()
-                                                    .catch(
-                                                        () => { }
-                                                    )
-                                            }
-                                        />
-                                    )}
-                                </div>
-
-                            </div>
-
-                            {Array.from({ length: entryCameraCount - 1 }, (_, index) =>
-                                renderSharedCamera(
-                                    `entry-${index + 2}`,
-                                    `Entry Camera ${index + 2}`,
-                                    videoRef,
-                                    cameraActive && !exitCameraActive
-                                )
-                            )}
-
-
-                            <div className="camera-panel">
-
-                                <div className="camera-panel-header">
-                                    <div>
-                                        <span className="camera-kicker">
-                                            Lane 02
-                                        </span>
-
-                                        <strong>
-                                            Exit Camera 1
-                                        </strong>
-                                    </div>
-
-                                </div>
-
-
-                                <div className="camera-preview exit-camera-preview">
-                                    <span
-                                        className={`camera-feed-status camera-status ${exitCameraActive
-                                            ? "active"
-                                            : "standby"
-                                            }`}
-                                    >
-                                        {exitCameraActive ? (
-                                            <>
-                                                <span className="live-dot">●</span>
-                                                {" Live"}
-                                            </>
-                                        ) : (
-                                            "Standby"
-                                        )}
-                                    </span>
-
-                                    {renderDetectionBox(
-                                        exitDetectionBox,
-                                        exitVideoRef
-                                    )}
-
-                                    {exitCameraActive ? (
-                                        <video
-                                            ref={exitVideoRef}
-                                            autoPlay
-                                            playsInline
-                                            muted
-                                            onCanPlay={(event) =>
-                                                event.currentTarget
-                                                    .play()
-                                                    .catch(
-                                                        () => { }
-                                                    )
-                                            }
-                                        />
-                                    ) : (
-                                        <div className="camera-standby">
-                                            <span className="camera-icon">
-                                                ▣
-                                            </span>
-
-                                            <strong>
-                                                Exit camera is closed
-                                            </strong>
-
-                                            <p>
-                                                Open it when a vehicle
-                                                is leaving.
-                                            </p>
-                                        </div>
-                                    )}
-
-                                </div>
-
-
-                                {!exitCameraActive ? (
-                                    <button
-                                        type="button"
-                                        className="open-camera-button"
-                                        onClick={
-                                            openExitCamera
-                                        }
-                                    >
-                                        Open Exit Camera
-                                    </button>
-                                ) : (
-                                    <button
-                                        type="button"
-                                        className="close-camera-button"
-                                        onClick={
-                                            closeExitCamera
-                                        }
-                                    >
-                                        Close Exit Camera
-                                    </button>
-                                )}
-
-
-                                {exitCameraError && (
-                                    <div className="error">
-                                        {exitCameraError}
-                                    </div>
-                                )}
-
-                            </div>
-
-                            {Array.from({ length: exitCameraCount - 1 }, (_, index) =>
-                                renderSharedCamera(
-                                    `exit-${index + 2}`,
-                                    `Exit Camera ${index + 2}`,
-                                    exitVideoRef,
-                                    exitCameraActive
-                                )
-                            )}
-
-                        </div>
-
 
                         <canvas
                             ref={canvasRef}
@@ -3089,7 +2889,7 @@ function GaragePage() {
                     </section>
 
 
-                    {(exitResult || exitCameraActive && detectionSource?.startsWith("exit-")) && (
+                    {(exitResult || detectionSource?.startsWith("exit-")) && (
                         <section className="card vehicle-information-card">
 
                             <h2>

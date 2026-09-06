@@ -42,10 +42,13 @@
     min-width: 82px;
 }
 
+.admin-login-top .language-select option {
+    background: white;    
+}
+
 .admin-display-controls button:hover,
 .language-select:hover {
     border-color: #e05b35;
-    color: #e05b35;
 }
 
 .theme-toggle {

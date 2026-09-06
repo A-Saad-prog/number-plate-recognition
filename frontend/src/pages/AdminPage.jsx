@@ -463,6 +463,39 @@ function AdminPage() {
         return Number.isInteger(count) && count >= 1 && count <= 4 ? count : 1;
     }
 
+    function clearUnusedCameraAssignments(config) {
+        const entryCount = Number(config.entry_lane_cameras);
+        const exitCount = Number(config.exit_lane_cameras);
+
+        if (
+            !Number.isInteger(entryCount) ||
+            !Number.isInteger(exitCount) ||
+            entryCount < 1 ||
+            exitCount < 1 ||
+            entryCount > 4 ||
+            exitCount > 4 ||
+            entryCount + exitCount > 4
+        ) {
+            return;
+        }
+
+        setCameraAssignments((current) => {
+            const next = { ...current };
+
+            for (let index = 1; index <= 4; index += 1) {
+                if (index > entryCount) {
+                    delete next[`entry-${index}`];
+                }
+
+                if (index > exitCount) {
+                    delete next[`exit-${index}`];
+                }
+            }
+
+            return next;
+        });
+    }
+
     function handleCameraConfigChange(field, value) {
         const nextValue = value.replace(/[^\d]/g, "");
         if (value !== nextValue || (nextValue !== "" && (!/^\d$/.test(nextValue) || Number(nextValue) < 1 || Number(nextValue) > 4))) {
@@ -471,7 +504,9 @@ function AdminPage() {
             setCameraMessage("Each lane can use between 1 and 4 cameras.");
             return;
         }
+
         const nextConfig = { ...cameraConfig, [field]: nextValue };
+
         setCameraConfig((current) => ({
             ...current,
             [field]: nextValue,
@@ -485,6 +520,11 @@ function AdminPage() {
 
         const total = Number(nextConfig.entry_lane_cameras) + Number(nextConfig.exit_lane_cameras);
         const combinedError = errorMessage === "" && total > 4;
+
+        if (!combinedError) {
+            clearUnusedCameraAssignments(nextConfig);
+        }
+
         setCameraMessage(combinedError ? "Camera limit exceeded. A maximum of 4 cameras can be assigned across entry and exit lanes." : "");
         setCameraMessageType(combinedError ? "warning" : "success");
     }
@@ -503,6 +543,22 @@ function AdminPage() {
         if (hasError || Number(cameraConfig.entry_lane_cameras) + Number(cameraConfig.exit_lane_cameras) > 4) {
             setCameraMessageType("warning");
             setCameraMessage(Number(cameraConfig.entry_lane_cameras) + Number(cameraConfig.exit_lane_cameras) > 4 ? "Camera limit exceeded. A maximum of 4 cameras can be assigned across entry and exit lanes." : t.fixCameraErrors);
+            return;
+        }
+
+        const activeCameraIds = cameraSlots.map((slot) => slot.id);
+        const assignedDeviceIds = activeCameraIds
+            .map((cameraId) => cameraAssignments[cameraId])
+            .filter(Boolean);
+
+        const hasDuplicateCamera =
+            new Set(assignedDeviceIds).size !== assignedDeviceIds.length;
+
+        if (hasDuplicateCamera) {
+            setCameraMessageType("warning");
+            setCameraMessage(
+                "The same physical camera cannot be assigned to more than one camera slot."
+            );
             return;
         }
 
@@ -536,10 +592,32 @@ function AdminPage() {
     }
 
     function setCameraAssignment(cameraId, deviceId) {
+        if (deviceId) {
+            const activeCameraIds = cameraSlots.map((slot) => slot.id);
+
+            const alreadyUsedBy = Object.entries(cameraAssignments).find(
+                ([otherCameraId, assignedDeviceId]) =>
+                    activeCameraIds.includes(otherCameraId) &&
+                    otherCameraId !== cameraId &&
+                    assignedDeviceId === deviceId
+            );
+
+            if (alreadyUsedBy) {
+                setCameraMessageType("warning");
+                setCameraMessage(
+                    "This camera is already assigned to another camera slot. One physical camera can only be used in one field."
+                );
+                return;
+            }
+        }
+
         setCameraAssignments((current) => ({
             ...current,
             [cameraId]: deviceId,
         }));
+
+        setCameraMessage("");
+        setCameraMessageType("success");
     }
 
     const safeEntryCameraCount = safeCameraCount(cameraConfig.entry_lane_cameras);
