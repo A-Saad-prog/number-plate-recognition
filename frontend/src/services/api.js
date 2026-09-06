@@ -180,6 +180,16 @@ export async function registerEntry(licensePlate, parkingSpaceId) {
     return await response.json();
 }
 
+export async function getActiveParkingSession(licensePlate) {
+    const response = await fetch(
+        `${API_BASE_URL}/parking/active-session?license_plate=${encodeURIComponent(licensePlate)}`,
+        { headers: garageAuthHeaders() }
+    );
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw requestError(response, data, `Failed to check active session: ${response.status}`);
+    return data;
+}
+
 
 // ============================================================
 // Exit Using License Plate

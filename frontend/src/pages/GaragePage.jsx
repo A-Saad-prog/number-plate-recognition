@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import {
     getParkingSpaces,
     registerEntry,
+    getActiveParkingSession,
     exitUsingPlate,
     getExitPaymentRequired,
     detectPlateFromFrame,
@@ -32,7 +33,29 @@ function boxesEqual(first, second) {
     return first.x1 === second.x1 && first.y1 === second.y1 && first.x2 === second.x2 && first.y2 === second.y2;
 }
 
+function openOrFocusNamedTab(url, name) {
+    const target = window.open("", name);
+    if (!target) return;
+
+    try {
+        if (
+            target.location.origin !== window.location.origin ||
+            target.location.pathname !== url
+        ) {
+            target.location.href = url;
+        }
+    } catch {
+        target.location.href = url;
+    }
+
+    target.focus();
+}
+
 function GaragePage() {
+    useEffect(() => {
+        window.name = "parkingos-garage";
+    }, []);
+
     const [cameraAssignments] = useState(() => {
         try {
             return JSON.parse(localStorage.getItem("parking_camera_assignments")) || {};
@@ -85,6 +108,7 @@ function GaragePage() {
     const automaticExitAttemptRef = useRef({});
     const pendingAutomaticExitRef = useRef({});
     const exitPaymentPrefetchRef = useRef({});
+    const terminalClearTimersRef = useRef({});
 
     const [selectedSpaceId, setSelectedSpaceId] = useState(null);
     const [entryLoading, setEntryLoading] = useState(false);
@@ -107,6 +131,121 @@ function GaragePage() {
         }
 
         delete partialPlateEvidenceRef.current[source];
+    }
+
+    function clearCompletedCameraPlate(source) {
+        window.clearTimeout(terminalClearTimersRef.current[source]);
+        delete terminalClearTimersRef.current[source];
+        delete detectedPlateRef.current[source];
+        delete confirmedPlateLockRef.current[source];
+        delete confirmedPlateLastDetectedAtRef.current[source];
+        delete confirmedLockImageRef.current[source];
+        delete completedLockActionRef.current[source];
+        delete automaticExitAttemptRef.current[source];
+        delete pendingAutomaticExitRef.current[source];
+        delete exitPaymentPrefetchRef.current[source];
+        clearPlateCandidates(source);
+        plateVoteHistoryRef.current[source] = { reads: [], lastSeenAt: 0 };
+    }
+
+    function scheduleTerminalCameraClear(cameraId, plate) {
+        window.clearTimeout(terminalClearTimersRef.current[cameraId]);
+        terminalClearTimersRef.current[cameraId] = window.setTimeout(() => {
+            if (
+                detectedPlateRef.current[cameraId] !== plate ||
+                confirmedPlateLockRef.current[cameraId] !== plate
+            ) return;
+            clearCompletedCameraPlate(cameraId);
+            clearCameraVehicleState(cameraId);
+        }, 1000);
+    }
+
+    async function resolveConfirmedCameraPlate(cameraId, plate, image) {
+        const trackingMode = adminSettings?.garage_settings?.mode === "tracking";
+        const isEntry = cameraId.startsWith("entry-");
+        updateCameraVehicleState(cameraId, {
+            plate,
+            action: null,
+            loading: true,
+            alreadyParked: false,
+            selectedSpaceId: null,
+            entryResult: null,
+            exitResult: null,
+            paymentRequired: false,
+            paymentMethod: null,
+            ratePerMinute: null,
+            error: "",
+        });
+
+        let active;
+        try {
+            const result = await getActiveParkingSession(plate);
+            if (
+                detectedPlateRef.current[cameraId] !== plate ||
+                confirmedPlateLockRef.current[cameraId] !== plate
+            ) return;
+            active = Boolean(result.active);
+        } catch (error) {
+            if (detectedPlateRef.current[cameraId] !== plate) return;
+            updateCameraVehicleState(cameraId, { loading: false, action: null, error: error.message || "Could not check vehicle status." });
+            return;
+        }
+
+        if (isEntry && active) {
+            updateCameraVehicleState(cameraId, {
+                plate, action: null, loading: false, alreadyParked: true,
+                selectedSpaceId: null, error: "",
+            });
+            scheduleTerminalCameraClear(cameraId, plate);
+            return;
+        }
+
+        if (!isEntry && !active) {
+            updateCameraVehicleState(cameraId, {
+                plate, action: null, loading: false, selectedSpaceId: null,
+                error: trackingMode ? "Vehicle is not currently logged." : "Vehicle is not parked in the garage.",
+            });
+            scheduleTerminalCameraClear(cameraId, plate);
+            return;
+        }
+
+        if (isEntry) {
+            if (trackingMode) {
+                if (automaticEntryRef.current && !MULTI_CAMERA_ORCHESTRATION_TEST) {
+                    void handleConfirmEntry(plate, null, cameraId, true);
+                } else {
+                    updateCameraVehicleState(cameraId, { plate, action: "entry", loading: false, selectedSpaceId: null, error: "" });
+                }
+                return;
+            }
+
+            const parkedSpace = parkingSpacesRef.current.find(
+                (space) => space.is_occupied && space.license_plate === plate
+            );
+            if (parkedSpace) {
+                updateCameraVehicleState(cameraId, { plate, action: null, loading: false, alreadyParked: true, selectedSpaceId: null, error: "" });
+                scheduleTerminalCameraClear(cameraId, plate);
+                return;
+            }
+
+            if (automaticEntryRef.current && !MULTI_CAMERA_ORCHESTRATION_TEST) {
+                void handleConfirmEntry(plate, null, cameraId, true);
+                return;
+            }
+            const automaticSpace = getAutomaticParkingSpace();
+            updateCameraVehicleState(cameraId, automaticSpace
+                ? { plate, action: "entry", loading: false, selectedSpaceId: automaticSpace.id, error: "" }
+                : { plate, action: null, loading: false, selectedSpaceId: null, error: "No parking space is available for this vehicle." });
+            return;
+        }
+
+        if (trackingMode) {
+            updateCameraVehicleState(cameraId, { plate, action: "exit", loading: false, selectedSpaceId: null, paymentRequired: false, paymentMethod: null, error: "" });
+        } else {
+            updateCameraVehicleState(cameraId, { plate, action: null, loading: true, selectedSpaceId: null, error: "" });
+            void prefetchExitPaymentRequired(plate, cameraId);
+            void startAutomaticExit(plate, cameraId);
+        }
     }
 
     function saveConfirmedLockImageAfterAction(plate, source) {
@@ -381,24 +520,6 @@ function GaragePage() {
                 voteState.reads = voteState.reads.slice(-5);
                 plateVoteHistoryRef.current[source] = voteState;
 
-                const lockedPlate = confirmedPlateLockRef.current[source];
-
-                if (lockedPlate) {
-                    confirmedPlateLastDetectedAtRef.current[source] = now;
-                    detectedPlateRef.current[source] = lockedPlate;
-                    setDetectedPlate(lockedPlate);
-                    setDetectionSource(source);
-
-                    console.log("[Vision locked]", {
-                        source,
-                        incoming: plate,
-                        locked: lockedPlate,
-                        ignoredFluctuation: plate !== lockedPlate,
-                    });
-
-                    return true;
-                }
-
                 const voteCounts = {};
                 for (const read of voteState.reads) {
                     voteCounts[read.plate] =
@@ -457,6 +578,9 @@ function GaragePage() {
                 }
 
                 if (stablePlate) {
+                    if (lastCompletedPlateRef.current[source] !== bestPlate) {
+                        delete lastCompletedPlateRef.current[source];
+                    }
                     detectedPlateRef.current[source] = bestPlate;
 
                     plateCandidateRef.current = "";
@@ -479,50 +603,7 @@ function GaragePage() {
                     confirmedPlateLockRef.current[source] = plate;
                     confirmedPlateLastDetectedAtRef.current[source] = now;
                     confirmedLockImageRef.current[source] = image;
-                    if (source.startsWith("entry-")) {
-                        setAlreadyParked(false);
-                        setEntryError("");
-                        setEntryResult(null);
-                    } else {
-                        setExitError("");
-                        setExitResult(null);
-                        setPaymentMethod(null);
-                        setExitRatePerMinute(null);
-                        void prefetchExitPaymentRequired(plate, source);
-                        void startAutomaticExit(plate, source);
-                    }
-
-                    // ====================================================
-                    // AUTOMATIC ENTRY PARKING SPACE ASSIGNMENT
-                    // ====================================================
-
-                    const parkedSpace = source.startsWith("entry-")
-                        ? parkingSpacesRef.current.find(
-                            (space) => space.is_occupied && space.license_plate === plate
-                        )
-                        : null;
-
-                    if (parkedSpace) {
-                        setAlreadyParked(true);
-                        setEntryError("Car is already parked in the garage.");
-                    } else if (source.startsWith("entry-")) {
-                        if (automaticEntryRef.current) {
-                            setVehicleAction("entry");
-                            void handleConfirmEntry(plate, null, source, true);
-                        } else {
-                            const automaticSpace =
-                                getAutomaticParkingSpace();
-
-                            if (automaticSpace) {
-                                setSelectedSpaceId(
-                                    automaticSpace.id
-                                );
-                            } else {
-                                setSelectedSpaceId(null);
-                            }
-
-                        }
-                    }
+                    void resolveConfirmedCameraPlate(source, plate, image);
                 }
             } else {
                 lastCompletedPlateRef.current[source] = "";
@@ -540,34 +621,6 @@ function GaragePage() {
                     };
                 }
 
-                if (
-                    !result.detected &&
-                    confirmedPlateLockRef.current[source]
-                ) {
-                    const lastDetectedAt =
-                        confirmedPlateLastDetectedAtRef.current[source] || 0;
-
-                    if (now - lastDetectedAt > 500) {
-                        console.log("[Vision unlock]", {
-                            source,
-                            plate: confirmedPlateLockRef.current[source],
-                        });
-
-                        delete confirmedPlateLockRef.current[source];
-                        delete confirmedPlateLastDetectedAtRef.current[source];
-                        delete confirmedLockImageRef.current[source];
-                        delete completedLockActionRef.current[source];
-                        Object.keys(savedLockImageRef.current).forEach((key) => {
-                            if (key.startsWith(`${source}:`)) delete savedLockImageRef.current[key];
-                        });
-                        delete lastCompletedPlateRef.current[source];
-                        clearPlateCandidates(source);
-                        plateVoteHistoryRef.current[source] = { reads: [], lastSeenAt: 0 };
-                        detectedPlateRef.current[source] = "";
-                        setDetectedPlate("");
-                        setDetectionSource(null);
-                    }
-                }
             }
 
         } catch (error) {
@@ -700,6 +753,8 @@ function GaragePage() {
 
 
     function clearVehicleDetectionState() {
+        Object.values(terminalClearTimersRef.current).forEach((timer) => window.clearTimeout(timer));
+        terminalClearTimersRef.current = {};
         detectedPlateRef.current = {};
         lastCompletedPlateRef.current = {};
         automaticExitAttemptRef.current = {};
@@ -1109,7 +1164,10 @@ function GaragePage() {
     }, [adminSettings, openLevel]);
 
 
-    useEffect(() => () => Object.keys(cameraStreamsRef.current).forEach(stopSlotCamera), []);
+    useEffect(() => () => {
+        Object.keys(cameraStreamsRef.current).forEach(stopSlotCamera);
+        Object.values(terminalClearTimersRef.current).forEach((timer) => window.clearTimeout(timer));
+    }, []);
 
 
     function handleSelectEntry() {
@@ -1349,7 +1407,8 @@ function GaragePage() {
     async function handleConfirmEntry(plateOverride, spaceOverride, sourceOverride = activeDetectionSourceRef.current, automatic = false) {
         const cameraState = cameraVehicleState[sourceOverride] || {};
         const plate = plateOverride || cameraState.plate || detectedPlate;
-        const spaceId = spaceOverride ?? cameraState.selectedSpaceId ?? selectedSpaceId;
+        const trackingMode = adminSettings?.garage_settings?.mode === "tracking";
+        const spaceId = trackingMode ? null : spaceOverride ?? cameraState.selectedSpaceId ?? selectedSpaceId;
         if (entrySubmittingRef.current[sourceOverride]) return;
         if (!plate) {
             updateCameraVehicleState(sourceOverride, {
@@ -1361,7 +1420,7 @@ function GaragePage() {
             return;
         }
 
-        if (!automatic && !spaceId) {
+        if (!trackingMode && !automatic && !spaceId) {
             updateCameraVehicleState(sourceOverride, {
                 error: "No parking space is available for this vehicle.",
             });
@@ -1378,13 +1437,21 @@ function GaragePage() {
             entryResult: null,
         });
 
+        let entryCompleted = false;
         try {
-            const result = automatic
-                ? await registerEntry(plate)
-                : await registerEntry(
-                    plate,
-                    spaceId
-                );
+            const result = trackingMode
+                ? await registerEntry(plate, null)
+                : automatic
+                    ? await registerEntry(plate)
+                    : await registerEntry(
+                        plate,
+                        spaceId
+                    );
+
+            if (
+                detectedPlateRef.current[sourceOverride] !== plate ||
+                confirmedPlateLockRef.current[sourceOverride] !== plate
+            ) return;
 
             if (!result.success) {
                 updateCameraVehicleState(sourceOverride, {
@@ -1406,34 +1473,37 @@ function GaragePage() {
             completedLockActionRef.current[sourceOverride] = plate;
             saveConfirmedLockImageAfterAction(plate, sourceOverride);
 
+            const enteredSpaceId = automatic
+                ? vehicle.parking_space_id ?? vehicle.space_id ?? null
+                : spaceId;
             const nextSpaces =
                 parkingSpacesRef.current.map(
-                    (space) =>
-                        (automatic
-                            ? space.level === vehicle.level && space.space === vehicle.space
-                            : space.id === spaceId)
+                    (space) => {
+                        const enteredSpace = !trackingMode && (enteredSpaceId != null
+                            ? space.id === enteredSpaceId
+                            : automatic &&
+                            Number(space.level) === Number(vehicle.level) &&
+                            String(space.space) === String(vehicle.space));
+
+                        return enteredSpace
                             ? {
                                 ...space,
                                 is_occupied: true,
-                                license_plate:
-                                    vehicle.license_plate,
-                                entry_time:
-                                    vehicle.entry_time,
+                                license_plate: vehicle.license_plate,
+                                entry_time: vehicle.entry_time,
                             }
-                            : space
+                            : space;
+                    }
                 );
 
-            parkingSpacesRef.current = nextSpaces;
-            setParkingSpaces(nextSpaces);
+            if (!trackingMode) {
+                parkingSpacesRef.current = nextSpaces;
+                setParkingSpaces(nextSpaces);
+            }
 
-            updateCameraVehicleState(sourceOverride, {
-                plate,
-                action: null,
-                loading: false,
-                error: "",
-                selectedSpaceId: null,
-                entryResult: vehicle,
-            });
+            entryCompleted = true;
+            clearCompletedCameraPlate(sourceOverride);
+            clearCameraVehicleState(sourceOverride);
             setActiveEntryCameraId((current) =>
                 current === sourceOverride ? null : current
             );
@@ -1470,7 +1540,9 @@ function GaragePage() {
 
         } finally {
             delete entrySubmittingRef.current[sourceOverride];
-            updateCameraVehicleState(sourceOverride, { loading: false });
+            if (!entryCompleted) {
+                updateCameraVehicleState(sourceOverride, { loading: false });
+            }
             setEntryLoading(false);
         }
     }
@@ -1484,8 +1556,9 @@ function GaragePage() {
     ) {
         const cameraState = cameraVehicleState[sourceOverride] || {};
         const plate = plateOverride || cameraState.plate || detectedPlate;
-        const chosenPaymentMethod = selectedPaymentMethod ?? cameraState.paymentMethod ?? paymentMethod;
-        const requiresPayment = paymentRequired ?? cameraState.paymentRequired ?? exitPaymentRequired;
+        const trackingMode = adminSettings?.garage_settings?.mode === "tracking";
+        const chosenPaymentMethod = trackingMode ? null : selectedPaymentMethod ?? cameraState.paymentMethod ?? paymentMethod;
+        const requiresPayment = trackingMode ? false : paymentRequired ?? cameraState.paymentRequired ?? exitPaymentRequired;
         if (exitSubmittingRef.current[sourceOverride]) return;
         if (!plate) {
             updateCameraVehicleState(sourceOverride, {
@@ -1518,12 +1591,18 @@ function GaragePage() {
             error: "",
         });
 
+        let exitCompleted = false;
         try {
             const result =
                 await exitUsingPlate(
                     plate,
                     requiresPayment ? normalizedPaymentMethod : null
                 );
+
+            if (
+                detectedPlateRef.current[sourceOverride] !== plate ||
+                confirmedPlateLockRef.current[sourceOverride] !== plate
+            ) return;
 
             if (!result.success) {
                 updateCameraVehicleState(sourceOverride, {
@@ -1542,6 +1621,7 @@ function GaragePage() {
             lastCompletedPlateRef.current[sourceOverride] = plate;
             completedLockActionRef.current[sourceOverride] = plate;
             saveConfirmedLockImageAfterAction(plate, sourceOverride);
+            clearCompletedCameraPlate(sourceOverride);
             delete automaticExitAttemptRef.current[sourceOverride];
             delete pendingAutomaticExitRef.current[sourceOverride];
 
@@ -1562,18 +1642,14 @@ function GaragePage() {
                     return space;
                 });
 
-            parkingSpacesRef.current = nextSpaces;
-            setParkingSpaces(nextSpaces);
+            if (!trackingMode) {
+                parkingSpacesRef.current = nextSpaces;
+                setParkingSpaces(nextSpaces);
+            }
 
-            updateCameraVehicleState(sourceOverride, {
-                action: null,
-                loading: false,
-                error: "",
-                paymentMethod: null,
-                paymentRequired: false,
-                ratePerMinute: receipt.rate_per_minute ?? cameraState.ratePerMinute,
-                exitResult: receipt,
-            });
+            exitCompleted = true;
+            clearCameraVehicleState(sourceOverride);
+            clearCompletedCameraPlate(sourceOverride);
 
             detectedPlateRef.current[sourceOverride] = "";
             setDetectedPlate("");
@@ -1608,7 +1684,9 @@ function GaragePage() {
 
         } finally {
             delete exitSubmittingRef.current[sourceOverride];
-            updateCameraVehicleState(sourceOverride, { loading: false });
+            if (!exitCompleted) {
+                updateCameraVehicleState(sourceOverride, { loading: false });
+            }
             setExitLoading(false);
         }
     }
@@ -2110,25 +2188,11 @@ function GaragePage() {
                     // Per-camera temporal confirmation and lock.
                     {
                         const now = Date.now();
-                        const lockedPlate = confirmedPlateLockRef.current[cameraId];
-
                         if (result.detected) {
                             confirmedPlateLastDetectedAtRef.current[cameraId] = now;
                         }
 
-                        if (lockedPlate) {
-                            detectedPlateRef.current[cameraId] = lockedPlate;
-                            updateCameraVehicleState(cameraId, { plate: lockedPlate });
-
-                            if (plate) {
-                                console.log("[Vision locked]", {
-                                    source: cameraId,
-                                    incoming: plate,
-                                    locked: lockedPlate,
-                                    ignoredFluctuation: plate !== lockedPlate,
-                                });
-                            }
-                        } else if (plate) {
+                        if (plate) {
                             const rawConfidence = Number(result.confidence || 0);
                             const normalizedConfidence =
                                 rawConfidence > 1
@@ -2346,6 +2410,9 @@ function GaragePage() {
                                 matureEnough &&
                                 !longerCompatiblePlate
                             ) {
+                                if (lastCompletedPlateRef.current[cameraId] !== bestPlate) {
+                                    delete lastCompletedPlateRef.current[cameraId];
+                                }
                                 confirmedPlateLockRef.current[cameraId] = bestPlate;
                                 confirmedPlateLastDetectedAtRef.current[cameraId] = now;
                                 detectedPlateRef.current[cameraId] = bestPlate;
@@ -2353,7 +2420,7 @@ function GaragePage() {
                                 updateCameraVehicleState(cameraId, {
                                     plate: bestPlate,
                                     action: null,
-                                    loading: false,
+                                    loading: true,
                                     error: "",
                                     alreadyParked: false,
                                     selectedSpaceId: null,
@@ -2377,75 +2444,12 @@ function GaragePage() {
                                     candidateAgeMs,
                                 });
 
-                                if (cameraId.startsWith("entry-")) {
-                                    updateCameraVehicleState(cameraId, {
-                                        alreadyParked: false,
-                                        error: "",
-                                        entryResult: null,
-                                    });
-                                } else {
-                                    updateCameraVehicleState(cameraId, {
-                                        plate: bestPlate,
-                                        action: "exit",
-                                        loading: true,
-                                        error: "",
-                                        exitResult: null,
-                                        paymentMethod: null,
-                                        ratePerMinute: null,
-                                    });
-                                    if (!MULTI_CAMERA_ORCHESTRATION_TEST) {
-                                        void prefetchExitPaymentRequired(bestPlate, cameraId);
-                                        void startAutomaticExit(bestPlate, cameraId);
-                                    } else {
-                                        console.log("[MC TEST] Exit action blocked", {
-                                            source: cameraId,
-                                            plate: bestPlate,
-                                        });
-                                    }
+                                void resolveConfirmedCameraPlate(
+                                    cameraId,
+                                    bestPlate,
+                                    canvas.toDataURL("image/jpeg", 0.82)
+                                );
 
-                                }
-
-                                const parkedSpace = cameraId.startsWith("entry-")
-                                    ? parkingSpacesRef.current.find(
-                                        (space) => space.is_occupied && space.license_plate === bestPlate
-                                    )
-                                    : null;
-
-                                if (parkedSpace) {
-                                    updateCameraVehicleState(cameraId, {
-                                        alreadyParked: true,
-                                        error: "Car is already parked in the garage.",
-                                    });
-                                } else if (cameraId.startsWith("entry-")) {
-                                    if (automaticEntryRef.current && !MULTI_CAMERA_ORCHESTRATION_TEST) {
-                                        void handleConfirmEntry(bestPlate, null, cameraId, true);
-                                    } else {
-                                        const automaticSpace = getAutomaticParkingSpace();
-                                        if (automaticSpace) {
-                                            setActiveEntryCameraId(cameraId);
-
-                                            updateCameraVehicleState(cameraId, {
-                                                action: "entry",
-                                                selectedSpaceId: automaticSpace.id,
-                                            });
-                                            if (automaticEntryRef.current) {
-                                                console.log("[MC TEST] Entry action blocked", {
-                                                    source: cameraId,
-                                                    plate: bestPlate,
-                                                    space: automaticSpace.id,
-                                                });
-                                            }
-                                        } else {
-                                            setActiveEntryCameraId(cameraId);
-
-                                            updateCameraVehicleState(cameraId, {
-                                                action: "entry",
-                                                selectedSpaceId: null,
-                                                error: "No parking space is available for this vehicle.",
-                                            });
-                                        }
-                                    }
-                                }
                             } else if (
                                 bestCount >= requiredVotesForCandidate &&
                                 (!matureEnough || longerCompatiblePlate)
@@ -2459,44 +2463,8 @@ function GaragePage() {
                                     requiredAgeMs: requiredAgeMsForCandidate,
                                     candidateAgeMs,
                                     matureEnough,
-                                    longerCompatiblePlate:
-                                        longerCompatiblePlate || null,
+                                    longerCompatiblePlate: longerCompatiblePlate || null,
                                 });
-                            }
-                        }
-
-                        if (
-                            !result.detected &&
-                            confirmedPlateLockRef.current[cameraId]
-                        ) {
-                            const lastDetectedAt =
-                                confirmedPlateLastDetectedAtRef.current[cameraId] || 0;
-
-                            if (now - lastDetectedAt > 500) {
-                                console.log("[Vision unlock]", {
-                                    source: cameraId,
-                                    plate: confirmedPlateLockRef.current[cameraId],
-                                });
-
-                                delete confirmedPlateLockRef.current[cameraId];
-                                delete confirmedPlateLastDetectedAtRef.current[cameraId];
-                                delete confirmedLockImageRef.current[cameraId];
-                                delete completedLockActionRef.current[cameraId];
-                                Object.keys(savedLockImageRef.current).forEach((key) => {
-                                    if (key.startsWith(`${cameraId}:`)) delete savedLockImageRef.current[key];
-                                });
-                                delete lastCompletedPlateRef.current[cameraId];
-                                clearPlateCandidates(cameraId);
-                                plateVoteHistoryRef.current[cameraId] = {
-                                    reads: [],
-                                    lastSeenAt: 0,
-                                };
-                                detectedPlateRef.current[cameraId] = "";
-
-                                clearCameraVehicleState(cameraId);
-                                setActiveEntryCameraId((current) =>
-                                    current === cameraId ? null : current
-                                );
                             }
                         }
                     }
@@ -2506,7 +2474,6 @@ function GaragePage() {
             if (VISION_DEBUG) console.debug("Vision processing error:", error);
         } finally {
             cameraRequestsRef.current[cameraId] = false;
-
             if (cameraStreamsRef.current[cameraId]) {
                 cameraTimersRef.current[cameraId] = window.setTimeout(
                     () => runSlotDetection(cameraId),
@@ -2517,11 +2484,14 @@ function GaragePage() {
     }
 
     function renderCameraVehicleAction(cameraId, vehicleState) {
-        const selectedCameraSpace = parkingSpaces.find(
-            (space) => space.id === vehicleState.selectedSpaceId
-        );
+        const trackingMode = adminSettings?.garage_settings?.mode === "tracking";
+        const selectedCameraSpace = trackingMode
+            ? null
+            : parkingSpaces.find(
+                (space) => space.id === vehicleState.selectedSpaceId
+            );
         const isExit = cameraId.startsWith("exit-");
-        const isParked = parkingSpaces.some(
+        const isParked = !trackingMode && parkingSpaces.some(
             (space) => space.is_occupied && space.license_plate === vehicleState.plate
         );
         const showPaymentSelection = isExit && isParked && vehicleState.paymentRequired &&
@@ -2545,22 +2515,23 @@ function GaragePage() {
             >
                 {vehicleState.alreadyParked && <div className="error">Vehicle is already parked in the garage.</div>}
                 {vehicleState.error && <div className="error">{vehicleState.error}</div>}
+                {vehicleState.loading && !vehicleState.action && <p className="description">Checking vehicle status...</p>}
 
-                {vehicleState.action === "entry" && (
+                {vehicleState.action === "entry" && !vehicleState.loading && (
                     <div className="entry-mode">
-                        <h3>Select Parking Space</h3>
-                        <div className="selected-space-info">
+                        <h3>{trackingMode ? "Log Vehicle Entry" : "Select Parking Space"}</h3>
+                        {!trackingMode && <div className="selected-space-info">
                             <strong>Selected Space:</strong>
                             <span>{selectedCameraSpace ? `Level ${selectedCameraSpace.level} - ${selectedCameraSpace.space}` : "No space available"}</span>
-                        </div>
+                        </div>}
                         <div className="confirmation-buttons">
                             <button
                                 type="button"
                                 className="confirm-button"
-                                onClick={() => handleConfirmEntry(vehicleState.plate, vehicleState.selectedSpaceId, cameraId)}
-                                disabled={vehicleState.loading || !vehicleState.selectedSpaceId}
+                                onClick={() => handleConfirmEntry(vehicleState.plate, trackingMode ? null : vehicleState.selectedSpaceId, cameraId)}
+                                disabled={vehicleState.loading || (!trackingMode && !vehicleState.selectedSpaceId)}
                             >
-                                {vehicleState.loading ? "Processing Entry..." : "Confirm Entry"}
+                                {trackingMode ? "Log Entry" : "Confirm Entry"}
                             </button>
                             <button
                                 type="button"
@@ -2584,15 +2555,19 @@ function GaragePage() {
                     </div>
                 )}
 
-                {isExit && vehicleState.action === "exit" && (
+                {isExit && vehicleState.action === "exit" && !vehicleState.loading && (
                     <div className="exit-mode">
-                        <h3>Exit Vehicle</h3>
+                        <h3>{trackingMode ? "Log Vehicle Exit" : "Exit Vehicle"}</h3>
                         <p className="description">
-                            {vehicleState.paymentRequired
+                            {trackingMode ? "Vehicle is currently logged." : vehicleState.paymentRequired
                                 ? `Select a payment method. Parking is billed at ${formatRupees(vehicleState.ratePerMinute ?? 1.67)} per minute.`
                                 : "Exit is being processed automatically."}
                         </p>
-                        {showPaymentSelection && (
+                        {trackingMode ? (
+                            <button type="button" className="confirm-button" onClick={() => handleConfirmExit(null, false, vehicleState.plate, cameraId)}>
+                                Log Exit
+                            </button>
+                        ) : showPaymentSelection && (
                             <div className="payment-options">
                                 {(["cash", "card"]).map((method) => (
                                     <button
@@ -2632,6 +2607,7 @@ function GaragePage() {
                 detectedPlate={vehicleState.plate}
                 vehicleAction={vehicleState.action}
                 selectedSpace={parkingSpaces.find((space) => space.id === vehicleState.selectedSpaceId)}
+                trackingMode={adminSettings?.garage_settings?.mode === "tracking"}
                 onReceiptDone={() => updateCameraVehicleState(slot.id, { exitResult: null })}
             />
             {renderCameraVehicleAction(slot.id, vehicleState)}
@@ -2677,7 +2653,7 @@ function GaragePage() {
                         ParkingOS
                     </h1>
 
-                    <div className="garage-header-controls"><button type="button" className="garage-admin-link" onClick={() => { const adminWindow = window.open("/admin", "parkingos-admin"); adminWindow?.focus(); }}>Open Admin</button></div>
+                    <div className="garage-header-controls"><button type="button" className="garage-admin-link" onClick={() => openOrFocusNamedTab("/admin", "parkingos-admin")}>Open Admin</button></div>
 
                     <p>
                         Parking
@@ -3018,7 +2994,7 @@ function GaragePage() {
                         )}
 
 
-                        {!detectedPlate &&
+                        {false && !detectedPlate &&
                             !exitResult &&
                             !entryResult && (
                                 <div className="waiting-panel">
@@ -3040,7 +3016,7 @@ function GaragePage() {
                             )}
 
 
-                        {detectedPlate && (
+                        {false && detectedPlate && (
                             <div className="detected-panel">
 
                                 <div className="detected-header">
