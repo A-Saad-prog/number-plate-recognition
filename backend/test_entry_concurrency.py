@@ -135,13 +135,6 @@ class EntryConcurrencyTests(unittest.TestCase):
             self.assertEqual(db.query(Vehicle).count(), 0)
             self.assertEqual(create_vehicle_entry(db, "RETRY", 1)["space"], "L1-02")
 
-    def test_tracking_only_does_not_reserve_space(self):
-        with Session(self.engine) as db:
-            result = create_vehicle_entry(db, "TRACKED", 1, parking_space_id=1, tracking_only=True)
-            self.assertIsNone(result["space"])
-            self.assertIsNone(result["level"])
-            self.assertFalse(db.get(ParkingSpace, 1).is_occupied)
-
 
 if __name__ == "__main__":
     unittest.main()

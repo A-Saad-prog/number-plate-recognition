@@ -23,7 +23,7 @@ function VehicleInformation({
                 <div className="vehicle-info-row"><strong>Exit Time</strong><span>{formatDateTime(exitResult.exit_time)}</span></div>
                 <div className="vehicle-info-row"><strong>Duration</strong><span>{formatDuration(exitResult.entry_time, exitResult.exit_time)}</span></div>
                 {!trackingMode && <div className="vehicle-info-row"><strong>Parking Space</strong><span>Level {exitResult.level} — {exitResult.space}</span></div>}
-                {!trackingMode && exitResult.billing_enabled !== false && (
+                {exitResult.billing_enabled !== false && (
                     <>
                         <div className="vehicle-info-row"><strong>Rate</strong><span>{formatRupees(exitResult.rate_per_minute ?? 1.67)} / minute</span></div>
                         <div className="vehicle-info-row"><strong>Payment</strong><span>{formatPaymentMethod(exitResult.payment_method)}</span></div>

@@ -203,7 +203,7 @@ function GaragePage() {
         if (!isEntry && !active) {
             updateCameraVehicleState(cameraId, {
                 plate, action: null, loading: false, selectedSpaceId: null,
-                error: trackingMode ? "Vehicle is not currently logged." : "Vehicle is not parked in the garage.",
+                error: "This vehicle is not logged.",
             });
             scheduleTerminalCameraClear(cameraId, plate);
             return;
@@ -217,6 +217,21 @@ function GaragePage() {
                     updateCameraVehicleState(cameraId, { plate, action: "entry", loading: false, selectedSpaceId: null, error: "" });
                 }
                 return;
+            }
+
+            // A plate can fully confirm before the mount-time garage
+            // settings + parking-spaces load resolves. Await that exact
+            // load (not a guessed delay) so the very first confirmation
+            // sees real data instead of the empty initial [] -- this
+            // resolves instantly once the load has already completed, and
+            // never resolves to a false "no space" for a load that just
+            // hasn't happened yet.
+            if (parkingSpacesInitialLoadRef.current) {
+                await parkingSpacesInitialLoadRef.current;
+                if (
+                    detectedPlateRef.current[cameraId] !== plate ||
+                    confirmedPlateLockRef.current[cameraId] !== plate
+                ) return;
             }
 
             const parkedSpace = parkingSpacesRef.current.find(
@@ -239,13 +254,14 @@ function GaragePage() {
             return;
         }
 
-        if (trackingMode) {
-            updateCameraVehicleState(cameraId, { plate, action: "exit", loading: false, selectedSpaceId: null, paymentRequired: false, paymentMethod: null, error: "" });
-        } else {
-            updateCameraVehicleState(cameraId, { plate, action: null, loading: true, selectedSpaceId: null, error: "" });
-            void prefetchExitPaymentRequired(plate, cameraId);
-            void startAutomaticExit(plate, cameraId);
-        }
+        // PLATE_TRACKING_BILLING_PARITY_V1
+        // Exit runs through the exact same automatic-exit + billing path
+        // regardless of garage mode. If billing is off (or tracking mode
+        // simply has no payment methods configured), startAutomaticExit
+        // resolves with no payment step, same as it always has.
+        updateCameraVehicleState(cameraId, { plate, action: null, loading: true, selectedSpaceId: null, error: "" });
+        void prefetchExitPaymentRequired(plate, cameraId);
+        void startAutomaticExit(plate, cameraId);
     }
 
     function saveConfirmedLockImageAfterAction(plate, source) {
@@ -318,10 +334,24 @@ function GaragePage() {
 
     const [parkingSpaces, setParkingSpaces] = useState([]);
     const parkingSpacesRef = useRef([]);
+    // Holds the mount-time garage-settings + parking-spaces load promise.
+    // Awaiting it (instead of polling a flag or a fixed delay) lets a
+    // plate that confirms before that first load resolves wait for the
+    // exact real data, with zero added latency once it has resolved.
+    const parkingSpacesInitialLoadRef = useRef(null);
+    const parkingMutationVersionRef = useRef(0);
+    const optimisticEntriesRef = useRef({});
     const [parkingLoading, setParkingLoading] = useState(false);
     const [parkingError, setParkingError] = useState("");
     const [openLevel, setOpenLevel] = useState(1);
     const [adminSettings, setAdminSettings] = useState(null);
+    // Kept in sync every render so the long-lived, self-perpetuating
+    // camera detection loop (which closes over this module's functions
+    // once when a camera stream starts and never re-creates them) always
+    // reads the latest billing settings instead of whatever adminSettings
+    // happened to be at that first render.
+    const adminSettingsRef = useRef(null);
+    adminSettingsRef.current = adminSettings;
     const localImageSavingRef = useRef(false);
     const automaticEntryRef = useRef(false);
     const [garageAuthFailed, setGarageAuthFailed] = useState(false);
@@ -337,305 +367,12 @@ function GaragePage() {
     const cameraTimersRef = useRef({});
     const cameraStartingRefBySlot = useRef({});
     const cameraLaneGenerationRef = useRef(0);
-    const activeVisionLoopsRef = useRef({});
     const multiCameraTestSchedulerRef = useRef(null);
 
     if (!multiCameraTestSchedulerRef.current) {
         multiCameraTestSchedulerRef.current = createMultiCameraVisionTestScheduler({
             maxConcurrent: 2,
         });
-    }
-
-    function debugVisionLoopStatus(source, phase) {
-        if (!VISION_DEBUG) return;
-
-        if (phase === "start") {
-            activeVisionLoopsRef.current[source] = performance.now();
-        } else if (phase === "end") {
-            delete activeVisionLoopsRef.current[source];
-        }
-
-        const activeSources = Object.keys(activeVisionLoopsRef.current);
-        const legacyEntryActive = activeSources.some((id) => id === "entry" || id === "entry-1");
-        const legacyExitActive = activeSources.some((id) => id === "exit" || id === "exit-1");
-        const slotLoopActive = activeSources.some((id) => id.startsWith("slot-") || id.includes("slot-"));
-
-        console.debug(
-            `[Vision FE loops] count=${activeSources.length} active=${activeSources.join(",") || "none"} legacy_entry=${legacyEntryActive} legacy_exit=${legacyExitActive} slot_active=${slotLoopActive}`
-        );
-    }
-
-    const videoRef = useRef(null);
-    const exitVideoRef = useRef(null);
-    const exitStreamRef = useRef(null);
-    const canvasRef = useRef(null);
-    const visionProcessingRef = useRef(false);
-    const cameraStartingRef = useRef(false);
-
-    const [cameraError, setCameraError] = useState("");
-    const [cameraActive, setCameraActive] = useState(false);
-    const [exitCameraError, setExitCameraError] = useState("");
-    const [exitCameraActive, setExitCameraActive] = useState(false);
-    const [entryDetectionBox, setEntryDetectionBox] = useState(null);
-    const [exitDetectionBox, setExitDetectionBox] = useState(null);
-
-
-    // ============================================================
-    // Camera Vision
-    // ============================================================
-
-    async function processCameraFrame(
-        videoRefToProcess,
-        cameraIsActive,
-        source
-    ) {
-        if (
-            source !== activeDetectionSourceRef.current ||
-            !videoRefToProcess.current ||
-            !canvasRef.current ||
-            !cameraIsActive ||
-            visionProcessingRef.current
-        ) {
-            return false;
-        }
-
-        const video = videoRefToProcess.current;
-        const canvas = canvasRef.current;
-
-        if (
-            video.readyState <
-            HTMLMediaElement.HAVE_CURRENT_DATA
-        ) {
-            return false;
-        }
-
-        const requestId = `fe-${source}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
-        const requestStartAt = performance.now();
-        const captureStart = performance.now();
-        const context = canvas.getContext("2d");
-        const scale = Math.min(1, MAX_INFERENCE_FRAME_WIDTH / video.videoWidth);
-        canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
-        canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
-
-        context.drawImage(
-            video,
-            0,
-            0,
-            canvas.width,
-            canvas.height
-        );
-
-        const captureMs = performance.now() - captureStart;
-        const encodeStartedAt = performance.now();
-        const image = canvas.toDataURL(
-            "image/jpeg",
-            0.82
-        );
-        const encodeMs = performance.now() - encodeStartedAt;
-
-        if (VISION_DEBUG) {
-            debugVisionLoopStatus(source, "start");
-            console.debug(
-                `[Vision FE] id=${requestId} source=${source} capture=${captureMs.toFixed(1)}ms encode=${encodeMs.toFixed(1)}ms request_start=${requestStartAt.toFixed(1)}ms`
-            );
-        }
-
-        try {
-            visionProcessingRef.current = true;
-            const apiStartedAt = performance.now();
-            const result =
-                await detectPlateFromFrame(image, source, requestId);
-            const resultReceivedAt = performance.now();
-            const apiMs = resultReceivedAt - apiStartedAt;
-            const totalMs = resultReceivedAt - requestStartAt;
-            const renderHandoffStartedAt = performance.now();
-
-            if (source !== activeDetectionSourceRef.current) {
-                return false;
-            }
-
-            if (VISION_DEBUG) {
-                const renderHandoffMs = performance.now() - renderHandoffStartedAt;
-                console.debug(
-                    `[Vision FE] id=${requestId} source=${source} api=${apiMs.toFixed(1)}ms total=${totalMs.toFixed(1)}ms render_handoff=${renderHandoffMs.toFixed(1)}ms detected=${Boolean(result?.detected)} plate=${result?.license_plate || "n/a"}`
-                );
-            }
-
-            if (source.startsWith("entry-")) {
-                setEntryDetectionBox((current) => boxesEqual(current, result.box) ? current : result.box || null);
-            } else {
-                setExitDetectionBox((current) => boxesEqual(current, result.box) ? current : result.box || null);
-            }
-
-            if (result.detected && confirmedPlateLockRef.current[source]) {
-                confirmedPlateLastDetectedAtRef.current[source] = Date.now();
-            }
-
-            if (
-                result.detected &&
-                result.license_plate
-            ) {
-                if (
-                    !result.detected ||
-                    !result.license_plate
-                ) {
-                    plateCandidateRef.current = "";
-                    plateCandidateCountRef.current = 0;
-                    return;
-                }
-
-                const plate = result.license_plate
-                    .trim()
-                    .toUpperCase();
-
-                if (
-                    plate === detectedPlateRef.current[source] ||
-                    plate === lastCompletedPlateRef.current[source]
-                ) {
-                    return;
-                }
-
-                const voteState =
-                    plateVoteHistoryRef.current[source] || {
-                        reads: [],
-                        lastSeenAt: 0,
-                    };
-
-                const now = Date.now();
-
-                if (
-                    voteState.lastSeenAt &&
-                    now - voteState.lastSeenAt >
-                    (MULTI_CAMERA_ORCHESTRATION_TEST ? 5000 : 1500)
-                ) {
-                    voteState.reads = [];
-                }
-
-                voteState.lastSeenAt = now;
-                voteState.reads.push({
-                    plate,
-                    confidence: Number(result.confidence || 0),
-                });
-
-                voteState.reads = voteState.reads.slice(-5);
-                plateVoteHistoryRef.current[source] = voteState;
-
-                const voteCounts = {};
-                for (const read of voteState.reads) {
-                    voteCounts[read.plate] =
-                        (voteCounts[read.plate] || 0) + 1;
-                }
-
-                const bestVote = Object.entries(voteCounts)
-                    .sort((a, b) => b[1] - a[1])[0];
-
-                const bestPlate = bestVote?.[0] || plate;
-                const bestCount = bestVote?.[1] || 1;
-
-                const normalizedBest = bestPlate.replace(/[^A-Z0-9]/gi, "").toUpperCase();
-                const longerCompatiblePlate = voteState.reads
-                    .map((read) => read.plate)
-                    .filter(Boolean)
-                    .find((candidate) => {
-                        const normalizedCandidate = candidate.replace(/[^A-Z0-9]/gi, "").toUpperCase();
-                        if (normalizedCandidate.length <= normalizedBest.length) return false;
-                        if (normalizedCandidate.startsWith(normalizedBest) || normalizedCandidate.endsWith(normalizedBest)) return true;
-                        let index = 0;
-                        for (const character of normalizedCandidate) {
-                            if (character === normalizedBest[index]) index += 1;
-                        }
-                        return index === normalizedBest.length;
-                    });
-                const candidateKey = `${source}:${bestPlate}`;
-                if (!plateCandidateFirstSeenRef.current[candidateKey]) {
-                    plateCandidateFirstSeenRef.current[candidateKey] = now;
-                }
-                const isCustomNumeric = /^\d{1,4}$/.test(normalizedBest);
-
-                // Require one extra matching OCR read before locking.
-                // This reduces false locks while keeping latency low.
-                const requiredVotes = 4;
-
-                // Keep normal plates fast.
-                // Short numeric plates remain stricter because they are easier to misread.
-                const requiredAgeMs = isCustomNumeric ? 1200 : 700;
-
-                const stablePlate =
-                    bestCount >= requiredVotes &&
-                    now - plateCandidateFirstSeenRef.current[candidateKey] >= requiredAgeMs &&
-                    !longerCompatiblePlate;
-
-                if (VISION_DEBUG) {
-                    console.debug("[Plate vote]", {
-                        source,
-                        reads: voteState.reads,
-                        bestPlate,
-                        bestCount,
-                        requiredVotes,
-                        windowSize: 5,
-                        stablePlate,
-                    });
-                }
-
-                if (stablePlate) {
-                    if (lastCompletedPlateRef.current[source] !== bestPlate) {
-                        delete lastCompletedPlateRef.current[source];
-                    }
-                    detectedPlateRef.current[source] = bestPlate;
-
-                    plateCandidateRef.current = "";
-                    plateCandidateCountRef.current = 0;
-                    plateVoteHistoryRef.current[source] = {
-                        reads: [],
-                        lastSeenAt: now,
-                    };
-
-                    const plate = bestPlate;
-
-                    if (VISION_DEBUG) {
-                        console.debug("[Plate accepted]", { source, plate });
-                    }
-
-                    setDetectedPlate(plate);
-                    setDetectionSource(source);
-                    setVehicleAction(null);
-
-                    confirmedPlateLockRef.current[source] = plate;
-                    confirmedPlateLastDetectedAtRef.current[source] = now;
-                    confirmedLockImageRef.current[source] = image;
-                    void resolveConfirmedCameraPlate(source, plate, image);
-                }
-            } else {
-                lastCompletedPlateRef.current[source] = "";
-
-                const now = Date.now();
-                const voteState = plateVoteHistoryRef.current[source];
-
-                if (
-                    voteState?.lastSeenAt &&
-                    now - voteState.lastSeenAt > 1500
-                ) {
-                    plateVoteHistoryRef.current[source] = {
-                        reads: [],
-                        lastSeenAt: 0,
-                    };
-                }
-
-            }
-
-        } catch (error) {
-            if (VISION_DEBUG) {
-                console.debug("Vision processing error:", error);
-            }
-            return false;
-        } finally {
-            visionProcessingRef.current = false;
-            if (VISION_DEBUG) {
-                debugVisionLoopStatus(source, "end");
-            }
-        }
-
-        return true;
     }
 
 
@@ -666,90 +403,6 @@ function GaragePage() {
         );
     }
 
-
-    async function startCamera(
-        videoRefToStart,
-        setActive,
-        setError,
-        cameraId
-    ) {
-        if (cameraStartingRef.current) {
-            return;
-        }
-
-        if (!cameraAssignments[cameraId]) {
-            setActive(false);
-            return;
-        }
-
-        cameraStartingRef.current = true;
-        let stream = null;
-
-        try {
-            setError("");
-
-            if (!navigator.mediaDevices?.getUserMedia) {
-                throw new Error("Camera access is not supported by this browser.");
-            }
-
-            try {
-                stream = await navigator.mediaDevices.getUserMedia({
-                    video: cameraAssignments[cameraId]
-                        ? { deviceId: { exact: cameraAssignments[cameraId] } }
-                        : {
-                            width: { ideal: 640 },
-                            height: { ideal: 480 },
-                            facingMode: { ideal: "environment" },
-                        },
-                    audio: false,
-                });
-            } catch (constraintError) {
-                if (constraintError.name !== "OverconstrainedError") {
-                    throw constraintError;
-                }
-
-                stream = await navigator.mediaDevices.getUserMedia({
-                    video: true,
-                    audio: false,
-                });
-            }
-
-            if (videoRefToStart.current) {
-                const video = videoRefToStart.current;
-                video.srcObject = stream;
-
-                await video.play();
-            } else if (
-                videoRefToStart === exitVideoRef
-            ) {
-                exitStreamRef.current = stream;
-            } else {
-                stream.getTracks().forEach((track) => track.stop());
-                throw new Error("The camera preview is not ready yet.");
-            }
-
-            setActive(true);
-
-        } catch (error) {
-            stream?.getTracks().forEach((track) => track.stop());
-            console.error(
-                "Camera error:",
-                error
-            );
-
-            const message = error.name === "NotAllowedError"
-                ? "Camera permission was denied. Allow camera access and reload the page."
-                : error.name === "NotFoundError"
-                    ? "No camera was found on this device."
-                    : error.name === "NotReadableError"
-                        ? "The camera is already in use by another app or browser tab. Close it and reload the page."
-                        : error.message || "Could not access the camera.";
-
-            setError(message);
-        } finally {
-            cameraStartingRef.current = false;
-        }
-    }
 
 
     function clearVehicleDetectionState() {
@@ -786,69 +439,6 @@ function GaragePage() {
     }
 
 
-    async function openExitCamera() {
-        activeDetectionSourceRef.current = "exit-1";
-
-        const entryStream =
-            videoRef.current?.srcObject;
-
-        if (entryStream) {
-            entryStream
-                .getTracks()
-                .forEach((track) =>
-                    track.stop()
-                );
-        }
-
-        if (videoRef.current) {
-            videoRef.current.srcObject = null;
-        }
-
-        clearVehicleDetectionState();
-        setCameraActive(false);
-        setEntryDetectionBox(null);
-
-        await startCamera(
-            exitVideoRef,
-            setExitCameraActive,
-            setExitCameraError,
-            "exit-1"
-        );
-    }
-
-
-    function closeExitCamera() {
-        activeDetectionSourceRef.current = "entry-1";
-
-        const stream =
-            exitVideoRef.current?.srcObject ||
-            exitStreamRef.current;
-
-        if (stream) {
-            stream
-                .getTracks()
-                .forEach((track) =>
-                    track.stop()
-                );
-        }
-
-        if (exitVideoRef.current) {
-            exitVideoRef.current.srcObject = null;
-        }
-
-        clearVehicleDetectionState();
-        exitStreamRef.current = null;
-        setExitCameraActive(false);
-        setExitDetectionBox(null);
-
-        startCamera(
-            videoRef,
-            setCameraActive,
-            setCameraError,
-            "entry-1"
-        );
-    }
-
 
     function formatDateTime(value) {
         if (!value) {
@@ -879,45 +469,6 @@ function GaragePage() {
     }
 
 
-    function formatDuration(entryTime, exitTime) {
-        const entry = parseBackendDate(entryTime);
-        const exit = parseBackendDate(exitTime);
-
-        if (
-            Number.isNaN(entry.getTime()) ||
-            Number.isNaN(exit.getTime())
-        ) {
-            return "Unknown";
-        }
-
-        const totalSeconds = Math.max(
-            0,
-            Math.floor(
-                (exit.getTime() -
-                    entry.getTime()) /
-                1000
-            )
-        );
-
-        const hours =
-            Math.floor(totalSeconds / 3600);
-
-        const minutes =
-            Math.floor(
-                (totalSeconds % 3600) / 60
-            );
-
-        const seconds =
-            totalSeconds % 60;
-
-        if (hours > 0) {
-            return `${hours} hr ${minutes} min ${seconds} sec`;
-        }
-
-        return `${minutes} min ${seconds} sec`;
-    }
-
-
     function formatRupees(value) {
         const amount = Number(value);
 
@@ -927,25 +478,6 @@ function GaragePage() {
 
         return `Rs ${amount.toFixed(2)}`;
     }
-
-
-    function formatPaymentMethod(value) {
-        if (!value) {
-            return "Not required";
-        }
-
-        if (value === "card") {
-            return "Card";
-        }
-
-        if (value === "cash") {
-            return "Cash";
-        }
-
-        return value;
-    }
-
-
 
 
     async function loadAdminSettings() {
@@ -981,15 +513,40 @@ function GaragePage() {
         try {
             setParkingLoading(true);
             setParkingError("");
+            const requestVersion = parkingMutationVersionRef.current;
 
             const result =
                 await getParkingSpaces();
+            if (requestVersion !== parkingMutationVersionRef.current) {
+                return false;
+            }
 
             if (result.success) {
                 const spaces = result.spaces || [];
 
-                setParkingSpaces(spaces);
-                parkingSpacesRef.current = spaces;
+                const mergedSpaces = spaces.map((space) => {
+                    const optimistic = optimisticEntriesRef.current[String(space.id)];
+
+                    if (!optimistic) return space;
+
+                    if (
+                        space.is_occupied &&
+                        space.license_plate === optimistic.license_plate
+                    ) {
+                        delete optimisticEntriesRef.current[String(space.id)];
+                        return space;
+                    }
+
+                    return {
+                        ...space,
+                        is_occupied: true,
+                        license_plate: optimistic.license_plate,
+                        entry_time: optimistic.entry_time,
+                    };
+                });
+
+                setParkingSpaces(mergedSpaces);
+                parkingSpacesRef.current = mergedSpaces;
                 return true;
             } else {
                 setParkingError(
@@ -1060,76 +617,12 @@ function GaragePage() {
 
 
     useEffect(() => {
-        if (!cameraActive) {
-            return;
-        }
-
-        let cancelled = false;
-        let nextFrameTimer;
-        const processLatestFrame = async () => {
-            const processed = await processCameraFrame(videoRef, true, "entry-1");
-            if (!cancelled) {
-                nextFrameTimer = window.setTimeout(
-                    processLatestFrame,
-                    processed ? VISION_REQUEST_INTERVAL_MS : 100
-                );
-            }
-        };
-
-        void processLatestFrame();
-
-        return () => {
-            cancelled = true;
-            window.clearTimeout(nextFrameTimer);
-        };
-    }, [cameraActive]);
-
-
-    useEffect(() => {
-        if (!exitCameraActive) {
-            return;
-        }
-
-        if (
-            exitVideoRef.current &&
-            exitStreamRef.current
-        ) {
-            exitVideoRef.current.srcObject =
-                exitStreamRef.current;
-
-            exitVideoRef.current
-                .play()
-                .catch(() => { });
-        }
-
-        let cancelled = false;
-        let nextFrameTimer;
-        const processLatestFrame = async () => {
-            const processed = await processCameraFrame(exitVideoRef, true, "exit-1");
-            if (!cancelled) {
-                nextFrameTimer = window.setTimeout(
-                    processLatestFrame,
-                    processed ? VISION_REQUEST_INTERVAL_MS : 100
-                );
-            }
-        };
-
-        void processLatestFrame();
-
-        return () => {
-            cancelled = true;
-            window.clearTimeout(nextFrameTimer);
-        };
-    }, [exitCameraActive]);
-
-
-    useEffect(() => {
         const loadGarage = async () => {
             if (await loadAdminSettings()) {
                 await loadParkingSpaces();
             }
         };
-        void loadGarage();
+        parkingSpacesInitialLoadRef.current = loadGarage();
         const interval = window.setInterval(() => {
             if (!garageAuthFailedRef.current) void loadParkingSpaces();
         }, 5000);
@@ -1169,32 +662,6 @@ function GaragePage() {
         Object.values(terminalClearTimersRef.current).forEach((timer) => window.clearTimeout(timer));
     }, []);
 
-
-    function handleSelectEntry() {
-        setVehicleAction("entry");
-        setEntryError("");
-        setExitError("");
-        setEntryResult(null);
-        setExitResult(null);
-
-        // Recalculate the automatic space at the exact moment
-        // the user confirms "Entry Vehicle".
-        // This guarantees that the latest occupied/available state
-        // is used, including spaces after L1:02.
-        const automaticSpace =
-            getAutomaticParkingSpace();
-
-        if (automaticSpace) {
-            setSelectedSpaceId(
-                automaticSpace.id
-            );
-        } else {
-            setSelectedSpaceId(null);
-            setEntryError(
-                "No parking space is available for this vehicle."
-            );
-        }
-    }
 
 
     async function startAutomaticExit(plate, source) {
@@ -1239,11 +706,12 @@ function GaragePage() {
                 ratePerMinute: result.rate_per_minute ?? 1.67,
             });
 
+            const currentBillingConfig = adminSettingsRef.current?.billing_config;
             const allowedMethods = [
-                adminSettings?.billing_config?.payments_enabled && adminSettings?.billing_config?.cash_enabled
+                currentBillingConfig?.payments_enabled && currentBillingConfig?.cash_enabled
                 && "cash",
 
-                adminSettings?.billing_config?.payments_enabled && adminSettings?.billing_config?.card_enabled
+                currentBillingConfig?.payments_enabled && currentBillingConfig?.card_enabled
                 && "card",
             ].filter(Boolean);
 
@@ -1431,35 +899,55 @@ function GaragePage() {
         }
 
         entrySubmittingRef.current[sourceOverride] = true;
+        parkingMutationVersionRef.current += 1;
+        const automaticEntryStartedAt = performance.now();
         updateCameraVehicleState(sourceOverride, {
+            action: "entry",
             loading: true,
             error: "",
             entryResult: null,
         });
         const previousCameraState = cameraVehicleState[sourceOverride] || {};
         const previousSpaces = parkingSpacesRef.current;
+        console.log("[Manual Entry optimistic]", {
+            plate,
+            spaceId,
+            selectedMatch: parkingSpacesRef.current.find(
+                (space) => String(space.id) === String(spaceId)
+            ),
+        });
 
-        if (!trackingMode) {
-            const optimisticSpaces = parkingSpacesRef.current.map((space) =>
-                space.id === spaceId
-                    ? {
-                        ...space,
-                        is_occupied: true,
-                        license_plate: plate,
-                        entry_time: new Date().toISOString(),
-                    }
-                    : space
-            );
+        if (!trackingMode && spaceId != null) {
+            const optimisticEntry = {
+                license_plate: plate,
+                entry_time: new Date().toISOString(),
+            };
+
+            optimisticEntriesRef.current[String(spaceId)] =
+                optimisticEntry;
+
+            const optimisticSpaces =
+                parkingSpacesRef.current.map((space) =>
+                    String(space.id) === String(spaceId)
+                        ? {
+                            ...space,
+                            is_occupied: true,
+                            ...optimisticEntry,
+                        }
+                        : space
+                );
 
             parkingSpacesRef.current = optimisticSpaces;
             setParkingSpaces(optimisticSpaces);
         }
 
-        clearCameraVehicleState(sourceOverride);
+        if (!automatic) {
+            clearCameraVehicleState(sourceOverride);
 
-        setActiveEntryCameraId((current) =>
-            current === sourceOverride ? null : current
-        );
+            setActiveEntryCameraId((current) =>
+                current === sourceOverride ? null : current
+            );
+        }
 
         let entryCompleted = false;
         try {
@@ -1524,6 +1012,15 @@ function GaragePage() {
                 parkingSpacesRef.current = nextSpaces;
                 setParkingSpaces(nextSpaces);
             }
+
+            if (automatic) {
+                const elapsed = performance.now() - automaticEntryStartedAt;
+                const remaining = Math.max(0, 1000 - elapsed);
+                if (remaining > 0) {
+                    await new Promise((resolve) => setTimeout(resolve, remaining));
+                }
+            }
+
             entryCompleted = true;
             clearCompletedCameraPlate(sourceOverride);
             clearCameraVehicleState(sourceOverride);
@@ -1587,8 +1084,8 @@ function GaragePage() {
         const cameraState = cameraVehicleState[sourceOverride] || {};
         const plate = plateOverride || cameraState.plate || detectedPlate;
         const trackingMode = adminSettings?.garage_settings?.mode === "tracking";
-        const chosenPaymentMethod = trackingMode ? null : selectedPaymentMethod ?? cameraState.paymentMethod ?? paymentMethod;
-        const requiresPayment = trackingMode ? false : paymentRequired ?? cameraState.paymentRequired ?? exitPaymentRequired;
+        const chosenPaymentMethod = selectedPaymentMethod ?? cameraState.paymentMethod ?? paymentMethod;
+        const requiresPayment = paymentRequired ?? cameraState.paymentRequired ?? exitPaymentRequired;
         if (exitSubmittingRef.current[sourceOverride]) return;
         if (!plate) {
             updateCameraVehicleState(sourceOverride, {
@@ -1620,6 +1117,7 @@ function GaragePage() {
             loading: true,
             error: "",
         });
+        const exitStartedAt = performance.now();
 
         let exitCompleted = false;
         try {
@@ -1677,8 +1175,26 @@ function GaragePage() {
                 setParkingSpaces(nextSpaces);
             }
 
+            if (!trackingMode) {
+                const elapsed = performance.now() - exitStartedAt;
+                const remaining = Math.max(0, 1000 - elapsed);
+                if (remaining > 0) {
+                    await new Promise((resolve) => setTimeout(resolve, remaining));
+                }
+            }
+
             exitCompleted = true;
-            clearCameraVehicleState(sourceOverride);
+            updateCameraVehicleState(sourceOverride, {
+                plate: null,
+                action: null,
+                loading: false,
+                error: "",
+                selectedSpaceId: null,
+                paymentMethod: null,
+                paymentRequired: false,
+                ratePerMinute: receipt.rate_per_minute ?? cameraState.ratePerMinute,
+                exitResult: receipt,
+            });
             clearCompletedCameraPlate(sourceOverride);
 
             detectedPlateRef.current[sourceOverride] = "";
@@ -1731,15 +1247,12 @@ function GaragePage() {
     const availableSpaces =
         totalSpaces - occupiedSpaces;
 
-    const selectedSpace =
-        parkingSpaces.find(
-            (space) =>
-                space.id === selectedSpaceId
-        );
-
     const garageFull =
         totalSpaces > 0 &&
         availableSpaces === 0;
+
+    const isTrackingModeGarage =
+        adminSettings?.garage_settings?.mode === "tracking";
 
 
     function renderLevel(level) {
@@ -1843,252 +1356,6 @@ function GaragePage() {
     }
 
 
-    function renderVehicleInformation() {
-        if (exitResult) {
-            return (
-                <div className="vehicle-info-panel exit-info exit-receipt">
-                    <div className="vehicle-info-header">
-                        <span>
-                            EXIT RECEIPT
-                        </span>
-                    </div>
-
-                    <h3>
-                        {exitResult.license_plate}
-                    </h3>
-
-                    <div className="vehicle-info-row">
-                        <strong>
-                            Entry Time
-                        </strong>
-
-                        <span>
-                            {formatDateTime(
-                                exitResult.entry_time
-                            )}
-                        </span>
-                    </div>
-
-                    <div className="vehicle-info-row">
-                        <strong>
-                            Exit Time
-                        </strong>
-
-                        <span>
-                            {formatDateTime(
-                                exitResult.exit_time
-                            )}
-                        </span>
-                    </div>
-
-                    <div className="vehicle-info-row">
-                        <strong>
-                            Duration
-                        </strong>
-
-                        <span>
-                            {formatDuration(
-                                exitResult.entry_time,
-                                exitResult.exit_time
-                            )}
-                        </span>
-                    </div>
-
-                    <div className="vehicle-info-row">
-                        <strong>
-                            Rate
-                        </strong>
-
-                        <span>
-                            {formatRupees(
-                                exitResult.rate_per_minute ??
-                                1.67
-                            )}
-                            {" / minute"}
-                        </span>
-                    </div>
-
-                    <div className="vehicle-info-row">
-                        <strong>
-                            Parking Space
-                        </strong>
-
-                        <span>
-                            Level{" "}
-                            {exitResult.level}
-                            {" — "}
-                            {exitResult.space}
-                        </span>
-                    </div>
-
-                    <div className="vehicle-info-row">
-                        <strong>
-                            Payment
-                        </strong>
-
-                        <span>
-                            {formatPaymentMethod(
-                                exitResult.payment_method
-                            )}
-                        </span>
-                    </div>
-
-                    {Number(exitResult.discount_percent) > 0 && (
-                        <div className="vehicle-info-row">
-                            <strong>
-                                Whitelist Discount
-                            </strong>
-
-                            <span>
-                                {exitResult.discount_percent}%
-                            </span>
-                        </div>
-                    )}
-
-                    <div className="vehicle-info-amount">
-                        <span>
-                            Amount Owed
-                        </span>
-
-                        <strong>
-                            {formatRupees(
-                                exitResult.amount
-                            )}
-                        </strong>
-                    </div>
-
-                    <button
-                        type="button"
-                        className="cancel-button receipt-done-button"
-                        onClick={() =>
-                            setExitResult(null)
-                        }
-                    >
-                        Done
-                    </button>
-                </div>
-            );
-        }
-
-
-        if (entryResult) {
-            return (
-                <div className="vehicle-info-panel entry-info">
-                    <div className="vehicle-info-header">
-                        <span>
-                            ENTRY COMPLETED
-                        </span>
-                    </div>
-
-                    <h3>
-                        {entryResult.license_plate}
-                    </h3>
-
-                    <div className="vehicle-info-row">
-                        <strong>
-                            Entry Time
-                        </strong>
-
-                        <span>
-                            {formatDateTime(
-                                entryResult.entry_time
-                            )}
-                        </span>
-                    </div>
-
-                    <div className="vehicle-info-row">
-                        <strong>
-                            Parking Space
-                        </strong>
-
-                        <span>
-                            Level{" "}
-                            {entryResult.level}
-                            {" — "}
-                            {entryResult.space}
-                        </span>
-                    </div>
-
-                    <div className="vehicle-info-row">
-                        <strong>
-                            Status
-                        </strong>
-
-                        <span>
-                            Vehicle Parked
-                        </span>
-                    </div>
-                </div>
-            );
-        }
-
-
-        if (detectedPlate) {
-            return (
-                <div className="vehicle-info-panel detected-info">
-                    <div className="vehicle-info-header">
-                        <span>
-                            VEHICLE DETECTED
-                        </span>
-                    </div>
-
-                    <h3>
-                        {detectedPlate}
-                    </h3>
-
-                    <div className="vehicle-info-row">
-                        <strong>
-                            Action
-                        </strong>
-
-                        <span>
-                            {vehicleAction === "entry"
-                                ? "Entry"
-                                : vehicleAction ===
-                                    "exit"
-                                    ? "Exit"
-                                    : "Awaiting selection"}
-                        </span>
-                    </div>
-
-                    {vehicleAction === "entry" && (
-                        <div className="vehicle-info-row">
-                            <strong>
-                                Parking Space
-                            </strong>
-
-                            <span>
-                                {selectedSpace
-                                    ? `Level ${selectedSpace.level} — ${selectedSpace.space}`
-                                    : "Not selected"}
-                            </span>
-                        </div>
-                    )}
-                </div>
-            );
-        }
-
-
-        return (
-            <div className="vehicle-info-panel empty-info">
-                <div className="camera-icon">
-                    📷
-                </div>
-
-                <strong>
-                    No vehicle information
-                </strong>
-
-                <p>
-                    Vehicle information will appear
-                    here when a vehicle is detected.
-                </p>
-            </div>
-        );
-    }
-
-    void renderVehicleInformation;
-
     const configuredEntryCameraCount = Math.min(4, Math.max(
         1,
         Number(adminSettings?.camera_config?.entry_lane_cameras) || 1
@@ -2100,40 +1367,6 @@ function GaragePage() {
     // Backend validation prevents this case; retain this guard for old or malformed saved settings.
     const entryCameraCount = configuredEntryCameraCount;
     const exitCameraCount = Math.min(configuredExitCameraCount, Math.max(0, 4 - entryCameraCount));
-    function renderSharedCamera(cameraId, label, streamRef, isActive) {
-        return (
-            <div className="camera-panel" key={cameraId} data-camera-id={cameraId}>
-                <div className="camera-panel-header">
-                    <div>
-                        <span className="camera-kicker">{cameraId}</span>
-                        <strong>{label}</strong>
-                    </div>
-                </div>
-                <div className="camera-preview">
-                    <span className={`camera-feed-status camera-status ${isActive ? "active" : "standby"
-                        }`}>
-                        {isActive ? "Live" : "Standby"}
-                    </span>
-                    {isActive ? (
-                        <video
-                            autoPlay
-                            playsInline
-                            muted
-                            ref={(node) => {
-                                if (node && streamRef.current?.srcObject) {
-                                    node.srcObject = streamRef.current.srcObject;
-                                }
-                            }}
-                        />
-                    ) : (
-                        <div className="camera-standby">
-                            <strong>Camera is closed</strong>
-                        </div>
-                    )}
-                </div>
-            </div>
-        );
-    }
 
     const cameraSlots = [
         ...Array.from({ length: entryCameraCount }, (_, index) => ({ id: `entry-${index + 1}`, label: `Entry Camera ${index + 1}`, lane: "Entry" })),
@@ -2437,7 +1670,13 @@ function GaragePage() {
                                 plateCandidateFirstSeenRef.current[candidateKey];
 
                             const requiredAgeMsForCandidate =
-                                isCustomShortCandidate ? 1200 : 700;
+                                isCustomShortCandidate
+                                    ? 1200
+                                    : adaptiveReason === "very-high-2"
+                                        ? 250
+                                        : adaptiveReason === "medium-3"
+                                            ? 500
+                                            : 700;
                             const matureEnough =
                                 candidateAgeMs >= requiredAgeMsForCandidate;
 
@@ -2446,6 +1685,12 @@ function GaragePage() {
                                 matureEnough &&
                                 !longerCompatiblePlate
                             ) {
+                                const alreadyLockedPlate =
+                                    confirmedPlateLockRef.current[cameraId];
+
+                                if (alreadyLockedPlate === bestPlate) {
+                                    return;
+                                }
                                 if (lastCompletedPlateRef.current[cameraId] !== bestPlate) {
                                     delete lastCompletedPlateRef.current[cameraId];
                                 }
@@ -2527,10 +1772,13 @@ function GaragePage() {
                 (space) => space.id === vehicleState.selectedSpaceId
             );
         const isExit = cameraId.startsWith("exit-");
-        const isParked = !trackingMode && parkingSpaces.some(
-            (space) => space.is_occupied && space.license_plate === vehicleState.plate
-        );
-        const showPaymentSelection = isExit && isParked && vehicleState.paymentRequired &&
+        // PLATE_TRACKING_BILLING_PARITY_V1
+        // vehicleState.paymentRequired is already a server-verified signal
+        // (from getExitPaymentRequired), so payment selection no longer
+        // depends on the frontend's parkingSpaces cache -- that cache is
+        // never kept in sync for tracking mode, and billing must still work
+        // there when enabled.
+        const showPaymentSelection = isExit && vehicleState.paymentRequired &&
             Boolean(adminSettings?.billing_config?.payments_enabled &&
                 adminSettings?.billing_config?.cash_enabled &&
                 adminSettings?.billing_config?.card_enabled);
@@ -2549,43 +1797,45 @@ function GaragePage() {
                     }
                 }}
             >
-                {vehicleState.alreadyParked && <div className="error">Vehicle is already parked in the garage.</div>}
+                {vehicleState.alreadyParked && <div className="error">{trackingMode ? "Vehicle is already logged." : "Vehicle is already parked in the garage."}</div>}
                 {vehicleState.error && <div className="error">{vehicleState.error}</div>}
                 {vehicleState.loading && !vehicleState.action && <p className="description">Checking vehicle status...</p>}
 
-                {vehicleState.action === "entry" && !vehicleState.loading && (
+                {vehicleState.action === "entry" && (
                     <div className="entry-mode">
-                        <h3>{trackingMode ? "Log Vehicle Entry" : "Select Parking Space"}</h3>
-                        {!trackingMode && <div className="selected-space-info">
-                            <strong>Selected Space:</strong>
-                            <span>{selectedCameraSpace ? `Level ${selectedCameraSpace.level} - ${selectedCameraSpace.space}` : "No space available"}</span>
-                        </div>}
-                        <div className="confirmation-buttons">
-                            <button
-                                type="button"
-                                className="confirm-button"
-                                onClick={() => handleConfirmEntry(vehicleState.plate, trackingMode ? null : vehicleState.selectedSpaceId, cameraId)}
-                                disabled={vehicleState.loading || (!trackingMode && !vehicleState.selectedSpaceId)}
-                            >
-                                {trackingMode ? "Log Entry" : "Confirm Entry"}
-                            </button>
-                        </div>
+                        {vehicleState.loading ? (
+                            <p className="description">Processing Entry...</p>
+                        ) : (
+                            <>
+                                <h3>{trackingMode ? "Log Vehicle Entry" : "Select Parking Space"}</h3>
+                                {!trackingMode && <div className="selected-space-info">
+                                    <strong>Selected Space:</strong>
+                                    <span>{selectedCameraSpace ? `Level ${selectedCameraSpace.level} - ${selectedCameraSpace.space}` : "No space available"}</span>
+                                </div>}
+                                <div className="confirmation-buttons">
+                                    <button
+                                        type="button"
+                                        className="confirm-button"
+                                        onClick={() => handleConfirmEntry(vehicleState.plate, trackingMode ? null : vehicleState.selectedSpaceId, cameraId)}
+                                        disabled={!trackingMode && !vehicleState.selectedSpaceId}
+                                    >
+                                        Confirm Entry
+                                    </button>
+                                </div>
+                            </>
+                        )}
                     </div>
                 )}
 
-                {isExit && vehicleState.action === "exit" && !vehicleState.loading && (
+                {isExit && vehicleState.action === "exit" && (
                     <div className="exit-mode">
                         <h3>{trackingMode ? "Log Vehicle Exit" : "Exit Vehicle"}</h3>
                         <p className="description">
-                            {trackingMode ? "Vehicle is currently logged." : vehicleState.paymentRequired
+                            {showPaymentSelection
                                 ? `Select a payment method. Parking is billed at ${formatRupees(vehicleState.ratePerMinute ?? 1.67)} per minute.`
                                 : "Exit is being processed automatically."}
                         </p>
-                        {trackingMode ? (
-                            <button type="button" className="confirm-button" onClick={() => handleConfirmExit(null, false, vehicleState.plate, cameraId)}>
-                                Log Exit
-                            </button>
-                        ) : showPaymentSelection && (
+                        {showPaymentSelection && (
                             <div className="payment-options">
                                 {(["cash", "card"]).map((method) => (
                                     <button
@@ -2641,20 +1891,6 @@ function GaragePage() {
         setActiveLane(nextLane);
     }
 
-
-    const billingConfig = adminSettings?.billing_config;
-    const isDetectedVehicleParked = parkingSpaces.some(
-        (space) => space.is_occupied && space.license_plate === detectedPlate
-    );
-    const showPaymentSelection = isDetectedVehicleParked && exitPaymentRequired && Boolean(
-        billingConfig?.payments_enabled && billingConfig?.cash_enabled && billingConfig?.card_enabled
-    );
-    const showCashPayment = showPaymentSelection;
-    const showCardPayment = showPaymentSelection;
-    const lockActionAlreadyCompleted = Boolean(
-        detectionSource && completedLockActionRef.current[detectionSource] === detectedPlate
-    );
-
     return (
         <div className="app">
             {showSettingsReloadNotice && (
@@ -2683,6 +1919,7 @@ function GaragePage() {
 
             <main className="container">
 
+                {!isTrackingModeGarage && (
                 <section className="card parking-status">
                     <h2>
                         Parking Status
@@ -2785,6 +2022,7 @@ function GaragePage() {
                         </>
                     )}
                 </section>
+                )}
 
 
                 <section className="vehicle-section">
@@ -2805,509 +2043,6 @@ function GaragePage() {
                             <section><p className="camera-kicker">Entry</p><div className="camera-slot-grid">{cameraSlots.filter((slot) => slot.lane === "Entry").map(renderSlotCamera)}</div></section>
                             <section><p className="camera-kicker">Exit</p><div className="camera-slot-grid">{cameraSlots.filter((slot) => slot.lane === "Exit").map(renderSlotCamera)}</div></section>
                         </div>
-
-
-                        <div className="camera-grid legacy-camera-grid">
-
-                            <div className="camera-panel">
-
-                                <div className="camera-panel-header">
-                                    <div>
-                                        <span className="camera-kicker">
-                                            Lane 01
-                                        </span>
-
-                                        <strong>
-                                            Entry Camera 1
-                                        </strong>
-                                    </div>
-
-                                </div>
-
-
-                                <div className="camera-preview">
-                                    <span
-                                        className={`camera-feed-status camera-status ${cameraActive
-                                            ? "active"
-                                            : "standby"
-                                            }`}
-                                    >
-                                        {cameraActive ? (
-                                            <>
-                                                <span className="live-dot">●</span>
-                                                {" Live"}
-                                            </>
-                                        ) : (
-                                            "Standby"
-                                        )}
-                                    </span>
-
-                                    {renderDetectionBox(
-                                        entryDetectionBox,
-                                        videoRef
-                                    )}
-
-                                    {exitCameraActive ? (
-                                        <div className="camera-standby">
-                                            <span className="camera-icon">▣</span>
-                                            <strong>Entry camera is closed</strong>
-                                            <p>Close the exit camera to resume entry monitoring.</p>
-                                        </div>
-                                    ) : (
-                                        <video
-                                            ref={videoRef}
-                                            autoPlay
-                                            playsInline
-                                            muted
-                                            onCanPlay={(event) =>
-                                                event.currentTarget
-                                                    .play()
-                                                    .catch(
-                                                        () => { }
-                                                    )
-                                            }
-                                        />
-                                    )}
-                                </div>
-
-                            </div>
-
-                            {Array.from({ length: entryCameraCount - 1 }, (_, index) =>
-                                renderSharedCamera(
-                                    `entry-${index + 2}`,
-                                    `Entry Camera ${index + 2}`,
-                                    videoRef,
-                                    cameraActive && !exitCameraActive
-                                )
-                            )}
-
-
-                            <div className="camera-panel">
-
-                                <div className="camera-panel-header">
-                                    <div>
-                                        <span className="camera-kicker">
-                                            Lane 02
-                                        </span>
-
-                                        <strong>
-                                            Exit Camera 1
-                                        </strong>
-                                    </div>
-
-                                </div>
-
-
-                                <div className="camera-preview exit-camera-preview">
-                                    <span
-                                        className={`camera-feed-status camera-status ${exitCameraActive
-                                            ? "active"
-                                            : "standby"
-                                            }`}
-                                    >
-                                        {exitCameraActive ? (
-                                            <>
-                                                <span className="live-dot">●</span>
-                                                {" Live"}
-                                            </>
-                                        ) : (
-                                            "Standby"
-                                        )}
-                                    </span>
-
-                                    {renderDetectionBox(
-                                        exitDetectionBox,
-                                        exitVideoRef
-                                    )}
-
-                                    {exitCameraActive ? (
-                                        <video
-                                            ref={exitVideoRef}
-                                            autoPlay
-                                            playsInline
-                                            muted
-                                            onCanPlay={(event) =>
-                                                event.currentTarget
-                                                    .play()
-                                                    .catch(
-                                                        () => { }
-                                                    )
-                                            }
-                                        />
-                                    ) : (
-                                        <div className="camera-standby">
-                                            <span className="camera-icon">
-                                                ▣
-                                            </span>
-
-                                            <strong>
-                                                Exit camera is closed
-                                            </strong>
-
-                                            <p>
-                                                Open it when a vehicle
-                                                is leaving.
-                                            </p>
-                                        </div>
-                                    )}
-
-                                </div>
-
-
-                                {!exitCameraActive ? (
-                                    <button
-                                        type="button"
-                                        className="open-camera-button"
-                                        onClick={
-                                            openExitCamera
-                                        }
-                                    >
-                                        Open Exit Camera
-                                    </button>
-                                ) : (
-                                    <button
-                                        type="button"
-                                        className="close-camera-button"
-                                        onClick={
-                                            closeExitCamera
-                                        }
-                                    >
-                                        Close Exit Camera
-                                    </button>
-                                )}
-
-
-                                {exitCameraError && (
-                                    <div className="error">
-                                        {exitCameraError}
-                                    </div>
-                                )}
-
-                            </div>
-
-                            {Array.from({ length: exitCameraCount - 1 }, (_, index) =>
-                                renderSharedCamera(
-                                    `exit-${index + 2}`,
-                                    `Exit Camera ${index + 2}`,
-                                    exitVideoRef,
-                                    exitCameraActive
-                                )
-                            )}
-
-                        </div>
-
-
-                        <canvas
-                            ref={canvasRef}
-                            style={{
-                                display: "none",
-                            }}
-                        />
-
-
-                        {cameraError && (
-                            <div className="error">
-                                {cameraError}
-                            </div>
-                        )}
-
-
-                        {false && !detectedPlate &&
-                            !exitResult &&
-                            !entryResult && (
-                                <div className="waiting-panel">
-
-                                    <div className="camera-icon">
-                                        📷
-                                    </div>
-
-                                    <strong>
-                                        Waiting for vehicle...
-                                    </strong>
-
-                                    <p>
-                                        Position a vehicle in front
-                                        of the camera.
-                                    </p>
-
-                                </div>
-                            )}
-
-
-                        {false && detectedPlate && (
-                            <div className="detected-panel">
-
-                                <div className="detected-header">
-
-                                    <div>
-                                        <span className="detected-label">
-                                            Vehicle Detected
-                                        </span>
-
-                                        <h3>
-                                            {detectedPlate}
-                                        </h3>
-                                    </div>
-
-                                    <span className="live-indicator">
-                                        ● LIVE
-                                    </span>
-
-                                </div>
-
-
-                                <p className="description">
-                                    License plate detected automatically.
-                                    Select whether the vehicle is entering
-                                    or exiting.
-                                </p>
-
-
-                                <div className="plate-display">
-
-                                    <span className="field-label">
-                                        Detected License Plate
-                                    </span>
-
-                                    <div className="plate-readonly">
-                                        {detectedPlate}
-                                    </div>
-
-                                </div>
-
-
-                                {alreadyParked && (
-                                    <div className="error">
-                                        Vehicle is already parked in the garage.
-                                    </div>
-                                )}
-
-                                {detectionSource?.startsWith("exit-") &&
-                                    !vehicleAction &&
-                                    !exitError && (
-                                        <div className="status-message">
-                                            Checking vehicle status...
-                                        </div>
-                                    )}
-
-                                {exitError && (
-                                    <div className="error">
-                                        {exitError}
-                                    </div>
-                                )}
-
-                                {!vehicleAction &&
-                                    !alreadyParked &&
-                                    !exitError &&
-                                    !lockActionAlreadyCompleted &&
-                                    detectionSource?.startsWith("entry-") && (
-                                        <div className="action-selection">
-
-                                            <p className="action-title">
-                                                Confirm vehicle entry
-                                            </p>
-
-                                            <div className="vehicle-action-buttons">
-                                                <button
-                                                    className="confirm-button"
-                                                    onClick={handleSelectEntry}
-                                                    disabled={
-                                                        garageFull ||
-                                                        entryLoading ||
-                                                        exitLoading
-                                                    }
-                                                >
-                                                    {garageFull
-                                                        ? "Garage Full"
-                                                        : "Entry Vehicle"}
-                                                </button>
-                                            </div>
-
-                                            {garageFull && (
-                                                <p className="description">
-                                                    The garage is currently full.
-                                                    Entry is unavailable.
-                                                </p>
-                                            )}
-
-                                        </div>
-                                    )}
-
-                                {vehicleAction ===
-                                    "entry" && (
-                                        <div className="entry-mode">
-
-                                            <h3>
-                                                Select Parking Space
-                                            </h3>
-
-
-                                            <p className="description">
-                                                A parking space has been
-                                                automatically assigned.
-                                                Click another available
-                                                space if you want to
-                                                change it.
-                                            </p>
-
-
-                                            <div className="selected-space-info">
-
-                                                <strong>
-                                                    Selected Space:
-                                                </strong>
-
-                                                <span>
-                                                    {selectedSpace
-                                                        ? `Level ${selectedSpace.level} — ${selectedSpace.space}`
-                                                        : "No space available"}
-                                                </span>
-
-                                            </div>
-
-
-                                            {entryError && (
-                                                <div className="error">
-                                                    {entryError}
-                                                </div>
-                                            )}
-
-
-                                            <div className="confirmation-buttons">
-
-                                                <button
-                                                    className="confirm-button"
-                                                    onClick={() => handleConfirmEntry()}
-                                                    disabled={
-                                                        entryLoading ||
-                                                        !selectedSpaceId
-                                                    }
-                                                >
-                                                    {entryLoading
-                                                        ? "Processing Entry..."
-                                                        : "Confirm Entry"}
-                                                </button>
-
-
-                                                <button
-                                                    className="cancel-button"
-                                                    onClick={() => {
-                                                        setVehicleAction(
-                                                            null
-                                                        );
-
-                                                        setSelectedSpaceId(
-                                                            null
-                                                        );
-
-                                                        setEntryError(
-                                                            ""
-                                                        );
-                                                    }}
-                                                    disabled={
-                                                        entryLoading
-                                                    }
-                                                >
-                                                    Back
-                                                </button>
-
-                                            </div>
-
-                                        </div>
-                                    )}
-
-
-                                {vehicleAction ===
-                                    "exit" && (
-                                        <div className="exit-mode">
-
-                                            <h3>
-                                                Exit Vehicle
-                                            </h3>
-
-
-                                            <p className="description">
-                                                {exitPaymentRequired
-                                                    ? `Select a payment method. Parking is billed at ${formatRupees(exitRatePerMinute ?? 1.67)} per minute.`
-                                                    : "Exit is being processed automatically."}
-                                            </p>
-
-
-                                            <div className="exit-plate-confirmation">
-
-                                                <strong>
-                                                    Exit plate:
-                                                </strong>
-
-                                                <span>
-                                                    {detectedPlate}
-                                                </span>
-
-                                            </div>
-
-
-                                            {exitPaymentRequired && (
-                                                <>
-                                                    <p className="action-title">
-                                                        Payment method
-                                                    </p>
-
-
-                                                    <div className="payment-options">
-
-                                                        {showCashPayment && <button
-                                                            type="button"
-                                                            className={
-                                                                `payment-option ${paymentMethod ===
-                                                                    "cash"
-                                                                    ? "selected"
-                                                                    : ""
-                                                                }`
-                                                            }
-                                                            onClick={() => handlePaymentSelection("cash")}
-                                                            disabled={
-                                                                exitLoading
-                                                            }
-                                                        >
-                                                            <span>Cash</span>
-                                                        </button>}
-
-
-                                                        {showCardPayment && <button
-                                                            type="button"
-                                                            className={
-                                                                `payment-option ${paymentMethod ===
-                                                                    "card"
-                                                                    ? "selected"
-                                                                    : ""
-                                                                }`
-                                                            }
-                                                            onClick={() => handlePaymentSelection("card")}
-                                                            disabled={
-                                                                exitLoading
-                                                            }
-                                                        >
-                                                            <span>Card</span>
-                                                        </button>}
-
-                                                    </div>
-                                                </>
-                                            )}
-
-
-                                            {exitError && (
-                                                <div className="error">
-                                                    {exitError}
-                                                </div>
-                                            )}
-
-                                            {exitLoading && <p className="description">Processing Exit...</p>}
-
-                                        </div>
-                                    )}
-
-                            </div>
-                        )}
 
                     </section>
 

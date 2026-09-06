@@ -283,10 +283,6 @@ def vehicle_entry(
             license_plate=request.license_plate,
             parking_space_id=request.parking_space_id,
             tenant_id=admin.tenant_id,
-            tracking_only=settings_response(get_admin_settings(db, admin.tenant_id))[
-                "garage_settings"
-            ].get("mode")
-            == "tracking",
         )
 
         return {
@@ -358,15 +354,15 @@ def vehicle_exit(
     """
 
     try:
-        tracking_mode = (
-            settings_response(get_admin_settings(db, admin.tenant_id))[
-                "garage_settings"
-            ].get("mode")
-            == "tracking"
-        )
+        # PLATE_TRACKING_BILLING_PARITY_V1
+        # Billing follows the same billing_config for every garage mode.
+        # Plate Tracking Only no longer forces payments off -- if billing
+        # is enabled in admin settings, tracking-mode exits are charged
+        # exactly like Parking Garage exits.
         billing_config = settings_response(get_admin_settings(db, admin.tenant_id))[
             "billing_config"
         ]
+        billing_enabled = bool(billing_config.get("payments_enabled"))
         rate_per_minute = float(
             billing_config.get("rate_per_minute", PARKING_RATE_PER_MINUTE)
         )
@@ -375,7 +371,7 @@ def vehicle_exit(
         payment_required = payment_required_for_exit(
             db,
             request.license_plate,
-            False if tracking_mode else bool(billing_config.get("payments_enabled")),
+            billing_enabled,
             admin.tenant_id,
             rate_per_minute,
             rate_unit,
@@ -393,17 +389,9 @@ def vehicle_exit(
             db=db,
             license_plate=request.license_plate,
             payment_method=(
-                None
-                if tracking_mode
-                else (
-                    request.payment_method
-                    if billing_config.get("payments_enabled")
-                    else None
-                )
+                request.payment_method if billing_enabled else None
             ),
-            billing_enabled=(
-                False if tracking_mode else bool(billing_config.get("payments_enabled"))
-            ),
+            billing_enabled=billing_enabled,
             rate_per_minute=rate_per_minute,
             rate_unit=rate_unit,
             tenant_id=admin.tenant_id,

@@ -10,12 +10,49 @@ from app.services.parking_service import (
 from app.services.time_service import pakistan_now
 
 
+def _find_available_space(db: Session, tenant_id: int):
+    # Do not trust only ParkingSpace.is_occupied.
+    # A stale flag must never allow a space with an
+    # existing active session to be allocated again.
+    active_session_exists = (
+        db.query(ParkingSession.id)
+        .filter(
+            ParkingSession.parking_space_id == ParkingSpace.id,
+            ParkingSession.tenant_id == tenant_id,
+            ParkingSession.status == "active",
+        )
+        .exists()
+    )
+
+    return (
+        db.query(ParkingSpace)
+        .filter(
+            ParkingSpace.is_occupied == False,
+            ParkingSpace.is_active == True,
+            ParkingSpace.tenant_id == tenant_id,
+            ~active_session_exists,
+        )
+        .order_by(
+            ParkingSpace.level.asc(),
+            func.cast(
+                func.substring(
+                    ParkingSpace.space_number,
+                    r"\d+$",
+                ),
+                Integer,
+            ).asc(),
+        )
+        .populate_existing()
+        .with_for_update(skip_locked=True)
+        .first()
+    )
+
+
 def create_vehicle_entry(
     db: Session,
     license_plate: str,
     tenant_id: int,
     parking_space_id: int | None = None,
-    tracking_only: bool = False,
 ):
     """
     Create a parking session using a license plate
@@ -45,46 +82,14 @@ def create_vehicle_entry(
         # Select / validate parking space
         # ========================================================
 
-        if tracking_only:
-            space = None
-
-        elif parking_space_id is None:
-
-            # Do not trust only ParkingSpace.is_occupied.
-            # A stale flag must never allow a space with an
-            # existing active session to be allocated again.
-            active_session_exists = (
-                db.query(ParkingSession.id)
-                .filter(
-                    ParkingSession.parking_space_id == ParkingSpace.id,
-                    ParkingSession.tenant_id == tenant_id,
-                    ParkingSession.status == "active",
-                )
-                .exists()
-            )
-
-            space = (
-                db.query(ParkingSpace)
-                .filter(
-                    ParkingSpace.is_occupied == False,
-                    ParkingSpace.is_active == True,
-                    ParkingSpace.tenant_id == tenant_id,
-                    ~active_session_exists,
-                )
-                .order_by(
-                    ParkingSpace.level.asc(),
-                    func.cast(
-                        func.substring(
-                            ParkingSpace.space_number,
-                            r"\d+$",
-                        ),
-                        Integer,
-                    ).asc(),
-                )
-                .populate_existing()
-                .with_for_update(skip_locked=True)
-                .first()
-            )
+        if parking_space_id is None:
+            # PLATE_TRACKING_SPACE_LOG_V1
+            # Tracking-only mode always calls this with no explicit
+            # parking_space_id, so it goes through the exact same
+            # automatic space-selection path as Parking Garage mode --
+            # the frontend just never displays the assigned space for a
+            # tracking-only garage.
+            space = _find_available_space(db, tenant_id)
 
             if space is None:
                 raise ValueError(

@@ -1137,6 +1137,14 @@ function AdminPage() {
 
                                 <form className="garage-settings-form" onSubmit={handleGarageSettingsApply}>
                                     <div className="garage-mode-options"><p>Choose how this site is operated.</p><label><input type="radio" checked={(garageSettings.mode || "parking") === "parking"} onChange={() => setGarageSettings((current) => ({ ...current, mode: "parking" }))} /> <strong>Parking Garage</strong><small>Manage levels, spaces, entry, exit and billing.</small></label><label><input type="radio" checked={garageSettings.mode === "tracking"} onChange={() => setGarageSettings((current) => ({ ...current, mode: "tracking" }))} /> <strong>Plate Tracking Only</strong><small>Recognize and log plates without parking-space assignment.</small></label></div>
+                                    <label className="automatic-entry-toggle">
+                                        <span>Automatic Entry</span>
+                                        <input
+                                            type="checkbox"
+                                            checked={Boolean(garageSettings.automatic_entry)}
+                                            onChange={(event) => setGarageSettings((current) => ({ ...current, automatic_entry: event.target.checked }))}
+                                        />
+                                    </label>
                                     {(garageSettings.mode || "parking") === "parking" && <>
                                         <div className="level-config-block">
                                             <div className="level-config-header">
@@ -1171,14 +1179,6 @@ function AdminPage() {
                                                     </small>
                                                 </label>
                                             </div>
-                                            <label className="automatic-entry-toggle">
-                                                <span>Automatic Entry</span>
-                                                <input
-                                                    type="checkbox"
-                                                    checked={Boolean(garageSettings.automatic_entry)}
-                                                    onChange={(event) => setGarageSettings((current) => ({ ...current, automatic_entry: event.target.checked }))}
-                                                />
-                                            </label>
                                             <div className="local-image-setting"><label><span>Enable Local Plate Images</span><input type="checkbox" checked={Boolean(garageSettings.local_image_saving)} onChange={(event) => setGarageSettings((current) => ({ ...current, local_image_saving: event.target.checked }))} /></label><button type="button" className="camera-refresh-button" onClick={chooseLocalImageFolder}>Select Folder</button><div className="local-image-status"><small>{localImageFolder ? <>Selected folder: <strong>{localImageFolder}</strong><br />Saving structure: {localImageFolder} / YYYY-MM-DD / Entry | Exit</> : localPlateImageSupport() ? "No local folder selected." : "Local folder saving requires Chromium."}</small>{localImageStatus && <small>{localImageStatus}</small>}</div></div>
                                         </div>
 

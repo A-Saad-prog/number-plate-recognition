@@ -16,50 +16,6 @@ function requestError(response, data, fallback) {
 
 
 // ============================================================
-// Get Available Parking Space
-// ============================================================
-
-export async function getAvailableSpace() {
-
-    const response = await fetch(
-        `${API_BASE_URL}/parking/available-space`
-    );
-
-    if (!response.ok) {
-
-        throw new Error(
-            `Failed to get available parking space: ${response.status}`
-        );
-
-    }
-
-    return await response.json();
-}
-
-
-// ============================================================
-// Get Latest Detected License Plate
-// ============================================================
-
-export async function getDetectedPlate() {
-
-    const response = await fetch(
-        `${API_BASE_URL}/parking/detected-plate`
-    );
-
-    if (!response.ok) {
-
-        throw new Error(
-            `Failed to get detected plate: ${response.status}`
-        );
-
-    }
-
-    return await response.json();
-}
-
-
-// ============================================================
 // Get Parking Spaces
 // ============================================================
 
@@ -231,39 +187,6 @@ export async function exitUsingPlate(licensePlate, paymentMethod) {
 
         throw new Error(
             `Failed to process vehicle exit: ${response.status}`
-        );
-
-    }
-
-    return await response.json();
-}
-
-
-// ============================================================
-// Exit Using QR Code
-// ============================================================
-
-export async function exitUsingQR(qrCode) {
-
-    const response = await fetch(
-        `${API_BASE_URL}/parking/exit/qr`,
-        {
-            method: "POST",
-
-            headers: {
-                "Content-Type": "application/json",
-            },
-
-            body: JSON.stringify({
-                qr_code: qrCode,
-            }),
-        }
-    );
-
-    if (!response.ok) {
-
-        throw new Error(
-            `Failed to process QR exit: ${response.status}`
         );
 
     }

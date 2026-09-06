@@ -23,51 +23,6 @@ def space_has_active_session(
     )
 
 
-def get_available_spaces(
-    db: Session,
-    tenant_id: int,
-) -> list[ParkingSpace]:
-    """
-    Return all truly available parking spaces.
-
-    A space is available only when:
-    - it is active
-    - is_occupied is False
-    - no active parking session references it
-    """
-
-    active_session_exists = (
-        db.query(ParkingSession.id)
-        .filter(
-            ParkingSession.parking_space_id == ParkingSpace.id,
-            ParkingSession.tenant_id == tenant_id,
-            ParkingSession.status == "active",
-        )
-        .exists()
-    )
-
-    return (
-        db.query(ParkingSpace)
-        .filter(
-            ParkingSpace.is_occupied == False,
-            ParkingSpace.is_active == True,
-            ParkingSpace.tenant_id == tenant_id,
-            ~active_session_exists,
-        )
-        .order_by(
-            ParkingSpace.level.asc(),
-            func.cast(
-                func.substring(
-                    ParkingSpace.space_number,
-                    r"\d+$",
-                ),
-                Integer,
-            ).asc(),
-        )
-        .all()
-    )
-
-
 def get_all_spaces(
     db: Session,
     tenant_id: int,
