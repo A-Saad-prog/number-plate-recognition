@@ -1436,6 +1436,30 @@ function GaragePage() {
             error: "",
             entryResult: null,
         });
+        const previousCameraState = cameraVehicleState[sourceOverride] || {};
+        const previousSpaces = parkingSpacesRef.current;
+
+        if (!trackingMode) {
+            const optimisticSpaces = parkingSpacesRef.current.map((space) =>
+                space.id === spaceId
+                    ? {
+                        ...space,
+                        is_occupied: true,
+                        license_plate: plate,
+                        entry_time: new Date().toISOString(),
+                    }
+                    : space
+            );
+
+            parkingSpacesRef.current = optimisticSpaces;
+            setParkingSpaces(optimisticSpaces);
+        }
+
+        clearCameraVehicleState(sourceOverride);
+
+        setActiveEntryCameraId((current) =>
+            current === sourceOverride ? null : current
+        );
 
         let entryCompleted = false;
         try {
@@ -1496,11 +1520,10 @@ function GaragePage() {
                     }
                 );
 
-            if (!trackingMode) {
+            if (!trackingMode && automatic) {
                 parkingSpacesRef.current = nextSpaces;
                 setParkingSpaces(nextSpaces);
             }
-
             entryCompleted = true;
             clearCompletedCameraPlate(sourceOverride);
             clearCameraVehicleState(sourceOverride);
@@ -1524,15 +1547,22 @@ function GaragePage() {
             void loadParkingSpaces();
 
         } catch (error) {
+            if (!trackingMode) {
+                parkingSpacesRef.current = previousSpaces;
+                setParkingSpaces(previousSpaces);
+            }
+
+            updateCameraVehicleState(sourceOverride, {
+                ...previousCameraState,
+                loading: false,
+                error: error.message || "Vehicle entry failed.",
+            });
+
             console.error(
                 "Vehicle entry error:",
                 error
             );
 
-            updateCameraVehicleState(sourceOverride, {
-                loading: false,
-                error: error.message || "Vehicle entry failed.",
-            });
             setEntryError(
                 error.message ||
                 "Vehicle entry failed."
@@ -1663,9 +1693,7 @@ function GaragePage() {
             setPaymentMethod(null);
             setExitLoading(false);
 
-            // Keep the exit receipt visible immediately and sync the
-            // backend state after the user sees the confirmation.
-            void loadParkingSpaces();
+
 
         } catch (error) {
             console.error(
@@ -2184,6 +2212,14 @@ function GaragePage() {
                         return { ...current, [cameraId]: { ...currentView, active: true, box: result.box || null } };
                     });
                     const plate = result.license_plate?.trim().toUpperCase();
+                    const lockedPlate = confirmedPlateLockRef.current[cameraId];
+
+                    if (lockedPlate && plate === lockedPlate) {
+                        detectedPlateRef.current[cameraId] = lockedPlate;
+
+
+                        return;
+                    }
 
                     // Per-camera temporal confirmation and lock.
                     {
@@ -2532,24 +2568,6 @@ function GaragePage() {
                                 disabled={vehicleState.loading || (!trackingMode && !vehicleState.selectedSpaceId)}
                             >
                                 {trackingMode ? "Log Entry" : "Confirm Entry"}
-                            </button>
-                            <button
-                                type="button"
-                                className="cancel-button"
-                                onClick={() => {
-                                    updateCameraVehicleState(cameraId, {
-                                        action: null,
-                                        selectedSpaceId: null,
-                                        error: "",
-                                    });
-
-                                    setActiveEntryCameraId((current) =>
-                                        current === cameraId ? null : current
-                                    );
-                                }}
-                                disabled={vehicleState.loading}
-                            >
-                                Back
                             </button>
                         </div>
                     </div>
