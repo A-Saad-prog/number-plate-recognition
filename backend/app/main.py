@@ -19,6 +19,8 @@ from sqlalchemy.orm import Session
 
 from app.database.database import engine
 from app.database.database import get_db
+from app.models.parking_session import ParkingSession
+from app.models.vehicle import Vehicle
 
 from app.services.parking_service import (
     get_all_spaces,
@@ -197,6 +199,7 @@ def garage_settings(
         "billing_config": settings["billing_config"],
     }
 
+
 @app.get("/parking/spaces")
 def parking_spaces(
     db: Session = Depends(get_db),
@@ -214,6 +217,42 @@ def parking_spaces(
     return {
         "success": True,
         "spaces": spaces,
+    }
+
+
+@app.get("/parking/active-session")
+def active_parking_session(
+    license_plate: str,
+    db: Session = Depends(get_db),
+    admin=Depends(current_admin),
+):
+    normalized_plate = license_plate.strip().upper()
+    session = None
+    if normalized_plate:
+        session = (
+            db.query(ParkingSession)
+            .join(Vehicle, Vehicle.id == ParkingSession.vehicle_id)
+            .filter(
+                Vehicle.tenant_id == admin.tenant_id,
+                Vehicle.license_plate == normalized_plate,
+                ParkingSession.tenant_id == admin.tenant_id,
+                ParkingSession.status == "active",
+            )
+            .first()
+        )
+
+    return {
+        "success": True,
+        "active": session is not None,
+        "session": (
+            {
+                "id": session.id,
+                "license_plate": normalized_plate,
+                "parking_space_id": session.parking_space_id,
+            }
+            if session
+            else None
+        ),
     }
 
 
@@ -244,7 +283,6 @@ def vehicle_entry(
             license_plate=request.license_plate,
             parking_space_id=request.parking_space_id,
             tenant_id=admin.tenant_id,
-            tracking_only=settings_response(get_admin_settings(db, admin.tenant_id))["garage_settings"].get("mode") == "tracking",
         )
 
         return {
@@ -271,9 +309,13 @@ def exit_payment_required(
     db: Session = Depends(get_db),
     admin=Depends(current_admin),
 ):
-    billing_config = settings_response(get_admin_settings(db, admin.tenant_id))["billing_config"]
+    billing_config = settings_response(get_admin_settings(db, admin.tenant_id))[
+        "billing_config"
+    ]
     billing_enabled = bool(billing_config.get("payments_enabled"))
-    rate_per_minute = float(billing_config.get("rate_per_minute", PARKING_RATE_PER_MINUTE))
+    rate_per_minute = float(
+        billing_config.get("rate_per_minute", PARKING_RATE_PER_MINUTE)
+    )
     rate_unit = billing_config.get("rate_unit", "minute")
     try:
         payment_required = payment_required_for_exit(
@@ -312,9 +354,15 @@ def vehicle_exit(
     """
 
     try:
-        billing_config = settings_response(
-            get_admin_settings(db, admin.tenant_id)
-        )["billing_config"]
+        # PLATE_TRACKING_BILLING_PARITY_V1
+        # Billing follows the same billing_config for every garage mode.
+        # Plate Tracking Only no longer forces payments off -- if billing
+        # is enabled in admin settings, tracking-mode exits are charged
+        # exactly like Parking Garage exits.
+        billing_config = settings_response(get_admin_settings(db, admin.tenant_id))[
+            "billing_config"
+        ]
+        billing_enabled = bool(billing_config.get("payments_enabled"))
         rate_per_minute = float(
             billing_config.get("rate_per_minute", PARKING_RATE_PER_MINUTE)
         )
@@ -323,7 +371,7 @@ def vehicle_exit(
         payment_required = payment_required_for_exit(
             db,
             request.license_plate,
-            bool(billing_config.get("payments_enabled")),
+            billing_enabled,
             admin.tenant_id,
             rate_per_minute,
             rate_unit,
@@ -332,18 +380,18 @@ def vehicle_exit(
         if payment_required and not request.payment_method:
             raise ValueError("Select a payment method before exiting.")
 
-        if payment_required and not billing_config.get(f"{request.payment_method}_enabled"):
+        if payment_required and not billing_config.get(
+            f"{request.payment_method}_enabled"
+        ):
             raise ValueError("Selected payment method is not enabled.")
 
         result = process_vehicle_exit_by_plate(
             db=db,
             license_plate=request.license_plate,
             payment_method=(
-                request.payment_method
-                if billing_config.get("payments_enabled")
-                else None
+                request.payment_method if billing_enabled else None
             ),
-            billing_enabled=bool(billing_config.get("payments_enabled")),
+            billing_enabled=billing_enabled,
             rate_per_minute=rate_per_minute,
             rate_unit=rate_unit,
             tenant_id=admin.tenant_id,

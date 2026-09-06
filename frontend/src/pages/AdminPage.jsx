@@ -31,6 +31,24 @@ const THEME_KEY = "parking_admin_theme";
 const CAMERA_ASSIGNMENTS_KEY = "parking_camera_assignments";
 const GARAGE_SETTINGS_UPDATED_KEY = "parking_garage_settings_updated";
 
+function openOrFocusNamedTab(url, name) {
+    const target = window.open("", name);
+    if (!target) return;
+
+    try {
+        if (
+            target.location.origin !== window.location.origin ||
+            target.location.pathname !== url
+        ) {
+            target.location.href = url;
+        }
+    } catch {
+        target.location.href = url;
+    }
+
+    target.focus();
+}
+
 const TRANSLATIONS = {
     en: {
         language: "اردو", theme: "Dark mode", lightTheme: "Light mode", signOut: "Sign out",
@@ -83,6 +101,10 @@ function DisplayControls({ theme, language, onLanguageChange, onThemeChange }) {
 }
 
 function AdminPage() {
+    useEffect(() => {
+        window.name = "parkingos-admin";
+    }, []);
+
     const [language, setLanguage] = useState(() => localStorage.getItem(LANGUAGE_KEY) === "ur" ? "ur" : "en");
     const [theme, setTheme] = useState(() => ["system", "light", "dark"].includes(localStorage.getItem(THEME_KEY)) ? localStorage.getItem(THEME_KEY) : "light");
     const [systemDark, setSystemDark] = useState(() => window.matchMedia?.("(prefers-color-scheme: dark)")?.matches || false);
@@ -235,7 +257,7 @@ function AdminPage() {
                     setSavedCameraSetup(normalizeCameraSetup(normalizedCameraConfig, cameraAssignments));
                 }
                 if (settings.billing_config) {
-            const normalizedBillingConfig = {
+                    const normalizedBillingConfig = {
                         ...settings.billing_config,
                         rate_per_minute: settings.billing_config.rate_per_minute ?? 1.67, rate_unit: settings.billing_config.rate_unit || "minute",
                     };
@@ -245,7 +267,7 @@ function AdminPage() {
             })
             .catch(() => { });
     }, [token]);
-    useEffect(() => { savedPlateImageFolderName().then((name) => setLocalImageFolder(name || "")).catch(() => {}); }, []);
+    useEffect(() => { savedPlateImageFolderName().then((name) => setLocalImageFolder(name || "")).catch(() => { }); }, []);
     useEffect(() => {
         setGarageSettingsAlreadyApplied(
             isGarageSettingsAlreadyApplied(
@@ -824,6 +846,10 @@ function AdminPage() {
             return false;
         }
 
+        if ((currentSettings.mode || "parking") !== (savedSettings.mode || "parking")) {
+            return false;
+        }
+
         const currentLevels = currentSettings.levels || [];
         const savedLevels = savedSettings.levels || [];
 
@@ -1005,6 +1031,12 @@ function AdminPage() {
             setConfirmationOpen(false);
             return;
         }
+        if (garageSettings.mode === "tracking") {
+            setGarageErrors({ levels: "", spaces_per_level: "" });
+            setLevelErrors({});
+            openSettingsConfirmation("garage");
+            return;
+        }
         const levelCountValue = garageSettings.level_count !== undefined
             ? garageSettings.level_count
             : (garageSettings.levels?.length ? String(garageSettings.levels.length) : "");
@@ -1045,14 +1077,33 @@ function AdminPage() {
         if (garageSettings.mode === "tracking") {
             setSettingsSubmitting("garage");
             try {
-                const result = await saveGarageSettings(token, { mode: "tracking", level_count: 0, spaces_per_level: 0, levels: [], automatic_entry: Boolean(garageSettings.automatic_entry), local_image_saving: Boolean(garageSettings.local_image_saving) });
+                const result = await saveGarageSettings(token, {
+                    mode: "tracking",
+                    level_count: Number(garageSettings.level_count) || 0,
+                    spaces_per_level: Number(garageSettings.spaces_per_level) || 0,
+                    levels: (garageSettings.levels || []).map((level, index) => ({
+                        id: level.id || index + 1,
+                        name: String(level.name).trim(),
+                        spaces: Number(level.spaces),
+                    })),
+                    automatic_entry: Boolean(garageSettings.automatic_entry),
+                    local_image_saving: Boolean(garageSettings.local_image_saving),
+                });
                 const saved = result.garage_settings;
                 if (pendingLocalImageFolder) {
                     setLocalImageFolder(await activatePlateImageFolder(pendingLocalImageFolder.handle));
                     setPendingLocalImageFolder(null);
                 }
-                setGarageSettings({ mode: "tracking", level_count: "0", spaces_per_level: "0", levels: [], automatic_entry: Boolean(saved.automatic_entry), local_image_saving: Boolean(saved.local_image_saving) });
-                setSavedGarageSettings({ mode: "tracking", level_count: "0", spaces_per_level: "0", levels: [], automatic_entry: Boolean(saved.automatic_entry), local_image_saving: Boolean(saved.local_image_saving) });
+                const normalizedSaved = {
+                    mode: "tracking",
+                    level_count: String(saved.level_count),
+                    spaces_per_level: String(saved.spaces_per_level),
+                    levels: (saved.levels || []).map((level) => ({ ...level, spaces: String(level.spaces) })),
+                    automatic_entry: Boolean(saved.automatic_entry),
+                    local_image_saving: Boolean(saved.local_image_saving),
+                };
+                setGarageSettings(normalizedSaved);
+                setSavedGarageSettings(normalizedSaved);
                 setGarageSettingsMessageType("success"); setGarageSettingsMessage("Plate tracking mode applied."); localStorage.setItem(GARAGE_SETTINGS_UPDATED_KEY, String(Date.now())); setConfirmationOpen(false); return;
             } catch (err) { setGarageSettingsMessageType("warning"); setGarageSettingsMessage(err?.message || t.requestFailed); return; }
             finally { setSettingsSubmitting(null); }
@@ -1152,7 +1203,7 @@ function AdminPage() {
             <main className={`admin-shell admin-theme-${appliedTheme}`} dir={isUrdu ? "rtl" : "ltr"} lang={language}>
                 <header className="admin-header">
                     <a href="/" className="admin-logo">PARKING<span>OS</span></a>
-                    <div className="admin-header-actions"><button type="button" className="theme-toggle" onClick={() => { const garageWindow = window.open("/", "parkingos-garage"); garageWindow?.focus(); }}>Open Garage</button><div className="account-menu"><button type="button" className="admin-user" aria-expanded={accountMenuOpen} onClick={() => setAccountMenuOpen((open) => !open)}>{adminName}</button>{accountMenuOpen && <div className="account-dropdown"><strong>Appearance</strong><button onClick={() => { setTheme("system"); setAccountMenuOpen(false); }}>System Default</button><button onClick={() => { setTheme("light"); setAccountMenuOpen(false); }}>Light</button><button onClick={() => { setTheme("dark"); setAccountMenuOpen(false); }}>Dark</button><strong>Language</strong><button onClick={() => { setLanguage("en"); setAccountMenuOpen(false); }}>English</button><button onClick={() => { setLanguage("ur"); setAccountMenuOpen(false); }}>Urdu</button><button className="sign-out" onClick={signOut}>{t.signOut}</button></div>}</div></div>
+                    <div className="admin-header-actions"><button type="button" className="theme-toggle" onClick={() => openOrFocusNamedTab("/", "parkingos-garage")}>Open Garage</button><div className="account-menu"><button type="button" className="admin-user" aria-expanded={accountMenuOpen} onClick={() => setAccountMenuOpen((open) => !open)}>{adminName}</button>{accountMenuOpen && <div className="account-dropdown"><strong>Appearance</strong><button onClick={() => { setTheme("system"); setAccountMenuOpen(false); }}>System Default</button><button onClick={() => { setTheme("light"); setAccountMenuOpen(false); }}>Light</button><button onClick={() => { setTheme("dark"); setAccountMenuOpen(false); }}>Dark</button><strong>Language</strong><button onClick={() => { setLanguage("en"); setAccountMenuOpen(false); }}>English</button><button onClick={() => { setLanguage("ur"); setAccountMenuOpen(false); }}>Urdu</button><button className="sign-out" onClick={signOut}>{t.signOut}</button></div>}</div></div>
                 </header>
                 <div className="admin-app-body">
                     <aside className="admin-sidebar">
@@ -1309,7 +1360,7 @@ function AdminPage() {
                                 </>}
                             </div>
                         ) : activeFeature === "analytics" ? (
-                            <div className="feature-view"><h1>Garage<br /><span>analytics.</span></h1>{analytics ? <><div className="analytics-grid"><article>Total Earnings<strong>Rs {Number(analytics.total_earnings).toLocaleString("en-PK", { minimumFractionDigits: 2 })}</strong></article><article>Average Duration<strong>{analytics.average_duration_minutes >= 60 ? `${Math.floor(analytics.average_duration_minutes / 60)} hr ${Math.round(analytics.average_duration_minutes % 60) || ""} min` : `${Math.round(analytics.average_duration_minutes)} min`}</strong></article><article>Rush Hour<strong>{analytics.rush_hour ? `${(Number(analytics.rush_hour.slice(0, 2)) % 12) || 12} ${Number(analytics.rush_hour.slice(0, 2)) >= 12 ? "PM" : "AM"} – ${(Number(analytics.rush_hour.slice(0, 2)) + 1) % 12 || 12} ${Number(analytics.rush_hour.slice(0, 2)) >= 11 ? "PM" : "AM"}` : "No data"}</strong></article><article>Occupancy<strong>{analytics.occupancy.occupied}/{analytics.occupancy.total}</strong></article><article>Vehicles Today<strong>{analytics.vehicles_today}</strong></article></div><section className="analytics-panel"><div className="analytics-switcher">{[["earnings","Earnings"],["rush","Rush Hour"],["duration","Average Duration"],["traffic","Vehicles / Traffic"]].map(([key,label]) => <button key={key} className={analyticsMetric === key ? "active" : ""} onClick={() => setAnalyticsMetric(key)}>{label}</button>)}</div><h3>{({ earnings: "Earnings trend (Rs)", rush: "Hourly vehicle activity (vehicles)", duration: "Average parking duration (minutes)", traffic: "Vehicle traffic (vehicles)" })[analyticsMetric]}</h3><div className="analytics-bars">{(() => { const rows = analyticsMetric === "rush" ? analytics.hourly_activity : analytics.trend; const values = rows.map((point) => analyticsMetric === "earnings" ? point.earnings : analyticsMetric === "traffic" || analyticsMetric === "rush" ? point.vehicles : analytics.average_duration_minutes); const max = Math.max(...values, 0); return rows.map((point, index) => { const value = values[index]; const height = max > 0 ? Math.max(4, value / max * 100) : 0; return <div key={point.date || point.hour || index} title={analyticsMetric === "earnings" ? `Rs ${Number(value).toLocaleString("en-PK", { minimumFractionDigits: 2 })}` : `${value} ${analyticsMetric === "duration" ? "min" : "vehicles"}`}><i style={{ height: `${height}%` }} /><small>{point.date?.slice(5) || `${point.hour}:00`}</small></div>; }); })()}</div></section></> : <p className="admin-message">Loading analytics…</p>}</div>
+                            <div className="feature-view"><h1>Garage<br /><span>analytics.</span></h1>{analytics ? <><div className="analytics-grid"><article>Total Earnings<strong>Rs {Number(analytics.total_earnings).toLocaleString("en-PK", { minimumFractionDigits: 2 })}</strong></article><article>Average Duration<strong>{analytics.average_duration_minutes >= 60 ? `${Math.floor(analytics.average_duration_minutes / 60)} hr ${Math.round(analytics.average_duration_minutes % 60) || ""} min` : `${Math.round(analytics.average_duration_minutes)} min`}</strong></article><article>Rush Hour<strong>{analytics.rush_hour ? `${(Number(analytics.rush_hour.slice(0, 2)) % 12) || 12} ${Number(analytics.rush_hour.slice(0, 2)) >= 12 ? "PM" : "AM"} – ${(Number(analytics.rush_hour.slice(0, 2)) + 1) % 12 || 12} ${Number(analytics.rush_hour.slice(0, 2)) >= 11 ? "PM" : "AM"}` : "No data"}</strong></article><article>Occupancy<strong>{analytics.occupancy.occupied}/{analytics.occupancy.total}</strong></article><article>Vehicles Today<strong>{analytics.vehicles_today}</strong></article></div><section className="analytics-panel"><div className="analytics-switcher">{[["earnings", "Earnings"], ["rush", "Rush Hour"], ["duration", "Average Duration"], ["traffic", "Vehicles / Traffic"]].map(([key, label]) => <button key={key} className={analyticsMetric === key ? "active" : ""} onClick={() => setAnalyticsMetric(key)}>{label}</button>)}</div><h3>{({ earnings: "Earnings trend (Rs)", rush: "Hourly vehicle activity (vehicles)", duration: "Average parking duration (minutes)", traffic: "Vehicle traffic (vehicles)" })[analyticsMetric]}</h3><div className="analytics-bars">{(() => { const rows = analyticsMetric === "rush" ? analytics.hourly_activity : analytics.trend; const values = rows.map((point) => analyticsMetric === "earnings" ? point.earnings : analyticsMetric === "traffic" || analyticsMetric === "rush" ? point.vehicles : analytics.average_duration_minutes); const max = Math.max(...values, 0); return rows.map((point, index) => { const value = values[index]; const height = max > 0 ? Math.max(4, value / max * 100) : 0; return <div key={point.date || point.hour || index} title={analyticsMetric === "earnings" ? `Rs ${Number(value).toLocaleString("en-PK", { minimumFractionDigits: 2 })}` : `${value} ${analyticsMetric === "duration" ? "min" : "vehicles"}`}><i style={{ height: `${height}%` }} /><small>{point.date?.slice(5) || `${point.hour}:00`}</small></div>; }); })()}</div></section></> : <p className="admin-message">Loading analytics…</p>}</div>
                         ) : activeFeature === "whitelist" ? (
                             <div className="feature-view">
                                 <h1>{t.vehicleTitle}<br /><span>{t.whitelistTitle}</span></h1>
@@ -1329,89 +1380,89 @@ function AdminPage() {
                                 <p className="admin-message">{t.garageIntro}</p>
 
                                 <form className="garage-settings-form" onSubmit={handleGarageSettingsApply}>
-                                    <div className="garage-mode-options"><p>Choose how this site is operated.</p><label><input type="radio" checked={(garageSettings.mode || "parking") === "parking"} onChange={() => setGarageSettings((current) => ({ ...current, mode: "parking" }))} /> <strong>Parking Garage</strong><small>Manage levels, spaces, entry, exit and billing.</small></label><label><input type="radio" checked={garageSettings.mode === "tracking"} onChange={() => setGarageSettings((current) => ({ ...current, mode: "tracking", level_count: "0", spaces_per_level: "0", levels: [] }))} /> <strong>Plate Tracking Only</strong><small>Recognize and log plates without parking-space assignment.</small></label></div>
+                                    <div className="garage-mode-options"><p>Choose how this site is operated.</p><label><input type="radio" checked={(garageSettings.mode || "parking") === "parking"} onChange={() => setGarageSettings((current) => ({ ...current, mode: "parking" }))} /> <strong>Parking Garage</strong><small>Manage levels, spaces, entry, exit and billing.</small></label><label><input type="radio" checked={garageSettings.mode === "tracking"} onChange={() => setGarageSettings((current) => ({ ...current, mode: "tracking" }))} /> <strong>Plate Tracking Only</strong><small>Recognize and log plates without parking-space assignment.</small></label></div>
+                                    <label className="automatic-entry-toggle">
+                                        <span>Automatic Entry</span>
+                                        <input
+                                            type="checkbox"
+                                            checked={Boolean(garageSettings.automatic_entry)}
+                                            onChange={(event) => setGarageSettings((current) => ({ ...current, automatic_entry: event.target.checked }))}
+                                        />
+                                    </label>
                                     {(garageSettings.mode || "parking") === "parking" && <>
-                                    <div className="level-config-block">
-                                        <div className="level-config-header">
-                                            <label className="level-count-field garage-field-group">
-                                                <span>{t.levels}</span>
-                                                <input
-                                                    aria-describedby="garage-levels-error"
-                                                    aria-invalid={Boolean(garageErrors.levels)}
-                                                    type="text"
-                                                    inputMode="numeric"
-                                                    pattern="[0-9]*"
-                                                    value={garageSettings.level_count !== undefined ? garageSettings.level_count : (garageSettings.levels?.length ? String(garageSettings.levels.length) : "")}
-                                                    onChange={(event) => updateLevelCount(event.target.value)}
-                                                />
-                                                <small id="garage-levels-error" className="admin-error whitelist-feedback error-space">
-                                                    {garageErrors.levels || "\u00A0"}
-                                                </small>
-                                            </label>
-                                            <label className="level-count-field garage-field-group">
-                                                <span>{t.spacesPerLevel}</span>
-                                                <input
-                                                    aria-describedby="garage-spaces-error"
-                                                    aria-invalid={Boolean(garageErrors.spaces_per_level)}
-                                                    type="text"
-                                                    inputMode="numeric"
-                                                    pattern="[0-9]*"
-                                                    value={garageSettings.spaces_per_level}
-                                                    onChange={(event) => handleSpacesPerLevelChange(event.target.value)}
-                                                />
-                                                <small id="garage-spaces-error" className="admin-error whitelist-feedback error-space">
-                                                    {garageErrors.spaces_per_level || "\u00A0"}
-                                                </small>
-                                            </label>
+                                        <div className="level-config-block">
+                                            <div className="level-config-header">
+                                                <label className="level-count-field garage-field-group">
+                                                    <span>{t.levels}</span>
+                                                    <input
+                                                        aria-describedby="garage-levels-error"
+                                                        aria-invalid={Boolean(garageErrors.levels)}
+                                                        type="text"
+                                                        inputMode="numeric"
+                                                        pattern="[0-9]*"
+                                                        value={garageSettings.level_count !== undefined ? garageSettings.level_count : (garageSettings.levels?.length ? String(garageSettings.levels.length) : "")}
+                                                        onChange={(event) => updateLevelCount(event.target.value)}
+                                                    />
+                                                    <small id="garage-levels-error" className="admin-error whitelist-feedback error-space">
+                                                        {garageErrors.levels || "\u00A0"}
+                                                    </small>
+                                                </label>
+                                                <label className="level-count-field garage-field-group">
+                                                    <span>{t.spacesPerLevel}</span>
+                                                    <input
+                                                        aria-describedby="garage-spaces-error"
+                                                        aria-invalid={Boolean(garageErrors.spaces_per_level)}
+                                                        type="text"
+                                                        inputMode="numeric"
+                                                        pattern="[0-9]*"
+                                                        value={garageSettings.spaces_per_level}
+                                                        onChange={(event) => handleSpacesPerLevelChange(event.target.value)}
+                                                    />
+                                                    <small id="garage-spaces-error" className="admin-error whitelist-feedback error-space">
+                                                        {garageErrors.spaces_per_level || "\u00A0"}
+                                                    </small>
+                                                </label>
+                                            </div>
+                                            <div className="local-image-setting"><label><span>Enable Local Plate Images</span><input type="checkbox" checked={Boolean(garageSettings.local_image_saving)} onChange={(event) => setGarageSettings((current) => ({ ...current, local_image_saving: event.target.checked }))} /></label><button type="button" className="camera-refresh-button" onClick={chooseLocalImageFolder}>Select Folder</button><div className="local-image-status"><small>{localImageFolder ? <>Selected folder: <strong>{localImageFolder}</strong><br />Saving structure: {localImageFolder} / YYYY-MM-DD / Entry | Exit</> : localPlateImageSupport() ? "No local folder selected." : "Local folder saving requires Chromium."}</small>{localImageStatus && <small>{localImageStatus}</small>}</div></div>
                                         </div>
-                                        <label className="automatic-entry-toggle">
-                                            <span>Automatic Entry</span>
-                                            <input
-                                                type="checkbox"
-                                                checked={Boolean(garageSettings.automatic_entry)}
-                                                onChange={(event) => setGarageSettings((current) => ({ ...current, automatic_entry: event.target.checked }))}
-                                            />
-                                        </label>
-                                        <div className="local-image-setting"><label><span>Enable Local Plate Images</span><input type="checkbox" checked={Boolean(garageSettings.local_image_saving)} onChange={(event) => setGarageSettings((current) => ({ ...current, local_image_saving: event.target.checked }))} /></label><button type="button" className="camera-refresh-button" onClick={chooseLocalImageFolder}>Select Folder</button><div className="local-image-status"><small>{localImageFolder ? <>Selected folder: <strong>{localImageFolder}</strong><br />Saving structure: {localImageFolder} / YYYY-MM-DD / Entry | Exit</> : localPlateImageSupport() ? "No local folder selected." : "Local folder saving requires Chromium."}</small>{localImageStatus && <small>{localImageStatus}</small>}</div></div>
-                                    </div>
 
-                                    {advancedGarageSettings && (
-                                        <div className="advanced-level-editor">
-                                            <h4>{t.advancedEditor}</h4>
-                                            <p className="advanced-hint">{t.advancedHint}</p>
-                                            {(garageSettings.levels || []).map((level, index) => (
-                                                <div key={level.id || index} className="advanced-level-row">
-                                                    <label>
-                                                        <span>{t.levelName}</span>
-                                                        <input
-                                                            aria-describedby={`garage-level-${level.id}-name-error`}
-                                                            aria-invalid={Boolean(levelErrors[level.id]?.name)}
-                                                            value={level.name}
-                                                            onChange={(event) => updateLevel(index, "name", event.target.value)}
-                                                        />
-                                                        <small id={`garage-level-${level.id}-name-error`} className="admin-error whitelist-feedback error-space">
-                                                            {levelErrors[level.id]?.name || "\u00A0"}
-                                                        </small>
-                                                    </label>
-                                                    <label>
-                                                        <span>{t.spaces}</span>
-                                                        <input
-                                                            type="text"
-                                                            inputMode="numeric"
-                                                            pattern="[0-9]*"
-                                                            aria-describedby={`garage-level-${level.id}-spaces-error`}
-                                                            aria-invalid={Boolean(levelErrors[level.id]?.spaces)}
-                                                            value={level.spaces ?? ""}
-                                                            onChange={(event) => updateLevel(index, "spaces", event.target.value)}
-                                                        />
-                                                        <small id={`garage-level-${level.id}-spaces-error`} className="admin-error whitelist-feedback error-space">
-                                                            {levelErrors[level.id]?.spaces || "\u00A0"}
-                                                        </small>
-                                                    </label>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )}
+                                        {advancedGarageSettings && (
+                                            <div className="advanced-level-editor">
+                                                <h4>{t.advancedEditor}</h4>
+                                                <p className="advanced-hint">{t.advancedHint}</p>
+                                                {(garageSettings.levels || []).map((level, index) => (
+                                                    <div key={level.id || index} className="advanced-level-row">
+                                                        <label>
+                                                            <span>{t.levelName}</span>
+                                                            <input
+                                                                aria-describedby={`garage-level-${level.id}-name-error`}
+                                                                aria-invalid={Boolean(levelErrors[level.id]?.name)}
+                                                                value={level.name}
+                                                                onChange={(event) => updateLevel(index, "name", event.target.value)}
+                                                            />
+                                                            <small id={`garage-level-${level.id}-name-error`} className="admin-error whitelist-feedback error-space">
+                                                                {levelErrors[level.id]?.name || "\u00A0"}
+                                                            </small>
+                                                        </label>
+                                                        <label>
+                                                            <span>{t.spaces}</span>
+                                                            <input
+                                                                type="text"
+                                                                inputMode="numeric"
+                                                                pattern="[0-9]*"
+                                                                aria-describedby={`garage-level-${level.id}-spaces-error`}
+                                                                aria-invalid={Boolean(levelErrors[level.id]?.spaces)}
+                                                                value={level.spaces ?? ""}
+                                                                onChange={(event) => updateLevel(index, "spaces", event.target.value)}
+                                                            />
+                                                            <small id={`garage-level-${level.id}-spaces-error`} className="admin-error whitelist-feedback error-space">
+                                                                {levelErrors[level.id]?.spaces || "\u00A0"}
+                                                            </small>
+                                                        </label>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
 
                                     </>}{garageSettings.mode === "tracking" && <div className="local-image-setting"><label><span>Enable Local Plate Images</span><input type="checkbox" checked={Boolean(garageSettings.local_image_saving)} onChange={(event) => setGarageSettings((current) => ({ ...current, local_image_saving: event.target.checked }))} /></label><button type="button" className="camera-refresh-button" onClick={chooseLocalImageFolder}>Select Folder</button><div className="local-image-status"><small>{localImageFolder ? <>Selected folder: <strong>{localImageFolder}</strong><br />Saving structure: {localImageFolder} / YYYY-MM-DD / Entry | Exit</> : localPlateImageSupport() ? "No local folder selected." : "Local folder saving requires Chromium."}</small>{localImageStatus && <small>{localImageStatus}</small>}</div></div>}{garageSettingsMessage && (
                                         <p className={garageSettingsMessageType === "warning" ? "admin-error whitelist-feedback" : "whitelist-success"}>{garageSettingsMessage}</p>

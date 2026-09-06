@@ -11,6 +11,7 @@ function VehicleInformation({
     detectedPlate,
     vehicleAction,
     selectedSpace,
+    trackingMode = false,
     onReceiptDone,
 }) {
     if (exitResult) {
@@ -21,7 +22,7 @@ function VehicleInformation({
                 <div className="vehicle-info-row"><strong>Entry Time</strong><span>{formatDateTime(exitResult.entry_time)}</span></div>
                 <div className="vehicle-info-row"><strong>Exit Time</strong><span>{formatDateTime(exitResult.exit_time)}</span></div>
                 <div className="vehicle-info-row"><strong>Duration</strong><span>{formatDuration(exitResult.entry_time, exitResult.exit_time)}</span></div>
-                <div className="vehicle-info-row"><strong>Parking Space</strong><span>Level {exitResult.level} — {exitResult.space}</span></div>
+                {!trackingMode && <div className="vehicle-info-row"><strong>Parking Space</strong><span>Level {exitResult.level} — {exitResult.space}</span></div>}
                 {exitResult.billing_enabled !== false && (
                     <>
                         <div className="vehicle-info-row"><strong>Rate</strong><span>{formatRupees(exitResult.rate_per_minute ?? 1.67)} / minute</span></div>
@@ -43,8 +44,8 @@ function VehicleInformation({
                 <div className="vehicle-info-header"><span>ENTRY COMPLETED</span></div>
                 <h3>{entryResult.license_plate}</h3>
                 <div className="vehicle-info-row"><strong>Entry Time</strong><span>{formatDateTime(entryResult.entry_time)}</span></div>
-                <div className="vehicle-info-row"><strong>Parking Space</strong><span>Level {entryResult.level} — {entryResult.space}</span></div>
-                <div className="vehicle-info-row"><strong>Status</strong><span>Vehicle Parked</span></div>
+                {!trackingMode && <div className="vehicle-info-row"><strong>Parking Space</strong><span>Level {entryResult.level} — {entryResult.space}</span></div>}
+                <div className="vehicle-info-row"><strong>Status</strong><span>{trackingMode ? "Vehicle Logged" : "Vehicle Parked"}</span></div>
             </div>
         );
     }
@@ -55,7 +56,7 @@ function VehicleInformation({
                 <div className="vehicle-info-header"><span>VEHICLE DETECTED</span></div>
                 <h3>{detectedPlate}</h3>
                 <div className="vehicle-info-row"><strong>Action</strong><span>{vehicleAction === "entry" ? "Entry" : vehicleAction === "exit" ? "Exit" : "Awaiting selection"}</span></div>
-                {vehicleAction === "entry" && (
+                {vehicleAction === "entry" && !trackingMode && (
                     <div className="vehicle-info-row"><strong>Parking Space</strong><span>{selectedSpace ? `Level ${selectedSpace.level} — ${selectedSpace.space}` : "Not selected"}</span></div>
                 )}
             </div>
