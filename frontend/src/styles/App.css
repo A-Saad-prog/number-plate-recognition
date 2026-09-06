@@ -1641,6 +1641,10 @@ body {
     min-width: 0;
 }
 
+.camera-vehicle-actions {
+    margin-top: 12px;
+}
+
 .camera-panel-header {
     display: flex;
     align-items: flex-end;
