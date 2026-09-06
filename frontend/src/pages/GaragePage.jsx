@@ -67,6 +67,13 @@ function GaragePage() {
     const [vehicleAction, setVehicleAction] = useState(null);
     const [detectionSource, setDetectionSource] = useState(null);
     const [cameraVehicleState, setCameraVehicleState] = useState({});
+    // Kept in sync every render, same reason as adminSettingsRef: code
+    // invoked from the long-lived, self-perpetuating camera detection
+    // loop (e.g. resolveConfirmedCameraPlate) must read the latest
+    // per-camera state, not whatever cameraVehicleState was at the render
+    // when that loop's closure was originally created.
+    const cameraVehicleStateRef = useRef({});
+    cameraVehicleStateRef.current = cameraVehicleState;
     const [activeEntryCameraId, setActiveEntryCameraId] = useState(null);
 
     function updateCameraVehicleState(cameraId, updates) {
@@ -161,7 +168,6 @@ function GaragePage() {
     }
 
     async function resolveConfirmedCameraPlate(cameraId, plate, image) {
-        const trackingMode = adminSettings?.garage_settings?.mode === "tracking";
         const isEntry = cameraId.startsWith("entry-");
         updateCameraVehicleState(cameraId, {
             plate,
@@ -176,6 +182,22 @@ function GaragePage() {
             ratePerMinute: null,
             error: "",
         });
+
+        // A plate can fully confirm before the mount-time admin-settings
+        // fetch resolves. Await that exact (fast, settings-only) load --
+        // not the combined settings+parking-spaces one below -- so a
+        // tracking-mode plate never misclassifies itself as Parking
+        // Garage and waits on a parking-space startup load it doesn't
+        // need. Resolves instantly once settings have already loaded.
+        if (adminSettingsInitialLoadRef.current) {
+            await adminSettingsInitialLoadRef.current;
+            if (
+                detectedPlateRef.current[cameraId] !== plate ||
+                confirmedPlateLockRef.current[cameraId] !== plate
+            ) return;
+        }
+
+        const trackingMode = adminSettingsRef.current?.garage_settings?.mode === "tracking";
 
         let active;
         try {
@@ -247,10 +269,42 @@ function GaragePage() {
                 void handleConfirmEntry(plate, null, cameraId, true);
                 return;
             }
-            const automaticSpace = getAutomaticParkingSpace();
-            updateCameraVehicleState(cameraId, automaticSpace
-                ? { plate, action: "entry", loading: false, selectedSpaceId: automaticSpace.id, error: "" }
-                : { plate, action: null, loading: false, selectedSpaceId: null, error: "No parking space is available for this vehicle." });
+
+            // Automatic Entry is off, but the parking space is still
+            // chosen automatically -- the user only presses Confirm.
+            // Compute and apply the pick inside one functional state
+            // update so two cameras confirming at nearly the same instant
+            // can never both read the same "next free space" before
+            // either has recorded its own pick (React applies queued
+            // functional updates one at a time, each seeing the previous
+            // one's result).
+            setCameraVehicleState((current) => {
+                const reservedByOtherPendingCameras = new Set(
+                    Object.entries(current)
+                        .filter(
+                            ([otherCameraId, state]) =>
+                                otherCameraId !== cameraId &&
+                                state?.action === "entry" &&
+                                state?.selectedSpaceId != null
+                        )
+                        .map(([, state]) => String(state.selectedSpaceId))
+                );
+                const automaticSpace = getSortedAvailableSpaces().find(
+                    (space) => !reservedByOtherPendingCameras.has(String(space.id))
+                ) || null;
+
+                return {
+                    ...current,
+                    [cameraId]: {
+                        ...(current[cameraId] || {}),
+                        plate,
+                        action: automaticSpace ? "entry" : null,
+                        loading: false,
+                        selectedSpaceId: automaticSpace ? automaticSpace.id : null,
+                        error: automaticSpace ? "" : "No parking space is available for this vehicle.",
+                    },
+                };
+            });
             return;
         }
 
@@ -352,6 +406,12 @@ function GaragePage() {
     // happened to be at that first render.
     const adminSettingsRef = useRef(null);
     adminSettingsRef.current = adminSettings;
+    // Resolves as soon as the initial garage-settings fetch completes --
+    // independent of parkingSpacesInitialLoadRef, which also waits for
+    // parking spaces afterward. A plate confirming before mount-time
+    // settings arrive needs only this (fast) promise to know the real
+    // garage mode, not the combined (slower) settings+spaces one.
+    const adminSettingsInitialLoadRef = useRef(null);
     const localImageSavingRef = useRef(false);
     const automaticEntryRef = useRef(false);
     const [garageAuthFailed, setGarageAuthFailed] = useState(false);
@@ -547,6 +607,12 @@ function GaragePage() {
 
                 setParkingSpaces(mergedSpaces);
                 parkingSpacesRef.current = mergedSpaces;
+                // Availability may have shifted for reasons outside any
+                // pending camera's own action (another exit, an admin
+                // change, etc.) -- recheck pending manual Entry
+                // reservations so none is left pointing at a space that
+                // just became occupied or duplicated.
+                reconcilePendingEntrySpaceReservations();
                 return true;
             } else {
                 setParkingError(
@@ -583,13 +649,14 @@ function GaragePage() {
     // AUTOMATIC PARKING SPACE ASSIGNMENT
     // ============================================================
 
-    function getAutomaticParkingSpace() {
+    function getSortedAvailableSpaces() {
         // Always start checking from the first parking space.
         // This means that when an earlier space becomes free after
         // a vehicle exits, the next vehicle will loop back and use
         // that earlier space before moving to later spaces.
-        const spaces = [...parkingSpacesRef.current].sort(
-            (a, b) => {
+        return [...parkingSpacesRef.current]
+            .filter((space) => !space.is_occupied)
+            .sort((a, b) => {
                 const levelA = Number(a.level) || 0;
                 const levelB = Number(b.level) || 0;
 
@@ -605,24 +672,86 @@ function GaragePage() {
                 );
 
                 return numberA - numberB;
-            }
-        );
+            });
+    }
 
-        return (
-            spaces.find(
-                (space) => !space.is_occupied
-            ) || null
-        );
+    // Re-checks every currently pending manual Entry camera (Automatic
+    // Entry off, Parking Garage mode) and reassigns only the ones whose
+    // reservation is no longer valid -- occupied out from under it, or
+    // duplicated with another pending camera. Cameras already holding a
+    // valid, non-conflicting space are left completely untouched, so this
+    // never reshuffles a reservation that's still correct. Processed in a
+    // stable cameraId order so results are deterministic no matter which
+    // camera's update triggered the recheck.
+    function reconcilePendingEntrySpaceReservations() {
+        if (adminSettingsRef.current?.garage_settings?.mode === "tracking") {
+            return;
+        }
+
+        setCameraVehicleState((current) => {
+            const pendingEntries = Object.entries(current)
+                .filter(
+                    ([cameraId, state]) =>
+                        cameraId.startsWith("entry-") &&
+                        state?.action === "entry" &&
+                        state?.plate &&
+                        state?.selectedSpaceId !== undefined
+                )
+                .sort(([a], [b]) => a.localeCompare(b));
+
+            if (pendingEntries.length === 0) return current;
+
+            const availableSpaces = getSortedAvailableSpaces();
+            const availableIds = new Set(
+                availableSpaces.map((space) => String(space.id))
+            );
+            const claimed = new Set();
+            let changed = false;
+            const next = { ...current };
+
+            for (const [cameraId, state] of pendingEntries) {
+                const currentSelection = state.selectedSpaceId;
+                const stillValid =
+                    currentSelection != null &&
+                    availableIds.has(String(currentSelection)) &&
+                    !claimed.has(String(currentSelection));
+
+                if (stillValid) {
+                    claimed.add(String(currentSelection));
+                    continue;
+                }
+
+                const replacement =
+                    availableSpaces.find(
+                        (space) => !claimed.has(String(space.id))
+                    ) || null;
+                const newSelectedSpaceId = replacement ? replacement.id : null;
+
+                if (replacement) {
+                    claimed.add(String(replacement.id));
+                }
+
+                if (newSelectedSpaceId !== currentSelection) {
+                    next[cameraId] = {
+                        ...state,
+                        selectedSpaceId: newSelectedSpaceId,
+                    };
+                    changed = true;
+                }
+            }
+
+            return changed ? next : current;
+        });
     }
 
 
     useEffect(() => {
-        const loadGarage = async () => {
-            if (await loadAdminSettings()) {
-                await loadParkingSpaces();
-            }
-        };
-        parkingSpacesInitialLoadRef.current = loadGarage();
+        const initialSettingsLoad = loadAdminSettings();
+        adminSettingsInitialLoadRef.current = initialSettingsLoad;
+        parkingSpacesInitialLoadRef.current = initialSettingsLoad.then(
+            (success) => (success ? loadParkingSpaces() : undefined)
+        );
+
         const interval = window.setInterval(() => {
             if (!garageAuthFailedRef.current) void loadParkingSpaces();
         }, 5000);
@@ -865,6 +994,12 @@ function GaragePage() {
                 selectedSpaceId: space.id,
                 error: "",
             });
+            // The shared grid is informational/optional -- manual space
+            // assignment is not required for the normal flow -- but if it
+            // is used and happens to pick a space another pending camera
+            // already holds, immediately resolve the conflict rather than
+            // leaving two cameras pointing at the same space.
+            reconcilePendingEntrySpaceReservations();
         } else {
             setSelectedSpaceId(space.id);
             setEntryError("");
@@ -1304,7 +1439,8 @@ function GaragePage() {
                                     }
                                     onClick={() =>
                                         handleSpaceSelection(
-                                            space
+                                            space,
+                                            pendingEntryCameraId
                                         )
                                     }
                                     disabled={
