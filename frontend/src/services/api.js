@@ -16,6 +16,47 @@ function requestError(response, data, fallback) {
 
 
 // ============================================================
+// Backend readiness (vision model warm-up)
+// ============================================================
+//
+// FastAPI's startup event (YOLO + OCR warm-up) runs for several seconds
+// before the app accepts any request, including /health. If the very
+// first real camera frame is sent while that startup warm-up is still
+// finishing, it queues behind it and appears to "hang" for several
+// seconds even though no per-request work is slow. This lets callers
+// wait for a real (harmless) response from the backend before sending
+// the first real detection frame, without creating any plate/parking
+// side effects. The check result is cached for the lifetime of the page
+// so every camera shares a single readiness wait instead of each
+// camera polling independently.
+
+let backendReadyPromise = null;
+
+export function waitForBackendReady({ timeoutMs = 30000, pollIntervalMs = 250 } = {}) {
+    if (backendReadyPromise) return backendReadyPromise;
+
+    backendReadyPromise = (async () => {
+        const startedAt = Date.now();
+
+        while (true) {
+            try {
+                const response = await fetch(`${API_BASE_URL}/health`);
+                if (response.ok) return true;
+            } catch {
+                // Backend not reachable yet (still starting up); retry.
+            }
+
+            if (Date.now() - startedAt >= timeoutMs) return false;
+
+            await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+        }
+    })();
+
+    return backendReadyPromise;
+}
+
+
+// ============================================================
 // Get Parking Spaces
 // ============================================================
 
@@ -199,13 +240,13 @@ export async function exitUsingPlate(licensePlate, paymentMethod) {
 // Admin Authentication and Whitelist Management
 // ============================================================
 
-export async function loginAdmin(username, password) {
+export async function loginAdmin(identifier, password) {
     const response = await fetch(`${API_BASE_URL}/admin/login`, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
         },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ identifier, password }),
     });
 
     const data = await response.json().catch(() => ({}));

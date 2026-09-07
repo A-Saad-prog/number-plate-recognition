@@ -7,6 +7,7 @@ import {
     getExitPaymentRequired,
     detectPlateFromFrame,
     getGarageSettings,
+    waitForBackendReady,
 } from "../services/api";
 
 import VehicleInformation from "../components/VehicleInformation";
@@ -19,9 +20,70 @@ const MAX_INFERENCE_FRAME_WIDTH = 960;
 const VISION_REQUEST_INTERVAL_MS = 300;
 const VISION_DEBUG = import.meta.env.DEV && import.meta.env.VITE_VISION_DEBUG === "true";
 const GARAGE_SETTINGS_UPDATED_KEY = "parking_garage_settings_updated";
+const PARKING_DATA_UPDATED_KEY = "parking_data_updated";
+const PARKING_DATA_UPDATED_EVENT = "parking-data-updated";
 const MULTI_CAMERA_ORCHESTRATION_TEST = false;
 const PARTIAL_GUARD_EVIDENCE_TTL_MS = 3000;
 const PARTIAL_GUARD_STRONG_CONFIDENCE = 0.85;
+
+// ============================================================
+// Parking-space snapshot cache (stale-while-revalidate)
+// ============================================================
+//
+// Lets the parking layout render immediately from the last known state on
+// reload instead of waiting on a network round-trip. The backend remains
+// the source of truth: this cache is only ever used to paint an initial
+// frame while a real getParkingSpaces() request runs in the background,
+// and that response always replaces it. Scoped by a non-reversible hash of
+// the current admin token (not the token itself) so a different admin
+// session in the same tab never reads another account's cached spaces.
+const PARKING_CACHE_VERSION = 1;
+
+function hashToken(token) {
+    let hash = 0;
+    for (let index = 0; index < token.length; index += 1) {
+        hash = (hash * 31 + token.charCodeAt(index)) | 0;
+    }
+    return hash.toString(36);
+}
+
+function getParkingCacheKey() {
+    const token = localStorage.getItem("parking_admin_token") || "anonymous";
+    return `parking_spaces_cache:v${PARKING_CACHE_VERSION}:${hashToken(token)}`;
+}
+
+function readParkingSpacesCache() {
+    try {
+        const raw = sessionStorage.getItem(getParkingCacheKey());
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (!parsed || parsed.version !== PARKING_CACHE_VERSION || !Array.isArray(parsed.spaces)) {
+            return null;
+        }
+        return parsed;
+    } catch {
+        return null;
+    }
+}
+
+function writeParkingSpacesCache(spaces) {
+    try {
+        sessionStorage.setItem(
+            getParkingCacheKey(),
+            JSON.stringify({ version: PARKING_CACHE_VERSION, spaces, timestamp: Date.now() })
+        );
+    } catch {
+        // sessionStorage unavailable/full: cache is best-effort only.
+    }
+}
+
+function clearParkingSpacesCache() {
+    try {
+        sessionStorage.removeItem(getParkingCacheKey());
+    } catch {
+        // ignore
+    }
+}
 
 function boxesEqual(first, second) {
     if (first === second) return true;
@@ -153,8 +215,9 @@ function GaragePage() {
         return getExitPaymentRequired(plate);
     }
 
-    const [parkingSpaces, setParkingSpaces] = useState([]);
-    const parkingSpacesRef = useRef([]);
+    const [parkingSpaces, setParkingSpaces] = useState(() => readParkingSpacesCache()?.spaces || []);
+    const parkingSpacesRef = useRef(parkingSpaces);
+    const parkingSpacesRequestRef = useRef(null);
     const [parkingLoading, setParkingLoading] = useState(false);
     const [parkingError, setParkingError] = useState("");
     const [openLevel, setOpenLevel] = useState(1);
@@ -177,6 +240,7 @@ function GaragePage() {
     if (!multiCameraTestSchedulerRef.current) {
         multiCameraTestSchedulerRef.current = createMultiCameraVisionTestScheduler({
             maxConcurrent: 2,
+            debug: VISION_DEBUG,
         });
     }
 
@@ -894,46 +958,69 @@ function GaragePage() {
 
     async function loadParkingSpaces() {
         if (garageAuthFailedRef.current) return false;
-        try {
-            setParkingLoading(true);
-            setParkingError("");
 
-            const result =
-                await getParkingSpaces();
+        // Dedupe overlapping calls (mount, 5s poll, admin-update signal, and
+        // entry/exit refreshes can land close together): reuse the in-flight
+        // request instead of firing a second identical GET /parking/spaces.
+        if (parkingSpacesRequestRef.current) {
+            return parkingSpacesRequestRef.current;
+        }
 
-            if (result.success) {
-                const spaces = result.spaces || [];
+        const request = (async () => {
+            try {
+                setParkingLoading(true);
+                setParkingError("");
 
-                setParkingSpaces(spaces);
-                parkingSpacesRef.current = spaces;
-                return true;
-            } else {
+                const result =
+                    await getParkingSpaces();
+
+                if (result.success) {
+                    const spaces = result.spaces || [];
+
+                    setParkingSpaces(spaces);
+                    parkingSpacesRef.current = spaces;
+                    writeParkingSpacesCache(spaces);
+                    return true;
+                } else {
+                    setParkingError(
+                        result.error ||
+                        "Could not load parking spaces."
+                    );
+                }
+
+            } catch (error) {
+                if (error.status === 401) {
+                    garageAuthFailedRef.current = true;
+                    localStorage.removeItem("parking_admin_token");
+                    sessionStorage.removeItem("parking_admin_token");
+                    clearParkingSpacesCache();
+                    setGarageAuthFailed(true);
+                    return false;
+                }
+                console.error(
+                    "Could not load parking spaces:",
+                    error
+                );
+
+                // Keep whatever spaces are already on screen (cached or
+                // previously fetched) -- a failed background refresh should
+                // not blank out working data the admin/garage already has.
                 setParkingError(
-                    result.error ||
+                    error.message ||
                     "Could not load parking spaces."
                 );
+
+            } finally {
+                setParkingLoading(false);
             }
+        })();
 
-        } catch (error) {
-            if (error.status === 401) {
-                garageAuthFailedRef.current = true;
-                localStorage.removeItem("parking_admin_token");
-                sessionStorage.removeItem("parking_admin_token");
-                setGarageAuthFailed(true);
-                return false;
-            }
-            console.error(
-                "Could not load parking spaces:",
-                error
-            );
+        parkingSpacesRequestRef.current = request;
 
-            setParkingError(
-                error.message ||
-                "Could not load parking spaces."
-            );
-
+        try {
+            return await request;
         } finally {
-            setParkingLoading(false);
+            parkingSpacesRequestRef.current = null;
         }
     }
 
@@ -1040,15 +1127,23 @@ function GaragePage() {
 
 
     useEffect(() => {
-        const loadGarage = async () => {
-            if (await loadAdminSettings()) {
-                await loadParkingSpaces();
-            }
-        };
-        void loadGarage();
+        // Load settings and spaces concurrently so the parking layout can
+        // render as soon as its own request resolves, instead of waiting
+        // for the settings request to finish first.
+        void loadAdminSettings();
+        void loadParkingSpaces();
+
+        // Primary sync mechanism: poll the backend directly every few
+        // seconds so any admin change (remove/edit a live session, or a
+        // garage layout change) shows up here on its own, without relying
+        // on cross-tab storage events. loadParkingSpaces()/loadAdminSettings()
+        // already dedupe/guard against auth failure, so this is safe to run
+        // unconditionally on a fixed timer.
         const interval = window.setInterval(() => {
-            if (!garageAuthFailedRef.current) void loadParkingSpaces();
-        }, 5000);
+            if (garageAuthFailedRef.current) return;
+            void loadParkingSpaces();
+            void loadAdminSettings();
+        }, 4000);
         return () => window.clearInterval(interval);
     }, []);
 
@@ -1061,6 +1156,29 @@ function GaragePage() {
         };
         window.addEventListener("storage", handleSettingsUpdate);
         return () => window.removeEventListener("storage", handleSettingsUpdate);
+    }, []);
+
+    useEffect(() => {
+        // Cross-tab (Admin in another tab/window) via the storage event, plus
+        // a same-document custom event for the (currently unused, but kept
+        // robust) case where Admin and Garage ever share one tab -- the
+        // native storage event never fires in the tab that wrote the key.
+        // loadParkingSpaces() already dedupes overlapping calls, so both
+        // listeners firing for the same mutation is harmless.
+        const handleParkingDataUpdate = (event) => {
+            if (event.key === PARKING_DATA_UPDATED_KEY && event.newValue) {
+                void loadParkingSpaces();
+            }
+        };
+        const handleParkingDataUpdatedEvent = () => {
+            void loadParkingSpaces();
+        };
+        window.addEventListener("storage", handleParkingDataUpdate);
+        window.addEventListener(PARKING_DATA_UPDATED_EVENT, handleParkingDataUpdatedEvent);
+        return () => {
+            window.removeEventListener("storage", handleParkingDataUpdate);
+            window.removeEventListener(PARKING_DATA_UPDATED_EVENT, handleParkingDataUpdatedEvent);
+        };
     }, []);
 
     useEffect(() => {
@@ -1972,6 +2090,22 @@ function GaragePage() {
             video.srcObject = stream;
             await video.play();
             setCameraViews((current) => ({ ...current, [cameraId]: { active: true, error: "", box: null } }));
+
+            // The preview above is already live. Only the first real
+            // detection frame waits here for the backend's one-time vision
+            // model warm-up to finish, so it isn't sent while /vision/detect-plate
+            // is still queued behind FastAPI startup. This is a shared,
+            // harmless health check (see waitForBackendReady) -- it never
+            // sends a frame, creates a plate lock, or touches OCR/vote state.
+            const readyStartedAt = VISION_DEBUG ? performance.now() : 0;
+            const backendReady = await waitForBackendReady();
+            if (VISION_DEBUG) {
+                console.debug(
+                    `[Vision cold start] source=${cameraId} backend_ready=${backendReady} wait_ms=${(performance.now() - readyStartedAt).toFixed(1)}`
+                );
+            }
+
+            if (!cameraStreamsRef.current[cameraId]) return;
             runSlotDetection(cameraId);
         } catch (error) {
             setCameraViews((current) => ({ ...current, [cameraId]: { active: false, error: error.message || "Could not access camera." } }));
@@ -1988,6 +2122,7 @@ function GaragePage() {
         cameraCanvasesRef.current[cameraId] = canvas;
         try {
             if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+                const scheduledAt = VISION_DEBUG ? performance.now() : 0;
                 const result = await multiCameraTestSchedulerRef.current.schedule(
                     cameraId,
                     async () => {
@@ -2000,12 +2135,25 @@ function GaragePage() {
                             return { detected: false, license_plate: null, box: null };
                         }
 
+                        const queueWaitMs = VISION_DEBUG ? performance.now() - scheduledAt : 0;
+                        const captureStartedAt = VISION_DEBUG ? performance.now() : 0;
+
                         const scale = Math.min(1, MAX_INFERENCE_FRAME_WIDTH / video.videoWidth);
                         canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
                         canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
                         canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
 
+                        const encodeStartedAt = VISION_DEBUG ? performance.now() : 0;
                         const image = canvas.toDataURL("image/jpeg", 0.82);
+
+                        if (VISION_DEBUG) {
+                            const captureMs = encodeStartedAt - captureStartedAt;
+                            const encodeMs = performance.now() - encodeStartedAt;
+                            console.debug(
+                                `[Vision FE slot] source=${cameraId} queue_wait_ms=${queueWaitMs.toFixed(1)} capture_ms=${captureMs.toFixed(1)} encode_ms=${encodeMs.toFixed(1)}`
+                            );
+                        }
+
                         return detectPlateFromFrame(
                             image,
                             cameraId,

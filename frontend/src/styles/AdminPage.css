@@ -201,6 +201,56 @@
     margin: -10px 0 15px;
 }
 
+.admin-password-field {
+    align-items: center;
+    display: flex;
+    margin-bottom: 27px;
+    position: relative;
+}
+
+.admin-password-field input {
+    margin-bottom: 0;
+    padding-right: 34px;
+    width: 100%;
+}
+
+.admin-form-wrap .admin-password-toggle {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    bottom: 8px;
+    color: #587066;
+    cursor: pointer;
+    display: flex;
+    margin: 0;
+    padding: 0;
+    position: absolute;
+    right: 0;
+}
+
+.admin-form-wrap .admin-password-toggle:hover {
+    background: transparent;
+    color: #e05b35;
+}
+
+.admin-password-field + .admin-error,
+.admin-password-field ~ .admin-error {
+    margin-top: -12px;
+}
+
+.admin-forgot-link {
+    background: none;
+    border: 0;
+    color: #587066;
+    cursor: pointer;
+    display: inline-block;
+    font: 11px 'DM Mono', monospace;
+    margin-top: 6px;
+    padding: 0;
+    text-align: left;
+    text-decoration: underline;
+}
+
 .admin-return {
     color: #587066;
     display: inline-block;
@@ -1428,74 +1478,20 @@ It can make small UI text appear soft/blurry in Chromium.
     position: relative;
 }
 
-.vehicle-menu summary {
-    align-items: center;
-    border: 1px solid #bdcbc0;
-    border-radius: 6px;
-    cursor: pointer;
-    display: flex;
-    font-size: 20px;
-    height: 30px;
-    justify-content: center;
-    list-style: none;
-    width: 30px;
-}
-
-.vehicle-menu summary:hover,
-.vehicle-menu summary:focus-visible {
-    background: #edf2ee;
-    border-color: #e05b35;
-    outline: 0;
-}
-
-.vehicle-menu[open] {
-    background: transparent;
-    min-width: 0;
-    position: relative;
-}
-
-.vehicle-menu[open]::after {
-    background: #fff;
-    border: 1px solid #d3ded4;
-    border-radius: 7px;
-    box-shadow: 0 10px 24px rgba(0, 0, 0, .14);
-    content: "";
-    height: 112px;
-    position: absolute;
-    right: 0;
-    top: 36px;
-    width: 154px;
-    z-index: 4;
-}
-
-.vehicle-menu button {
-    background: transparent;
-    border: 0;
-    cursor: pointer;
-    display: block;
-    padding: 8px;
-    position: relative;
-    text-align: left;
-    width: 100%;
-    z-index: 5;
-}
-
-.vehicle-menu button:hover {
-    background: #edf2ee;
-}
-
 .vehicle-menu-trigger {
     align-items: center;
     background: transparent;
     border: 1px solid #bdcbc0;
-    border-radius: 6px;
+    border-radius: 999px;
     color: #10231c;
     cursor: pointer;
     display: inline-flex;
     font-size: 18px;
     height: 30px;
     justify-content: center;
+    line-height: 1;
     padding: 0;
+    transition: background .15s ease, border-color .15s ease;
     width: 30px;
 }
 
@@ -1506,14 +1502,27 @@ It can make small UI text appear soft/blurry in Chromium.
     outline: 0;
 }
 
+@keyframes vehicleMenuIn {
+    from {
+        opacity: 0;
+        transform: translateY(-4px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
 .vehicle-menu-dropdown {
-    background: #f8faf7;
+    animation: vehicleMenuIn .12s ease-out;
+    background: #fff;
     border: 1px solid #d3ded4;
-    border-radius: 7px;
-    box-shadow: 0 10px 24px rgba(0, 0, 0, .14);
+    border-radius: 10px;
+    box-shadow: 0 12px 28px rgba(16, 35, 28, .16);
     display: grid;
     gap: 2px;
-    min-width: 154px;
+    min-width: 184px;
     padding: 6px;
     position: absolute;
     right: 0;
@@ -1521,25 +1530,53 @@ It can make small UI text appear soft/blurry in Chromium.
     z-index: 20;
 }
 
-.vehicle-menu-dropdown button {
+.vehicle-menu-item {
+    align-items: center;
     background: transparent;
     border: 0;
-    border-radius: 4px;
+    border-radius: 6px;
     color: #10231c;
     cursor: pointer;
-    padding: 8px;
+    display: flex;
+    font: 13px 'Manrope', sans-serif;
+    gap: 9px;
+    padding: 9px 10px;
     text-align: left;
     white-space: nowrap;
 }
 
-.vehicle-menu-dropdown button:hover,
-.vehicle-menu-dropdown button:focus-visible {
+.vehicle-menu-item svg {
+    flex-shrink: 0;
+    opacity: .75;
+}
+
+.vehicle-menu-item:hover,
+.vehicle-menu-item:focus-visible {
     background: #edf2ee;
     outline: 0;
 }
 
+.vehicle-menu-item-danger {
+    color: #b43f28;
+}
+
+.vehicle-menu-item-danger svg {
+    opacity: 1;
+}
+
+.vehicle-menu-item-danger:hover,
+.vehicle-menu-item-danger:focus-visible {
+    background: rgba(180, 63, 40, .1);
+}
+
+.vehicle-menu-divider {
+    background: #e3ebe4;
+    height: 1px;
+    margin: 4px 2px;
+}
+
 .vehicle-menu-popover {
-    min-width: 174px;
+    min-width: 184px;
     position: fixed;
     right: auto;
     top: auto;
@@ -1554,19 +1591,34 @@ It can make small UI text appear soft/blurry in Chromium.
 .analytics-grid {
     display: grid;
     gap: 12px;
-    grid-template-columns: repeat(5, minmax(120px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     margin: 28px 0;
 }
 
 .analytics-grid article {
     background: #f8faf7;
     border: 1px solid #d3ded4;
+    border-radius: 8px;
     padding: 16px;
+    transition: border-color .15s ease, transform .15s ease;
+}
+
+.analytics-grid article:hover {
+    border-color: #e05b35;
+    transform: translateY(-2px);
+}
+
+.analytics-grid-label {
+    color: #587066;
+    display: block;
+    font: 600 10px 'DM Mono', monospace;
+    letter-spacing: .1em;
+    text-transform: uppercase;
 }
 
 .analytics-grid strong {
     display: block;
-    font-size: 20px;
+    font-size: 22px;
     margin-top: 8px;
 }
 
@@ -1590,17 +1642,26 @@ It can make small UI text appear soft/blurry in Chromium.
 
 .analytics-bars i {
     background: #e05b35;
+    border-radius: 4px 4px 0 0;
     min-height: 4px;
+    transition: opacity .15s ease;
     width: 100%;
 }
 
+.analytics-bars div:hover i {
+    opacity: .8;
+}
+
 .analytics-bars small {
+    color: #587066;
+    font-size: 11px;
     margin-top: 6px;
 }
 
 .analytics-panel {
     background: #f8faf7;
     border: 1px solid #d3ded4;
+    border-radius: 8px;
     margin-top: 22px;
     padding: 18px;
 }
@@ -1622,6 +1683,11 @@ It can make small UI text appear soft/blurry in Chromium.
     color: #10231c;
     cursor: pointer;
     padding: 7px 10px;
+    transition: background .15s ease, border-color .15s ease, color .15s ease;
+}
+
+.analytics-switcher button:hover {
+    border-color: #e05b35;
 }
 
 .analytics-switcher button.active {
@@ -1677,6 +1743,12 @@ It can make small UI text appear soft/blurry in Chromium.
 ============================================================ */
 
 .admin-theme-dark {
+    /* background-attachment: fixed anchors this vignette to the viewport
+       instead of the (variable-height) content box. Without it, the
+       gradient's radius scales with how tall the page is, so a section
+       with a lot of stacked content (e.g. Parking Activity's three
+       tables) stretches the bright glow much further down the page and
+       reads as visibly lighter than shorter sections. */
     background:
         radial-gradient(
             circle at 85% -10%,
@@ -1684,6 +1756,7 @@ It can make small UI text appear soft/blurry in Chromium.
             transparent 32%
         ),
         #081511;
+    background-attachment: fixed;
     color: #edf7f2;
 }
 
@@ -1846,9 +1919,7 @@ It can make small UI text appear soft/blurry in Chromium.
     background: rgba(44, 82, 67, .58);
 }
 
-.admin-theme-dark .account-dropdown,
-.admin-theme-dark .vehicle-menu[open],
-.admin-theme-dark .vehicle-menu button {
+.admin-theme-dark .account-dropdown {
     background: #10251d;
     color: #edf2ee;
 }
@@ -1878,30 +1949,12 @@ It can make small UI text appear soft/blurry in Chromium.
 }
 
 .admin-theme-dark .account-dropdown button:hover,
-.admin-theme-dark .account-dropdown button:focus-visible,
-.admin-theme-dark .vehicle-menu button:hover,
-.admin-theme-dark .vehicle-menu summary:hover,
-.admin-theme-dark .vehicle-menu summary:focus-visible {
+.admin-theme-dark .account-dropdown button:focus-visible {
     background: rgba(44, 82, 67, .7);
 }
 
 .admin-theme-dark .account-dropdown .sign-out {
     color: #ff8a78;
-}
-
-.admin-theme-dark .vehicle-menu summary {
-    border-color: rgba(145, 199, 174, .35);
-    color: #edf2ee;
-}
-
-.admin-theme-dark .vehicle-menu[open]::after {
-    background: #10251d;
-    border-color: rgba(145, 199, 174, .25);
-}
-
-.admin-theme-dark .vehicle-menu button {
-    background: transparent;
-    color: #edf2ee;
 }
 
 .admin-theme-dark .analytics-switcher button {
@@ -1912,6 +1965,22 @@ It can make small UI text appear soft/blurry in Chromium.
     background: #e05b35;
     border-color: #e05b35;
     color: #fff;
+}
+
+.admin-theme-dark .analytics-grid article:hover {
+    border-color: #e05b35;
+}
+
+.admin-theme-dark .analytics-grid-label {
+    color: #afc1b5;
+}
+
+.admin-theme-dark .analytics-bars {
+    border-color: rgba(145, 199, 174, .25);
+}
+
+.admin-theme-dark .analytics-bars small {
+    color: #afc1b5;
 }
 
 .admin-theme-dark .garage-mode-options label:hover {
@@ -1935,9 +2004,7 @@ It can make small UI text appear soft/blurry in Chromium.
 }
 
 .admin-theme-dark .vehicle-menu-trigger:hover,
-.admin-theme-dark .vehicle-menu-trigger:focus-visible,
-.admin-theme-dark .vehicle-menu-dropdown button:hover,
-.admin-theme-dark .vehicle-menu-dropdown button:focus-visible {
+.admin-theme-dark .vehicle-menu-trigger:focus-visible {
     background: rgba(44, 82, 67, .7);
 }
 
@@ -1946,8 +2013,26 @@ It can make small UI text appear soft/blurry in Chromium.
     border-color: rgba(145, 199, 174, .25);
 }
 
-.admin-theme-dark .vehicle-menu-dropdown button {
+.admin-theme-dark .vehicle-menu-item {
     color: #edf2ee;
+}
+
+.admin-theme-dark .vehicle-menu-item:hover,
+.admin-theme-dark .vehicle-menu-item:focus-visible {
+    background: rgba(44, 82, 67, .7);
+}
+
+.admin-theme-dark .vehicle-menu-item-danger {
+    color: #ff8a78;
+}
+
+.admin-theme-dark .vehicle-menu-item-danger:hover,
+.admin-theme-dark .vehicle-menu-item-danger:focus-visible {
+    background: rgba(180, 63, 40, .22);
+}
+
+.admin-theme-dark .vehicle-menu-divider {
+    background: rgba(145, 199, 174, .18);
 }
 
 .admin-theme-dark .local-image-status {
@@ -1990,10 +2075,6 @@ It can make small UI text appear soft/blurry in Chromium.
 [dir="rtl"] .admin-user button {
     margin-left: 0;
     margin-right: 22px;
-}
-
-[dir="rtl"] .admin-header-actions {
-    direction: rtl;
 }
 
 [dir="rtl"] .whitelist-card button,

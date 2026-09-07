@@ -27,7 +27,7 @@ bearer_scheme = HTTPBearer(auto_error=False)
 
 
 class AdminLoginRequest(BaseModel):
-    username: str = Field(min_length=1, max_length=80)
+    identifier: str = Field(min_length=1, max_length=255)
     password: str = Field(min_length=1, max_length=128)
 
 
@@ -113,11 +113,11 @@ def current_admin(
 
 @router.post("/login")
 def admin_login(request: AdminLoginRequest, db: Session = Depends(get_db)):
-    admin = authenticate_admin(db, request.username.strip(), request.password)
+    admin = authenticate_admin(db, request.identifier.strip(), request.password)
     if not admin:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid username or password.",
+            detail="Invalid login credentials.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 

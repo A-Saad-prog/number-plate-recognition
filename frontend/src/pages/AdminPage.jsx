@@ -30,6 +30,17 @@ const LANGUAGE_KEY = "parking_admin_language";
 const THEME_KEY = "parking_admin_theme";
 const CAMERA_ASSIGNMENTS_KEY = "parking_camera_assignments";
 const GARAGE_SETTINGS_UPDATED_KEY = "parking_garage_settings_updated";
+const PARKING_DATA_UPDATED_KEY = "parking_data_updated";
+const PARKING_DATA_UPDATED_EVENT = "parking-data-updated";
+
+// Signals an open GaragePage (same tab or another tab/window) to re-fetch
+// parking spaces. The storage write reaches other tabs; the custom event
+// covers the same tab (native "storage" events never fire there). Only the
+// change timestamp is stored -- never parking data itself.
+function emitParkingDataUpdated() {
+    localStorage.setItem(PARKING_DATA_UPDATED_KEY, String(Date.now()));
+    window.dispatchEvent(new CustomEvent(PARKING_DATA_UPDATED_EVENT));
+}
 
 function openOrFocusNamedTab(url, name) {
     const target = window.open("", name);
@@ -63,26 +74,119 @@ const TRANSLATIONS = {
         cameraTitle: "Entry & exit", cameraSetupTitle: "camera setup.", cameraIntro: "Set the number of cameras for each lane. Each lane must have 1–4 cameras.", entryCameras: "Entry lane cameras", exitCameras: "Exit lane cameras", saveCameras: "Save cameras",
         paymentTitle: "Payment", paymentSettings: "settings.", paymentIntro: "Enable or disable payment options for your parking garage.", enablePayments: "Enable payment options", acceptedPayments: "Select accepted payment methods:", cash: "Cash", card: "Card",
         workspace: "Admin workspace", welcomeBack: "Welcome back,", online: "System online", workspaceIntro: "Select a feature from the sidebar to manage your garage.",
-        adminAccess: "Garage administration", makeEvery: "Make every", spaceCount: "space count.", loginIntro: "A clear, quiet view of the operation behind your parking floor.", secureAccess: "Secure admin access", signInTitle: "Sign in to", yourWorkspace: "your workspace.", username: "Username", password: "Password", signingIn: "Signing in...", enterWorkspace: "Enter workspace", returnGarage: "← Return to garage view",
+        adminAccess: "Garage administration", makeEvery: "Make every", spaceCount: "space count.", loginIntro: "A clear, quiet view of the operation behind your parking floor.", secureAccess: "Secure admin access", signInTitle: "Sign in to", yourWorkspace: "your workspace.", username: "Username or Email", password: "Password", signingIn: "Signing in...", enterWorkspace: "Enter workspace", returnGarage: "← Return to garage view", showPassword: "Show password", hidePassword: "Hide password", forgotPassword: "Forgot password?", forgotPasswordTitle: "Forgot password", forgotPasswordHint: "Enter your Username or Email", continueLabel: "Continue", backToSignIn: "← Back to sign in", forgotPasswordNotice: "Password recovery isn't available yet. Please contact your administrator.",
         required: "This field is required.", zero: "This field cannot be zero.", positiveNumber: "Please enter a valid positive number.", maxLevels: "Maximum 12 levels allowed.", cameraRange: "Please enter a value between 1 and 4.", fixErrors: "Please fix the errors before applying.", fixCameraErrors: "Please fix the camera lane errors before saving.", vehicleAdded: "Vehicle added to the whitelist.", vehicleRemoved: "Vehicle removed from the whitelist.", garageApplied: "Garage layout applied successfully.", camerasSaved: "Camera allocation saved successfully.", billingApplied: "Billing settings applied successfully.", loginFailed: "Unable to sign in. Please check your credentials.", requestFailed: "Unable to complete that request. Please try again.", checkingSession: "Checking session...", examplePlate: "e.g. ABC-123", exampleManager: "e.g. Manager",
     },
     ur: {
         language: "English", theme: "ڈارک موڈ", lightTheme: "لائٹ موڈ", signOut: "سائن آؤٹ",
-        controlCenter: "کنٹرول سینٹر", whitelist: "اجازت یافتہ فہرست", garageSettings: "گیراج سیٹنگز", cameraSetup: "کیمرہ سیٹ اپ", billing: "بلنگ",
-        vehicleTitle: "گاڑی", whitelistTitle: "اجازت یافتہ فہرست۔", vehicleIntro: "معتبر گاڑیوں کو چیک آؤٹ پر خصوصی رعایت دیں۔",
-        addVehicle: "گاڑی شامل کریں", numberPlate: "نمبر پلیٹ", name: "نام", discountPercentage: "رعایت کا فیصد", addToWhitelist: "فہرست میں شامل کریں",
-        removeVehicle: "گاڑی ہٹائیں", nameOrPlate: "نام یا نمبر پلیٹ", searchList: "فہرست میں تلاش کریں", removeHint: "مختص نام یا درست نمبر پلیٹ درج کریں۔", removeFromList: "فہرست سے ہٹائیں",
-        hideList: "فہرست چھپائیں", showList: "فہرست دکھائیں", discount: "رعایت", added: "شامل کرنے کی تاریخ",
-        garageTitle: "گیراج", layoutTitle: "لے آؤٹ۔", garageIntro: "اپنے پارکنگ گیراج کی ساخت مرتب کریں، پھر ہر منزل کا نام اور جگہوں کی تعداد تبدیل کریں۔",
-        levels: "منزلیں", spacesPerLevel: "ہر منزل کی جگہیں", advancedEditor: "اعلیٰ فلور ایڈیٹر", advancedHint: "ہر منزل کا نام بدلیں اور اس کی درست جگہوں کی تعداد مقرر کریں۔", levelName: "منزل کا نام", spaces: "جگہیں", apply: "لاگو کریں", advanced: "ایڈوانسڈ",
-        confirmLayout: "گیراج لے آؤٹ کی تصدیق", cancel: "منسوخ کریں", confirm: "تصدیق کریں",
-        cameraTitle: "انٹری اور ایگزٹ", cameraSetupTitle: "کیمرہ سیٹ اپ۔", cameraIntro: "ہر لین کے لیے کیمروں کی تعداد مقرر کریں۔ ہر لین میں 1 تا 4 کیمرے ہونے چاہئیں۔", entryCameras: "انٹری لین کیمرے", exitCameras: "ایگزٹ لین کیمرے", saveCameras: "کیمروں کو محفوظ کریں",
-        paymentTitle: "ادائیگی", paymentSettings: "سیٹنگز۔", paymentIntro: "اپنے پارکنگ گیراج کے لیے ادائیگی کے اختیارات فعال یا غیر فعال کریں۔", enablePayments: "ادائیگی کے اختیارات فعال کریں", acceptedPayments: "قبول شدہ ادائیگی کے طریقے منتخب کریں:", cash: "نقد", card: "کارڈ",
-        workspace: "ایڈمن ورک اسپیس", welcomeBack: "خوش آمدید،", online: "سسٹم آن لائن ہے", workspaceIntro: "اپنے گیراج کا انتظام کرنے کے لیے سائڈبار سے ایک فیچر منتخب کریں۔",
-        adminAccess: "گیراج انتظامیہ", makeEvery: "ہر", spaceCount: "جگہ اہم بنائیں۔", loginIntro: "آپ کی پارکنگ منزل کے آپریشن کا واضح اور پُرسکون منظر۔", secureAccess: "محفوظ ایڈمن رسائی", signInTitle: "اپنی ورک اسپیس میں", yourWorkspace: "سائن ان کریں۔", username: "صارف نام", password: "پاس ورڈ", signingIn: "سائن ان ہو رہا ہے...", enterWorkspace: "ورک اسپیس میں داخل ہوں", returnGarage: "گیراج ویو پر واپس جائیں →",
-        required: "یہ فیلڈ ضروری ہے۔", zero: "یہ فیلڈ صفر نہیں ہو سکتی۔", positiveNumber: "براہ کرم درست مثبت نمبر درج کریں۔", maxLevels: "زیادہ سے زیادہ 12 منزلیں اجازت یافتہ ہیں۔", cameraRange: "براہ کرم 1 سے 4 کے درمیان قدر درج کریں۔", fixErrors: "لاگو کرنے سے پہلے غلطیاں درست کریں۔", fixCameraErrors: "محفوظ کرنے سے پہلے کیمرہ لین کی غلطیاں درست کریں۔", vehicleAdded: "گاڑی اجازت یافتہ فہرست میں شامل کر دی گئی ہے۔", vehicleRemoved: "گاڑی اجازت یافتہ فہرست سے ہٹا دی گئی ہے۔", garageApplied: "گیراج لے آؤٹ کامیابی سے لاگو ہو گیا ہے۔", camerasSaved: "کیمرہ تقسیم کامیابی سے محفوظ ہو گئی ہے۔", billingApplied: "بلنگ سیٹنگز کامیابی سے لاگو ہو گئی ہیں۔", loginFailed: "سائن ان نہیں ہو سکا۔ براہ کرم اپنی معلومات چیک کریں۔", requestFailed: "درخواست مکمل نہیں ہو سکی۔ براہ کرم دوبارہ کوشش کریں۔", checkingSession: "سیشن کی جانچ ہو رہی ہے...", examplePlate: "مثلاً ABC-123", exampleManager: "مثلاً منیجر",
+        controlCenter: "کنٹرول سینٹر", whitelist: "وائٹ لسٹ", garageSettings: "گیراج سیٹنگز", cameraSetup: "کیمرہ سیٹ اپ", billing: "بلنگ",
+        vehicleTitle: "وہیکل", whitelistTitle: "وائٹ لسٹ۔", vehicleIntro: "ٹرسٹڈ وہیکلز کو چیک آؤٹ پر کسٹم ڈسکاؤنٹ دیں۔",
+        addVehicle: "وہیکل ایڈ کریں", numberPlate: "نمبر پلیٹ", name: "نام", discountPercentage: "ڈسکاؤنٹ پرسنٹیج", addToWhitelist: "وائٹ لسٹ میں ایڈ کریں",
+        removeVehicle: "وہیکل ریموو کریں", nameOrPlate: "نام یا نمبر پلیٹ", searchList: "لسٹ میں سرچ کریں", removeHint: "اسائنڈ نام یا درست نمبر پلیٹ درج کریں۔", removeFromList: "لسٹ سے ریموو کریں",
+        hideList: "لسٹ ہائیڈ کریں", showList: "لسٹ شو کریں", discount: "ڈسکاؤنٹ", added: "ایڈ کرنے کی تاریخ",
+        garageTitle: "گیراج", layoutTitle: "لے آؤٹ۔", garageIntro: "اپنے پارکنگ گیراج کا سٹرکچر سیٹ اپ کریں، پھر ہر لیول کا نام اور سپیسز کی تعداد سیٹ کریں۔",
+        levels: "لیولز", spacesPerLevel: "فی لیول سپیسز", advancedEditor: "ایڈوانسڈ فلور ایڈیٹر", advancedHint: "ہر فلور کا نام بدلیں اور اس لیول کے لیے صحیح سپیسز کی تعداد سیٹ کریں۔", levelName: "لیول کا نام", spaces: "سپیسز", apply: "اپلائی کریں", advanced: "ایڈوانسڈ",
+        confirmLayout: "گیراج لے آؤٹ کنفرم کریں", cancel: "کینسل کریں", confirm: "کنفرم کریں",
+        cameraTitle: "انٹری اور ایگزٹ", cameraSetupTitle: "کیمرہ سیٹ اپ۔", cameraIntro: "ہر لین کے لیے کیمروں کی تعداد سیٹ کریں۔ ہر لین میں 1 سے 4 کیمرے ہونے چاہئیں۔", entryCameras: "انٹری لین کیمرے", exitCameras: "ایگزٹ لین کیمرے", saveCameras: "کیمرے سیو کریں",
+        paymentTitle: "پیمنٹ", paymentSettings: "سیٹنگز۔", paymentIntro: "اپنے پارکنگ گیراج کے لیے پیمنٹ آپشنز اینیبل یا ڈس ایبل کریں۔", enablePayments: "پیمنٹ آپشنز اینیبل کریں", acceptedPayments: "ایکسیپٹڈ پیمنٹ میتھڈز سلیکٹ کریں:", cash: "کیش", card: "کارڈ",
+        workspace: "ایڈمن ورک اسپیس", welcomeBack: "ویلکم بیک،", online: "سسٹم آن لائن ہے", workspaceIntro: "اپنا گیراج منیج کرنے کے لیے سائیڈ بار سے ایک فیچر سلیکٹ کریں۔",
+        adminAccess: "گیراج ایڈمنسٹریشن", makeEvery: "ہر", spaceCount: "سپیس اہم بنائیں۔", loginIntro: "آپ کے پارکنگ فلور کے آپریشن کا ایک کلیئر، کوائٹ ویو۔", secureAccess: "سیکیور ایڈمن ایکسیس", signInTitle: "اپنی ورک اسپیس میں", yourWorkspace: "سائن ان کریں۔", username: "یوزر نیم یا ای میل", password: "پاس ورڈ", signingIn: "سائن ان ہو رہا ہے...", enterWorkspace: "ورک اسپیس اینٹر کریں", returnGarage: "گیراج ویو پر بیک جائیں →", showPassword: "پاس ورڈ شو کریں", hidePassword: "پاس ورڈ ہائیڈ کریں", forgotPassword: "پاس ورڈ بھول گئے؟", forgotPasswordTitle: "پاس ورڈ بھول گئے", forgotPasswordHint: "اپنا یوزر نیم یا ای میل درج کریں", continueLabel: "کنٹینیو کریں", backToSignIn: "← سائن ان پر بیک جائیں", forgotPasswordNotice: "پاس ورڈ ریکوری ابھی دستیاب نہیں۔ براہ کرم اپنے ایڈمنسٹریٹر سے کانٹیکٹ کریں۔",
+        required: "یہ فیلڈ ضروری ہے۔", zero: "یہ فیلڈ زیرو نہیں ہو سکتی۔", positiveNumber: "براہ کرم ایک ویلڈ پازیٹو نمبر درج کریں۔", maxLevels: "زیادہ سے زیادہ 12 لیولز الاؤڈ ہیں۔", cameraRange: "براہ کرم 1 سے 4 کے درمیان ویلیو درج کریں۔", fixErrors: "اپلائی کرنے سے پہلے ایررز فکس کریں۔", fixCameraErrors: "سیو کرنے سے پہلے کیمرہ لین ایررز فکس کریں۔", vehicleAdded: "وہیکل وائٹ لسٹ میں ایڈ ہو گئی ہے۔", vehicleRemoved: "وہیکل وائٹ لسٹ سے ریموو ہو گئی ہے۔", garageApplied: "گیراج لے آؤٹ کامیابی سے اپلائی ہو گیا ہے۔", camerasSaved: "کیمرہ الوکیشن کامیابی سے سیو ہو گئی ہے۔", billingApplied: "بلنگ سیٹنگز کامیابی سے اپلائی ہو گئی ہیں۔", loginFailed: "سائن ان نہیں ہو سکا۔ براہ کرم اپنی کریڈینشلز چیک کریں۔", requestFailed: "وہ ریکویسٹ کمپلیٹ نہیں ہو سکی۔ براہ کرم دوبارہ ٹرائی کریں۔", checkingSession: "سیشن چیک ہو رہا ہے...", examplePlate: "مثلاً ABC-123", exampleManager: "مثلاً منیجر",
     },
 };
+
+const ANALYTICS_METRICS = [
+    { key: "earnings", label: "Earnings" },
+    { key: "rush", label: "Rush Hour" },
+    { key: "duration", label: "Average Duration" },
+    { key: "traffic", label: "Vehicles / Traffic" },
+];
+
+const ANALYTICS_METRIC_TITLES = {
+    earnings: "Earnings trend (Rs)",
+    rush: "Hourly vehicle activity (vehicles)",
+    duration: "Average parking duration (minutes)",
+    traffic: "Vehicle traffic (vehicles)",
+};
+
+function getAnalyticsBarPoints(analytics, metric) {
+    const rows = metric === "rush" ? analytics.hourly_activity : analytics.trend;
+    return rows.map((point, index) => ({
+        key: point.date || `hour-${point.hour ?? index}`,
+        label: point.date ? point.date.slice(5) : `${point.hour}:00`,
+        value:
+            metric === "earnings"
+                ? point.earnings
+                : metric === "traffic" || metric === "rush"
+                    ? point.vehicles
+                    : (point.average_duration_seconds || 0) / 60,
+    }));
+}
+
+function formatAnalyticsDuration(minutes) {
+    const total = Math.round(minutes);
+    if (total < 60) return `${total} min`;
+    const hours = Math.floor(total / 60);
+    const remainder = total % 60;
+    return remainder ? `${hours} hr ${remainder} min` : `${hours} hr`;
+}
+
+function formatRushHourRange(rushHour) {
+    if (!rushHour) return "No data";
+    const startHour = Number(rushHour.slice(0, 2));
+    const endHour = (startHour + 1) % 24;
+    const formatHour = (hour) => `${(hour % 12) || 12} ${hour >= 12 ? "PM" : "AM"}`;
+    return `${formatHour(startHour)} – ${formatHour(endHour)}`;
+}
+
+function EyeIcon() {
+    return (
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z" />
+            <circle cx="12" cy="12" r="3" />
+        </svg>
+    );
+}
+
+function EyeOffIcon() {
+    return (
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-7 0-11-7-11-7a20.6 20.6 0 0 1 5.06-5.94" />
+            <path d="M9.9 4.24A10.4 10.4 0 0 1 12 5c7 0 11 7 11 7a20.6 20.6 0 0 1-3.35 4.3" />
+            <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
+            <line x1="1" y1="1" x2="23" y2="23" />
+        </svg>
+    );
+}
+
+function EditIcon() {
+    return (
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M12 20h9" />
+            <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+        </svg>
+    );
+}
+
+function StarIcon() {
+    return (
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M12 2.5l2.9 6.1 6.6.7-4.9 4.6 1.3 6.6L12 17.6l-5.9 3.1 1.3-6.6-4.9-4.6 6.6-.7Z" />
+        </svg>
+    );
+}
+
+function TrashIcon() {
+    return (
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M3 6h18" />
+            <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
+            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+            <line x1="10" y1="11" x2="10" y2="17" />
+            <line x1="14" y1="11" x2="14" y2="17" />
+        </svg>
+    );
+}
 
 function DisplayControls({ theme, language, onLanguageChange, onThemeChange }) {
     return (
@@ -111,8 +215,11 @@ function AdminPage() {
     const appliedTheme = theme === "system" ? (systemDark ? "dark" : "light") : theme;
     const t = TRANSLATIONS[language];
     const isUrdu = language === "ur";
-    const [username, setUsername] = useState("");
+    const [identifier, setIdentifier] = useState("");
     const [password, setPassword] = useState("");
+    const [showPassword, setShowPassword] = useState(false);
+    const [forgotPasswordOpen, setForgotPasswordOpen] = useState(false);
+    const [forgotNotice, setForgotNotice] = useState("");
     const [adminName, setAdminName] = useState("");
     const [token, setToken] = useState(() => {
         return localStorage.getItem(TOKEN_KEY);
@@ -170,6 +277,7 @@ function AdminPage() {
     const [settingsSubmitting, setSettingsSubmitting] = useState(null);
     const [billingConfig, setBillingConfig] = useState({ payments_enabled: false, cash_enabled: false, card_enabled: false, rate_per_minute: 1.67, rate_unit: "minute" });
     const [billingMessage, setBillingMessage] = useState("");
+    const [billingMessageType, setBillingMessageType] = useState("success");
     const [billingRateError, setBillingRateError] = useState("");
     const [savedBillingConfig, setSavedBillingConfig] = useState(null);
     const [parkingActivity, setParkingActivity] = useState(null);
@@ -207,6 +315,29 @@ function AdminPage() {
     useEffect(() => {
         localStorage.setItem(THEME_KEY, theme);
     }, [theme]);
+
+    // Session menu dropdowns render through a portal attached directly to
+    // <body>, outside the themed .admin-shell wrapper, so .admin-theme-dark
+    // descendant selectors can't reach them unless a shared ancestor above
+    // body carries the class too. Mirroring the theme onto <html> also fixes
+    // the overscroll/rubber-band canvas color: index.css hardcodes a light
+    // `html { background }` that the browser paints behind the document
+    // (used for that bounce region), so once Parking Activity's tables push
+    // the page taller than the viewport, scrolling past the edge flashed that
+    // unrelated light gray instead of the current admin theme.
+    useEffect(() => {
+        const isDark = appliedTheme === "dark";
+        document.documentElement.classList.toggle("admin-theme-dark", isDark);
+        // Dark background comes from the existing .admin-theme-dark rule
+        // (a class selector beats index.css's plain `html` element selector);
+        // light mode has no such generic class, so match .admin-shell's
+        // background directly here.
+        document.documentElement.style.background = isDark ? "" : "#e8efe6";
+        return () => {
+            document.documentElement.classList.remove("admin-theme-dark");
+            document.documentElement.style.background = "";
+        };
+    }, [appliedTheme]);
 
     useEffect(() => {
         const mediaQuery = window.matchMedia?.("(prefers-color-scheme: dark)");
@@ -282,17 +413,25 @@ function AdminPage() {
         setSubmitting(true);
         setError("");
         try {
-            const result = await loginAdmin(username, password);
+            const result = await loginAdmin(identifier, password);
             localStorage.setItem(TOKEN_KEY, result.access_token);
             sessionStorage.removeItem(TOKEN_KEY);
             setToken(result.access_token);
-            setAdminName(username.trim());
+            setAdminName(identifier.trim());
             setPassword("");
         } catch {
             setError(t.loginFailed);
         } finally {
             setSubmitting(false);
         }
+    }
+
+    // Placeholder entry point only: collects the identifier but does not
+    // send a reset email or issue a reset token. The secure recovery
+    // backend will be wired into this handler in a follow-up task.
+    function handleForgotPasswordSubmit(event) {
+        event.preventDefault();
+        setForgotNotice(t.forgotPasswordNotice);
     }
 
     function signOut() {
@@ -457,14 +596,14 @@ function AdminPage() {
 
     async function removeLiveSession(sessionId) {
         if (!window.confirm("Remove this vehicle from parking and free its space?")) return;
-        try { await removeParkingSession(token, sessionId); await loadParkingActivity(); }
+        try { await removeParkingSession(token, sessionId); await loadParkingActivity(); emitParkingDataUpdated(); }
         catch (err) { setActivityError(err.message || "Unable to remove parking."); }
     }
 
     async function editLiveSession(session) {
         const nextPlate = window.prompt("Number plate", session.plate);
         if (!nextPlate || nextPlate.trim().toUpperCase() === session.plate) return;
-        try { await updateParkingVehicle(token, session.session_id, nextPlate.trim().toUpperCase()); await loadParkingActivity(); }
+        try { await updateParkingVehicle(token, session.session_id, nextPlate.trim().toUpperCase()); await loadParkingActivity(); emitParkingDataUpdated(); }
         catch (err) { setActivityError(err.message || "Unable to update vehicle."); }
     }
 
@@ -491,9 +630,16 @@ function AdminPage() {
         if (activeSessionMenuId !== session.session_id || !sessionMenuPosition) return null;
         return createPortal(
             <div className="vehicle-menu-dropdown vehicle-menu-popover" style={sessionMenuPosition} role="menu">
-                <button type="button" role="menuitem" onClick={() => { setActiveSessionMenuId(null); setSessionMenuPosition(null); void removeLiveSession(session.session_id); }}>Remove Parking</button>
-                <button type="button" role="menuitem" onClick={() => { setActiveSessionMenuId(null); setSessionMenuPosition(null); void editLiveSession(session); }}>Edit Info</button>
-                <button type="button" role="menuitem" onClick={() => { setActiveSessionMenuId(null); setSessionMenuPosition(null); setPlate(session.plate); setActiveFeature("whitelist"); }}>Add to Whitelist</button>
+                <button type="button" role="menuitem" className="vehicle-menu-item" onClick={() => { setActiveSessionMenuId(null); setSessionMenuPosition(null); void editLiveSession(session); }}>
+                    <EditIcon /> Edit Info
+                </button>
+                <button type="button" role="menuitem" className="vehicle-menu-item" onClick={() => { setActiveSessionMenuId(null); setSessionMenuPosition(null); setPlate(session.plate); setActiveFeature("whitelist"); }}>
+                    <StarIcon /> Add to Whitelist
+                </button>
+                <div className="vehicle-menu-divider" role="separator" />
+                <button type="button" role="menuitem" className="vehicle-menu-item vehicle-menu-item-danger" onClick={() => { setActiveSessionMenuId(null); setSessionMenuPosition(null); void removeLiveSession(session.session_id); }}>
+                    <TrashIcon /> Remove Parking
+                </button>
             </div>,
             document.body
         );
@@ -502,6 +648,26 @@ function AdminPage() {
     async function loadAnalytics(period = analyticsPeriod) {
         try { setAnalytics(await getAnalytics(token, period)); }
         catch (err) { setActivityError(err.message || "Unable to load analytics."); }
+    }
+
+    function renderAnalyticsBars() {
+        const points = getAnalyticsBarPoints(analytics, analyticsMetric);
+        const max = Math.max(...points.map((point) => point.value), 0);
+        return points.map((point) => {
+            const height = max > 0 ? Math.max(4, (point.value / max) * 100) : 0;
+            const displayValue =
+                analyticsMetric === "earnings"
+                    ? `Rs ${Number(point.value).toLocaleString("en-PK", { minimumFractionDigits: 2 })}`
+                    : analyticsMetric === "duration"
+                        ? `${Math.round(point.value)} min`
+                        : `${point.value} vehicles`;
+            return (
+                <div key={point.key} title={displayValue}>
+                    <i style={{ height: `${height}%` }} />
+                    <small>{point.label}</small>
+                </div>
+            );
+        });
     }
 
     function showWhitelist() {
@@ -747,6 +913,7 @@ function AdminPage() {
             setBillingRateError("");
         }
         if (isBillingConfigAlreadyApplied(billingConfig, savedBillingConfig)) {
+            setBillingMessageType("success");
             setBillingMessage("These billing settings are already applied.");
             return;
         }
@@ -831,11 +998,13 @@ function AdminPage() {
             const savedConfig = result?.billing_config || payload;
             setBillingConfig(savedConfig);
             setSavedBillingConfig(normalizeBillingConfig(savedConfig));
+            setBillingMessageType("success");
             setBillingMessage(t.billingApplied);
             localStorage.setItem(GARAGE_SETTINGS_UPDATED_KEY, String(Date.now()));
             setConfirmationOpen(false);
             setConfirmationSection(null);
         } catch {
+            setBillingMessageType("warning");
             setBillingMessage(t.requestFailed);
         } finally {
             setSettingsSubmitting(null);
@@ -1104,7 +1273,7 @@ function AdminPage() {
                 };
                 setGarageSettings(normalizedSaved);
                 setSavedGarageSettings(normalizedSaved);
-                setGarageSettingsMessageType("success"); setGarageSettingsMessage("Plate tracking mode applied."); localStorage.setItem(GARAGE_SETTINGS_UPDATED_KEY, String(Date.now())); setConfirmationOpen(false); return;
+                setGarageSettingsMessageType("success"); setGarageSettingsMessage("Plate tracking mode applied."); localStorage.setItem(GARAGE_SETTINGS_UPDATED_KEY, String(Date.now())); emitParkingDataUpdated(); setConfirmationOpen(false); return;
             } catch (err) { setGarageSettingsMessageType("warning"); setGarageSettingsMessage(err?.message || t.requestFailed); return; }
             finally { setSettingsSubmitting(null); }
         }
@@ -1184,6 +1353,7 @@ function AdminPage() {
             setGarageSettingsMessageType("success");
             setGarageSettingsMessage(t.garageApplied);
             localStorage.setItem(GARAGE_SETTINGS_UPDATED_KEY, String(Date.now()));
+            emitParkingDataUpdated();
             setConfirmationOpen(false);
             setConfirmationSection(null);
         } catch (err) {
@@ -1360,7 +1530,47 @@ function AdminPage() {
                                 </>}
                             </div>
                         ) : activeFeature === "analytics" ? (
-                            <div className="feature-view"><h1>Garage<br /><span>analytics.</span></h1>{analytics ? <><div className="analytics-grid"><article>Total Earnings<strong>Rs {Number(analytics.total_earnings).toLocaleString("en-PK", { minimumFractionDigits: 2 })}</strong></article><article>Average Duration<strong>{analytics.average_duration_minutes >= 60 ? `${Math.floor(analytics.average_duration_minutes / 60)} hr ${Math.round(analytics.average_duration_minutes % 60) || ""} min` : `${Math.round(analytics.average_duration_minutes)} min`}</strong></article><article>Rush Hour<strong>{analytics.rush_hour ? `${(Number(analytics.rush_hour.slice(0, 2)) % 12) || 12} ${Number(analytics.rush_hour.slice(0, 2)) >= 12 ? "PM" : "AM"} – ${(Number(analytics.rush_hour.slice(0, 2)) + 1) % 12 || 12} ${Number(analytics.rush_hour.slice(0, 2)) >= 11 ? "PM" : "AM"}` : "No data"}</strong></article><article>Occupancy<strong>{analytics.occupancy.occupied}/{analytics.occupancy.total}</strong></article><article>Vehicles Today<strong>{analytics.vehicles_today}</strong></article></div><section className="analytics-panel"><div className="analytics-switcher">{[["earnings", "Earnings"], ["rush", "Rush Hour"], ["duration", "Average Duration"], ["traffic", "Vehicles / Traffic"]].map(([key, label]) => <button key={key} className={analyticsMetric === key ? "active" : ""} onClick={() => setAnalyticsMetric(key)}>{label}</button>)}</div><h3>{({ earnings: "Earnings trend (Rs)", rush: "Hourly vehicle activity (vehicles)", duration: "Average parking duration (minutes)", traffic: "Vehicle traffic (vehicles)" })[analyticsMetric]}</h3><div className="analytics-bars">{(() => { const rows = analyticsMetric === "rush" ? analytics.hourly_activity : analytics.trend; const values = rows.map((point) => analyticsMetric === "earnings" ? point.earnings : analyticsMetric === "traffic" || analyticsMetric === "rush" ? point.vehicles : analytics.average_duration_minutes); const max = Math.max(...values, 0); return rows.map((point, index) => { const value = values[index]; const height = max > 0 ? Math.max(4, value / max * 100) : 0; return <div key={point.date || point.hour || index} title={analyticsMetric === "earnings" ? `Rs ${Number(value).toLocaleString("en-PK", { minimumFractionDigits: 2 })}` : `${value} ${analyticsMetric === "duration" ? "min" : "vehicles"}`}><i style={{ height: `${height}%` }} /><small>{point.date?.slice(5) || `${point.hour}:00`}</small></div>; }); })()}</div></section></> : <p className="admin-message">Loading analytics…</p>}</div>
+                            <div className="feature-view">
+                                <h1>Garage<br /><span>analytics.</span></h1>
+                                {analytics ? (
+                                    <>
+                                        <div className="analytics-grid">
+                                            <article>
+                                                <span className="analytics-grid-label">Total Earnings</span>
+                                                <strong>Rs {Number(analytics.total_earnings).toLocaleString("en-PK", { minimumFractionDigits: 2 })}</strong>
+                                            </article>
+                                            <article>
+                                                <span className="analytics-grid-label">Average Duration</span>
+                                                <strong>{formatAnalyticsDuration(analytics.average_duration_minutes)}</strong>
+                                            </article>
+                                            <article>
+                                                <span className="analytics-grid-label">Rush Hour</span>
+                                                <strong>{formatRushHourRange(analytics.rush_hour)}</strong>
+                                            </article>
+                                            <article>
+                                                <span className="analytics-grid-label">Occupancy</span>
+                                                <strong>{analytics.occupancy.occupied}/{analytics.occupancy.total}</strong>
+                                            </article>
+                                            <article>
+                                                <span className="analytics-grid-label">Vehicles Today</span>
+                                                <strong>{analytics.vehicles_today}</strong>
+                                            </article>
+                                        </div>
+
+                                        <section className="analytics-panel">
+                                            <div className="analytics-switcher">
+                                                {ANALYTICS_METRICS.map(({ key, label }) => (
+                                                    <button key={key} type="button" className={analyticsMetric === key ? "active" : ""} onClick={() => setAnalyticsMetric(key)}>{label}</button>
+                                                ))}
+                                            </div>
+                                            <h3>{ANALYTICS_METRIC_TITLES[analyticsMetric]}</h3>
+                                            <div className="analytics-bars">{renderAnalyticsBars()}</div>
+                                        </section>
+                                    </>
+                                ) : (
+                                    <p className="admin-message">Loading analytics…</p>
+                                )}
+                            </div>
                         ) : activeFeature === "whitelist" ? (
                             <div className="feature-view">
                                 <h1>{t.vehicleTitle}<br /><span>{t.whitelistTitle}</span></h1>
@@ -1557,6 +1767,15 @@ function AdminPage() {
                                             {cameraSlots.map((slot) => {
                                                 const assigned = cameraAssignments[slot.id] || "";
                                                 const lane = slot.id.startsWith("entry-") ? "Entry" : "Exit";
+                                                // The saved assignment (from a previous session) can reference a
+                                                // device that isn't in `cameraDevices` yet -- enumerateDevices()
+                                                // only runs when "Refresh cameras" is clicked, not on page load.
+                                                // Without a matching <option>, the browser silently falls back to
+                                                // showing "Not assigned" here while the status badge below (which
+                                                // reads the same saved value directly) still says "Assigned",
+                                                // which is a contradictory, confusing display -- not the actual
+                                                // camera assignment being lost.
+                                                const assignedDeviceKnown = assigned && cameraDevices.some((device) => device.deviceId === assigned);
 
                                                 return (
                                                     <div key={slot.id} className="camera-assignment-card">
@@ -1572,6 +1791,9 @@ function AdminPage() {
                                                                 onChange={(event) => setCameraAssignment(slot.id, event.target.value)}
                                                             >
                                                                 <option value="">Not assigned</option>
+                                                                {assigned && !assignedDeviceKnown && (
+                                                                    <option value={assigned}>Saved camera (refresh to see its name)</option>
+                                                                )}
                                                                 {cameraDevices.map((device, index) => (
                                                                     <option key={device.deviceId} value={device.deviceId}>
                                                                         {device.label || `Camera ${index + 1}`}
@@ -1632,7 +1854,7 @@ function AdminPage() {
                                         </>
                                     )}
 
-                                    {billingMessage && <p className="whitelist-success">{billingMessage}</p>}
+                                    {billingMessage && <p className={billingMessageType === "warning" ? "admin-error whitelist-feedback" : "whitelist-success"} role={billingMessageType === "warning" ? "alert" : undefined}>{billingMessage}</p>}
 
                                     <div className="settings-actions">
                                         <button type="submit" className="settings-save-button" disabled={billingAlreadyApplied || settingsSubmitting === "billing"}>
@@ -1690,16 +1912,38 @@ function AdminPage() {
             </section>
             <section className="admin-form-panel">
                 <div className="admin-form-wrap">
-                    <p className="admin-label">{t.welcomeBack}</p>
-                    <h2>{t.signInTitle}<br />{t.yourWorkspace}</h2>
-                    <form onSubmit={handleSubmit}>
-                        <label htmlFor="admin-username">{t.username}</label>
-                        <input id="admin-username" value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" required />
-                        <label htmlFor="admin-password">{t.password}</label>
-                        <input id="admin-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required />
-                        {error && <p className="admin-error" role="alert">{error}</p>}
-                        <button type="submit" disabled={submitting}>{submitting ? t.signingIn : t.enterWorkspace}<span>→</span></button>
-                    </form>
+                    {forgotPasswordOpen ? (
+                        <>
+                            <p className="admin-label">{t.forgotPassword}</p>
+                            <h2>{t.forgotPasswordTitle}</h2>
+                            <form onSubmit={handleForgotPasswordSubmit}>
+                                <label htmlFor="admin-forgot-identifier">{t.forgotPasswordHint}</label>
+                                <input id="admin-forgot-identifier" value={identifier} onChange={(event) => setIdentifier(event.target.value)} autoComplete="username" required />
+                                {forgotNotice && <p className="admin-message" role="status">{forgotNotice}</p>}
+                                <button type="submit">{t.continueLabel}<span>→</span></button>
+                            </form>
+                            <button type="button" className="admin-forgot-link" onClick={() => { setForgotNotice(""); setForgotPasswordOpen(false); }}>{t.backToSignIn}</button>
+                        </>
+                    ) : (
+                        <>
+                            <p className="admin-label">{t.welcomeBack}</p>
+                            <h2>{t.signInTitle}<br />{t.yourWorkspace}</h2>
+                            <form onSubmit={handleSubmit}>
+                                <label htmlFor="admin-username">{t.username}</label>
+                                <input id="admin-username" value={identifier} onChange={(event) => setIdentifier(event.target.value)} autoComplete="username" required />
+                                <label htmlFor="admin-password">{t.password}</label>
+                                <div className="admin-password-field">
+                                    <input id="admin-password" type={showPassword ? "text" : "password"} value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required />
+                                    <button type="button" className="admin-password-toggle" aria-label={showPassword ? t.hidePassword : t.showPassword} onClick={() => setShowPassword((current) => !current)}>
+                                        {showPassword ? <EyeOffIcon /> : <EyeIcon />}
+                                    </button>
+                                </div>
+                                {error && <p className="admin-error" role="alert">{error}</p>}
+                                <button type="submit" disabled={submitting}>{submitting ? t.signingIn : t.enterWorkspace}<span>→</span></button>
+                            </form>
+                            <button type="button" className="admin-forgot-link" onClick={() => { setForgotNotice(""); setForgotPasswordOpen(true); }}>{t.forgotPassword}</button>
+                        </>
+                    )}
                     <a className="admin-return" href="/">{t.returnGarage}</a>
                 </div>
             </section>
