@@ -20,6 +20,9 @@ const MAX_INFERENCE_FRAME_WIDTH = 960;
 const VISION_REQUEST_INTERVAL_MS = 300;
 const VISION_DEBUG = import.meta.env.DEV && import.meta.env.VITE_VISION_DEBUG === "true";
 const GARAGE_SETTINGS_UPDATED_KEY = "parking_garage_settings_updated";
+const PARKING_DATA_UPDATED_KEY = "parking_data_updated";
+const PARKING_DATA_UPDATED_EVENT = "parking-data-updated";
+const GARAGE_THEME_KEY = "parking_garage_theme";
 const MULTI_CAMERA_ORCHESTRATION_TEST = false;
 const PARTIAL_GUARD_EVIDENCE_TTL_MS = 3000;
 const PARTIAL_GUARD_STRONG_CONFIDENCE = 0.85;
@@ -417,6 +420,19 @@ function GaragePage() {
     const [garageAuthFailed, setGarageAuthFailed] = useState(false);
     const garageAuthFailedRef = useRef(false);
     const [showSettingsReloadNotice, setShowSettingsReloadNotice] = useState(false);
+    const [garageTheme, setGarageTheme] = useState(() => (
+        ["system", "light", "dark"].includes(localStorage.getItem(GARAGE_THEME_KEY))
+            ? localStorage.getItem(GARAGE_THEME_KEY)
+            : "light"
+    ));
+    const [garageSystemDark, setGarageSystemDark] = useState(
+        () => window.matchMedia?.("(prefers-color-scheme: dark)")?.matches || false
+    );
+    const appliedGarageTheme =
+        garageTheme === "system"
+            ? (garageSystemDark ? "dark" : "light")
+            : garageTheme;
+
     const [activeLane, setActiveLane] = useState("entry");
     const activeLaneRef = useRef("entry");
     const [cameraViews, setCameraViews] = useState({});
@@ -747,14 +763,17 @@ function GaragePage() {
 
     useEffect(() => {
         const initialSettingsLoad = loadAdminSettings();
+        const initialParkingLoad = loadParkingSpaces();
+
         adminSettingsInitialLoadRef.current = initialSettingsLoad;
-        parkingSpacesInitialLoadRef.current = initialSettingsLoad.then(
-            (success) => (success ? loadParkingSpaces() : undefined)
-        );
+        parkingSpacesInitialLoadRef.current = initialParkingLoad;
 
         const interval = window.setInterval(() => {
-            if (!garageAuthFailedRef.current) void loadParkingSpaces();
-        }, 5000);
+            if (garageAuthFailedRef.current) return;
+            void loadParkingSpaces();
+            void loadAdminSettings();
+        }, 4000);
+
         return () => window.clearInterval(interval);
     }, []);
 
@@ -767,6 +786,59 @@ function GaragePage() {
         };
         window.addEventListener("storage", handleSettingsUpdate);
         return () => window.removeEventListener("storage", handleSettingsUpdate);
+    }, []);
+
+    useEffect(() => {
+        const handleParkingDataUpdate = (event) => {
+            if (
+                event.key === PARKING_DATA_UPDATED_KEY &&
+                event.newValue
+            ) {
+                void loadParkingSpaces();
+            }
+        };
+
+        const handleParkingDataUpdatedEvent = () => {
+            void loadParkingSpaces();
+        };
+
+        window.addEventListener("storage", handleParkingDataUpdate);
+        window.addEventListener(
+            PARKING_DATA_UPDATED_EVENT,
+            handleParkingDataUpdatedEvent
+        );
+
+        return () => {
+            window.removeEventListener("storage", handleParkingDataUpdate);
+            window.removeEventListener(
+                PARKING_DATA_UPDATED_EVENT,
+                handleParkingDataUpdatedEvent
+            );
+        };
+    }, []);
+
+    useEffect(() => {
+        localStorage.setItem(GARAGE_THEME_KEY, garageTheme);
+    }, [garageTheme]);
+
+    useEffect(() => {
+        const mediaQuery =
+            window.matchMedia?.("(prefers-color-scheme: dark)");
+
+        if (!mediaQuery) return;
+
+        const updateSystemTheme = (event) =>
+            setGarageSystemDark(event.matches);
+
+        setGarageSystemDark(mediaQuery.matches);
+
+        mediaQuery.addEventListener?.("change", updateSystemTheme);
+
+        return () =>
+            mediaQuery.removeEventListener?.(
+                "change",
+                updateSystemTheme
+            );
     }, []);
 
     useEffect(() => {
@@ -2028,7 +2100,7 @@ function GaragePage() {
     }
 
     return (
-        <div className="app">
+        <div className={`app garage-theme-${appliedGarageTheme}`}>
             {showSettingsReloadNotice && (
                 <div className="settings-reload-notice" role="status">
                     <span>Admin changes applied. Reload Garage to use the latest configuration.</span>
@@ -2040,10 +2112,31 @@ function GaragePage() {
             <header className="header">
                 <div>
                     <h1>
-                        ParkingOS
+                        PARKING<span>OS</span>
                     </h1>
 
-                    <div className="garage-header-controls"><button type="button" className="garage-admin-link" onClick={() => openOrFocusNamedTab("/admin", "parkingos-admin")}>Open Admin</button></div>
+                    <div className="garage-header-controls">
+                        <select
+                            className="garage-theme-select"
+                            value={garageTheme}
+                            onChange={(event) => setGarageTheme(event.target.value)}
+                            aria-label="Select theme"
+                        >
+                            <option value="system">System Default</option>
+                            <option value="light">Light</option>
+                            <option value="dark">Dark</option>
+                        </select>
+
+                        <button
+                            type="button"
+                            className="garage-admin-link"
+                            onClick={() =>
+                                openOrFocusNamedTab("/admin", "parkingos-admin")
+                            }
+                        >
+                            Open Admin
+                        </button>
+                    </div>
 
                     <p>
                         Parking
@@ -2191,3 +2284,4 @@ function GaragePage() {
 }
 
 export default GaragePage;
+

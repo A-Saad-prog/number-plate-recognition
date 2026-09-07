@@ -49,6 +49,23 @@ export async function savedPlateImageFolderName() {
     return (await getHandle())?.name || null;
 }
 
+async function hasWritePermission(handle) {
+    const options = { mode: "readwrite" };
+    if ((await handle.queryPermission(options)) === "granted") return true;
+    // A handle restored from IndexedDB (which happens on every page load --
+    // it's re-fetched from storage each time, never reused as the same live
+    // object) often reports "prompt" from queryPermission() even though the
+    // grant is still valid; requestPermission() re-activates it and, when
+    // the user already granted it in an earlier session, resolves to
+    // "granted" without showing any dialog. Without this, saving silently
+    // stopped working as soon as the page was reloaded (e.g. the next day).
+    try {
+        return (await handle.requestPermission(options)) === "granted";
+    } catch {
+        return false;
+    }
+}
+
 export async function saveConfirmedPlateImage({ plate, source, imageDataUrl }) {
     if (!localPlateImageSupport() || !imageDataUrl) return false;
     const handle = await getHandle();
@@ -56,7 +73,7 @@ export async function saveConfirmedPlateImage({ plate, source, imageDataUrl }) {
         console.info("[Local image] save skipped: no active folder handle");
         return false;
     }
-    if (await handle.queryPermission({ mode: "readwrite" }) !== "granted") {
+    if (!(await hasWritePermission(handle))) {
         console.info("[Local image] save skipped: folder write permission is not granted");
         return false;
     }

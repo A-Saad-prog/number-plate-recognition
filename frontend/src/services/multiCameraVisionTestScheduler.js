@@ -1,9 +1,10 @@
-export function createMultiCameraVisionTestScheduler({ maxConcurrent = 2 } = {}) {
+export function createMultiCameraVisionTestScheduler({ maxConcurrent = 2, debug = false } = {}) {
     let active = 0;
     const queue = [];
     const queuedCameraIds = new Set();
 
     function log() {
+        if (!debug) return;
         console.log("[MC TEST scheduler]", {
             active,
             maxConcurrent,

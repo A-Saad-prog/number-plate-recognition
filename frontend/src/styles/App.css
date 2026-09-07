@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;600;700;800&display=swap');
+
 * {
     box-sizing: border-box;
 }
@@ -1364,7 +1366,7 @@ body {
 .header {
     position: relative;
     overflow: hidden;
-    padding: 42px clamp(20px, 5vw, 76px);
+    padding: 26px clamp(20px, 5vw, 64px);
     background: var(--ink);
     text-align: left;
 }
@@ -1372,12 +1374,12 @@ body {
 .header::after {
     position: absolute;
     right: 9%;
-    bottom: -58px;
-    width: 190px;
-    height: 190px;
+    bottom: -42px;
+    width: 140px;
+    height: 140px;
     border: 1px solid rgba(231, 244, 237, 0.16);
     border-radius: 50%;
-    box-shadow: 0 0 0 24px rgba(231, 244, 237, 0.04), 0 0 0 48px rgba(231, 244, 237, 0.03);
+    box-shadow: 0 0 0 18px rgba(231, 244, 237, 0.04), 0 0 0 36px rgba(231, 244, 237, 0.03);
     content: "";
 }
 
@@ -1386,19 +1388,19 @@ body {
     z-index: 1;
     color: #f8fbf6;
     font-family: Georgia, "Times New Roman", serif;
-    font-size: clamp(42px, 7vw, 78px);
+    font-size: clamp(30px, 5vw, 52px);
     font-weight: 700;
     line-height: 0.98;
-    letter-spacing: -2.5px;
+    letter-spacing: -2px;
 }
 
 .header p {
     position: relative;
     z-index: 1;
     max-width: 420px;
-    margin-top: 17px;
+    margin-top: 10px;
     color: #9caf9f;
-    font-size: 13px;
+    font-size: 12px;
     letter-spacing: 1.2px;
     line-height: 1.5;
     text-transform: uppercase;
@@ -1639,6 +1641,7 @@ body {
 
 .camera-panel {
     min-width: 0;
+    border-radius: 7px;
 }
 
 .camera-vehicle-actions {
@@ -1871,8 +1874,9 @@ body {
 .camera-slot-grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
 .legacy-camera-grid { display: none; }
 .lane-switch-button { margin-top: 14px; border: 1px solid #b8dfc8; border-radius: 999px; background: var(--green-soft); color: var(--green-dark); cursor: pointer; font: 700 12px 'Manrope', sans-serif; padding: 9px 14px; }
-.garage-header-controls { position: absolute; right: clamp(20px, 5vw, 76px); top: 24px; z-index: 2; }
+.garage-header-controls { align-items: center; display: flex; gap: 10px; position: absolute; right: clamp(20px, 5vw, 76px); top: 24px; z-index: 2; }
 .garage-admin-link { border: 1px solid rgba(231, 244, 237, .38); border-radius: 999px; background: transparent; color: #f8fbf6; cursor: pointer; font-size: 12px; font-weight: 700; padding: 8px 13px; }
+.garage-theme-select { appearance: auto; border-radius: 999px; cursor: pointer; padding: 7px 10px; }
 
 /* Garage visual system: aligned with the Admin workspace. */
 .app.garage-theme-light,
@@ -1919,6 +1923,13 @@ body {
     font-family: 'Manrope', sans-serif;
     font-weight: 800;
     letter-spacing: -.04em;
+}
+
+/* Same wordmark treatment as the Admin logo: ink/light text with an
+   orange "OS" -- the accent color doesn't change between themes. */
+.app.garage-theme-light .header h1 span,
+.app.garage-theme-dark .header h1 span {
+    color: #e05b35;
 }
 
 .app.garage-theme-light .header p,
@@ -2001,6 +2012,21 @@ body {
 .app.garage-theme-dark .exit-button:hover:not(:disabled),
 .app.garage-theme-dark .garage-admin-link:hover { background: #e05b35; border-color: #e05b35; }
 
+/* Secondary action, same treatment as Admin's .confirmation-cancel:
+   bordered/transparent instead of the solid primary-button fill. */
+.app.garage-theme-light .cancel-button,
+.app.garage-theme-dark .cancel-button {
+    background: transparent;
+    border: 1px solid var(--garage-line);
+    color: var(--garage-ink);
+}
+
+.app.garage-theme-light .cancel-button:hover:not(:disabled),
+.app.garage-theme-dark .cancel-button:hover:not(:disabled) {
+    border-color: #e05b35;
+    color: #e05b35;
+}
+
 .app.garage-theme-light .garage-theme-select,
 .app.garage-theme-dark .garage-theme-select,
 .app.garage-theme-light .garage-admin-link,
@@ -2012,9 +2038,22 @@ body {
 .app.garage-theme-dark .garage-theme-select { background: #10251d; border-color: rgba(145, 199, 174, .35); color: #edf7f2; }
 .app.garage-theme-light .garage-theme-select { background: transparent; border-color: rgba(231, 244, 237, .38); color: #edf7f2; }
 
+/* The closed select sits on the always-dark .header, so its own text is
+   light in both themes -- but the opened option list renders in the
+   browser's native (light) popup, where that same light text is
+   unreadable. Force readable colors for the popup specifically. */
+.app.garage-theme-light .garage-theme-select option {
+    background: #fff;
+    color: #10231c;
+}
+
+.app.garage-theme-dark .garage-theme-select option {
+    background: #10251d;
+    color: #edf7f2;
+}
+
 .app.garage-theme-light .parking-space.selected,
 .app.garage-theme-dark .parking-space.selected { background: #f9dfd5; border-color: #e05b35; box-shadow: inset 0 0 0 2px #e05b35; }
-.app.garage-theme-dark .parking-space.selected { color: #10231c; }
 .app.garage-theme-light .selected-box,
 .app.garage-theme-dark .selected-box { background: #f9dfd5; border-color: #e05b35; }
 
@@ -2025,10 +2064,51 @@ body {
 .app.garage-theme-dark .detected-info h3,
 .app.garage-theme-dark .detected-info .vehicle-info-header span { color: #e05b35; }
 
+/* Camera feed containers: the same lighter green used for the
+   available/occupied summary box (.detected-info already uses it via
+   the rule above), instead of the near-black default card surface. */
+.app.garage-theme-dark .camera-panel {
+    background: var(--garage-secondary);
+}
+
 .app.garage-theme-light .vehicle-info-row,
 .app.garage-theme-dark .vehicle-info-row { border-color: var(--garage-line); }
 .app.garage-theme-dark .space-status.available,
 .app.garage-theme-dark .space-status.unavailable { background: var(--garage-secondary); border-color: var(--garage-line); }
+
+/* The "N spaces available / occupied" text inherited the light-theme
+   near-black color, which is unreadable against the dark card above. */
+.app.garage-theme-dark .space-status strong,
+.app.garage-theme-dark .space-status p {
+    color: #ffffff;
+}
+
+/* Level tabs: plain white instead of the dark surface, so they read as
+   a distinct control rather than blending into the other green-tinted
+   cards. */
+.app.garage-theme-dark .level-toggle {
+    background: #ffffff;
+    border-color: #d8d2c4;
+    color: #10231c;
+}
+
+.app.garage-theme-dark .level-toggle:hover {
+    background: #f0f0f0;
+}
+
+.app.garage-theme-dark .level-toggle.active {
+    background: #ffffff;
+    border-color: #e05b35;
+    color: #e05b35;
+}
+
+.app.garage-theme-dark .level-toggle > span:last-child {
+    color: #e05b35;
+}
+
+/* Available / occupied / selected keep their light-mode colors in dark
+   mode too -- no theme-specific override for .parking-space.available,
+   .parking-space.occupied, .available-box, or .occupied-box. */
 
 @media (max-width: 720px) {
     .camera-lane-groups {
