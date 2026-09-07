@@ -15,6 +15,15 @@ import {
     saveGarageSettings,
     removeParkingSession,
     updateParkingVehicle,
+    getAdminSecurityStatus,
+    sendAdminEmailVerification,
+    verifyAdminEmail,
+    setupAdminTotp,
+    confirmAdminTotp,
+    requestPasswordRecovery,
+    verifyRecoveryEmail,
+    verifyRecoveryTotp,
+    resetAdminPassword,
 } from "../services/api";
 
 import {
@@ -220,6 +229,31 @@ function AdminPage() {
     const [showPassword, setShowPassword] = useState(false);
     const [forgotPasswordOpen, setForgotPasswordOpen] = useState(false);
     const [forgotNotice, setForgotNotice] = useState("");
+
+    // Forgot-password state machine: forgot_identifier -> forgot_email_code
+    // -> forgot_totp -> forgot_new_password -> forgot_success.
+    const [forgotStep, setForgotStep] = useState("forgot_identifier");
+    const [forgotError, setForgotError] = useState("");
+    const [forgotSubmitting, setForgotSubmitting] = useState(false);
+    const [recoveryChallengeToken, setRecoveryChallengeToken] = useState("");
+    const [recoveryEmailCode, setRecoveryEmailCode] = useState("");
+    const [recoveryTotpCode, setRecoveryTotpCode] = useState("");
+    const [recoveryResetToken, setRecoveryResetToken] = useState("");
+    const [recoveryNewPassword, setRecoveryNewPassword] = useState("");
+    const [recoveryConfirmPassword, setRecoveryConfirmPassword] = useState("");
+    const [recoveryShowNewPassword, setRecoveryShowNewPassword] = useState(false);
+    const [recoveryShowConfirmPassword, setRecoveryShowConfirmPassword] = useState(false);
+
+    // Account Security modal (logged-in admin: email verification + TOTP).
+    const [securityModalOpen, setSecurityModalOpen] = useState(false);
+    const [securityStatus, setSecurityStatus] = useState(null);
+    const [securityLoading, setSecurityLoading] = useState(false);
+    const [securityError, setSecurityError] = useState("");
+    const [securityMessage, setSecurityMessage] = useState("");
+    const [securityEmailCodeSent, setSecurityEmailCodeSent] = useState(false);
+    const [securityEmailCode, setSecurityEmailCode] = useState("");
+    const [securityTotpSetup, setSecurityTotpSetup] = useState(null);
+    const [securityTotpCode, setSecurityTotpCode] = useState("");
     const [adminName, setAdminName] = useState("");
     const [token, setToken] = useState(() => {
         return localStorage.getItem(TOKEN_KEY);
@@ -426,12 +460,108 @@ function AdminPage() {
         }
     }
 
-    // Placeholder entry point only: collects the identifier but does not
-    // send a reset email or issue a reset token. The secure recovery
-    // backend will be wired into this handler in a follow-up task.
-    function handleForgotPasswordSubmit(event) {
+    function resetForgotPasswordState() {
+        setForgotStep("forgot_identifier");
+        setForgotNotice("");
+        setForgotError("");
+        setForgotSubmitting(false);
+        setRecoveryChallengeToken("");
+        setRecoveryEmailCode("");
+        setRecoveryTotpCode("");
+        setRecoveryResetToken("");
+        setRecoveryNewPassword("");
+        setRecoveryConfirmPassword("");
+        setRecoveryShowNewPassword(false);
+        setRecoveryShowConfirmPassword(false);
+    }
+
+    function openForgotPassword() {
+        resetForgotPasswordState();
+        setForgotPasswordOpen(true);
+    }
+
+    function closeForgotPassword() {
+        resetForgotPasswordState();
+        setForgotPasswordOpen(false);
+    }
+
+    async function handleRecoveryIdentifierSubmit(event) {
         event.preventDefault();
-        setForgotNotice(t.forgotPasswordNotice);
+        setForgotSubmitting(true);
+        setForgotError("");
+        try {
+            const result = await requestPasswordRecovery(identifier);
+            setRecoveryChallengeToken(result.challenge_token || "");
+            setForgotNotice(result.message || "If the account is eligible for recovery, a verification code has been sent.");
+            setForgotStep("forgot_email_code");
+        } catch (error) {
+            setForgotError(error.message || t.requestFailed);
+        } finally {
+            setForgotSubmitting(false);
+        }
+    }
+
+    async function handleRecoveryEmailCodeSubmit(event) {
+        event.preventDefault();
+        setForgotSubmitting(true);
+        setForgotError("");
+        try {
+            await verifyRecoveryEmail(recoveryChallengeToken, recoveryEmailCode.trim());
+            setForgotNotice("");
+            setRecoveryEmailCode("");
+            setForgotStep("forgot_totp");
+        } catch (error) {
+            setForgotError(error.message || "Invalid or expired verification code.");
+        } finally {
+            setForgotSubmitting(false);
+        }
+    }
+
+    async function handleRecoveryTotpSubmit(event) {
+        event.preventDefault();
+        setForgotSubmitting(true);
+        setForgotError("");
+        try {
+            const result = await verifyRecoveryTotp(recoveryChallengeToken, recoveryTotpCode.trim());
+            setRecoveryResetToken(result.reset_token || "");
+            setRecoveryTotpCode("");
+            setForgotStep("forgot_new_password");
+        } catch (error) {
+            setForgotError(error.message || "Invalid or expired verification code.");
+        } finally {
+            setForgotSubmitting(false);
+        }
+    }
+
+    async function handleRecoveryResetSubmit(event) {
+        event.preventDefault();
+        setForgotError("");
+
+        if (recoveryNewPassword.length < 12) {
+            setForgotError("Password must be at least 12 characters.");
+            return;
+        }
+        if (recoveryNewPassword !== recoveryConfirmPassword) {
+            setForgotError("Passwords do not match.");
+            return;
+        }
+
+        setForgotSubmitting(true);
+        try {
+            await resetAdminPassword(recoveryResetToken, recoveryNewPassword);
+            // Clear every recovery secret from memory now that it's been used.
+            setRecoveryChallengeToken("");
+            setRecoveryEmailCode("");
+            setRecoveryTotpCode("");
+            setRecoveryResetToken("");
+            setRecoveryNewPassword("");
+            setRecoveryConfirmPassword("");
+            setForgotStep("forgot_success");
+        } catch (error) {
+            setForgotError(error.message || "Unable to reset password.");
+        } finally {
+            setForgotSubmitting(false);
+        }
     }
 
     function signOut() {
@@ -439,6 +569,107 @@ function AdminPage() {
         sessionStorage.removeItem(TOKEN_KEY);
         setToken(null);
         setAdminName("");
+        setSecurityModalOpen(false);
+        setSecurityStatus(null);
+        setSecurityEmailCodeSent(false);
+        setSecurityEmailCode("");
+        setSecurityTotpSetup(null);
+        setSecurityTotpCode("");
+        setSecurityError("");
+        setSecurityMessage("");
+    }
+
+    async function loadSecurityStatus() {
+        if (!token) return;
+        setSecurityLoading(true);
+        setSecurityError("");
+        try {
+            const result = await getAdminSecurityStatus(token);
+            setSecurityStatus(result);
+        } catch (error) {
+            setSecurityError(error.message || t.requestFailed);
+        } finally {
+            setSecurityLoading(false);
+        }
+    }
+
+    function openSecurityModal() {
+        setAccountMenuOpen(false);
+        setSecurityError("");
+        setSecurityMessage("");
+        setSecurityEmailCodeSent(false);
+        setSecurityEmailCode("");
+        setSecurityTotpSetup(null);
+        setSecurityTotpCode("");
+        setSecurityModalOpen(true);
+        void loadSecurityStatus();
+    }
+
+    function closeSecurityModal() {
+        setSecurityModalOpen(false);
+    }
+
+    async function handleSendEmailVerification() {
+        setSecurityLoading(true);
+        setSecurityError("");
+        setSecurityMessage("");
+        try {
+            const result = await sendAdminEmailVerification(token);
+            setSecurityMessage(result.message || "A verification code was sent to your email.");
+            setSecurityEmailCodeSent(true);
+        } catch (error) {
+            setSecurityError(error.message || t.requestFailed);
+        } finally {
+            setSecurityLoading(false);
+        }
+    }
+
+    async function handleVerifyEmailCode(event) {
+        event.preventDefault();
+        setSecurityLoading(true);
+        setSecurityError("");
+        try {
+            await verifyAdminEmail(token, securityEmailCode.trim());
+            setSecurityEmailCode("");
+            setSecurityEmailCodeSent(false);
+            setSecurityMessage("Email verified.");
+            await loadSecurityStatus();
+        } catch (error) {
+            setSecurityError(error.message || "Invalid or expired verification code.");
+        } finally {
+            setSecurityLoading(false);
+        }
+    }
+
+    async function handleSetupTotp() {
+        setSecurityLoading(true);
+        setSecurityError("");
+        setSecurityMessage("");
+        try {
+            const result = await setupAdminTotp(token);
+            setSecurityTotpSetup(result);
+        } catch (error) {
+            setSecurityError(error.message || t.requestFailed);
+        } finally {
+            setSecurityLoading(false);
+        }
+    }
+
+    async function handleConfirmTotp(event) {
+        event.preventDefault();
+        setSecurityLoading(true);
+        setSecurityError("");
+        try {
+            await confirmAdminTotp(token, securityTotpCode.trim());
+            setSecurityTotpCode("");
+            setSecurityTotpSetup(null);
+            setSecurityMessage("Authenticator enabled.");
+            await loadSecurityStatus();
+        } catch (error) {
+            setSecurityError(error.message || "Invalid or expired verification code.");
+        } finally {
+            setSecurityLoading(false);
+        }
     }
 
     async function loadParkingActivity() {
@@ -1373,7 +1604,7 @@ function AdminPage() {
             <main className={`admin-shell admin-theme-${appliedTheme}`} dir={isUrdu ? "rtl" : "ltr"} lang={language}>
                 <header className="admin-header">
                     <a href="/" className="admin-logo">PARKING<span>OS</span></a>
-                    <div className="admin-header-actions"><button type="button" className="theme-toggle" onClick={() => openOrFocusNamedTab("/", "parkingos-garage")}>Open Garage</button><div className="account-menu"><button type="button" className="admin-user" aria-expanded={accountMenuOpen} onClick={() => setAccountMenuOpen((open) => !open)}>{adminName}</button>{accountMenuOpen && <div className="account-dropdown"><strong>Appearance</strong><button onClick={() => { setTheme("system"); setAccountMenuOpen(false); }}>System Default</button><button onClick={() => { setTheme("light"); setAccountMenuOpen(false); }}>Light</button><button onClick={() => { setTheme("dark"); setAccountMenuOpen(false); }}>Dark</button><strong>Language</strong><button onClick={() => { setLanguage("en"); setAccountMenuOpen(false); }}>English</button><button onClick={() => { setLanguage("ur"); setAccountMenuOpen(false); }}>Urdu</button><button className="sign-out" onClick={signOut}>{t.signOut}</button></div>}</div></div>
+                    <div className="admin-header-actions"><button type="button" className="theme-toggle" onClick={() => openOrFocusNamedTab("/", "parkingos-garage")}>Open Garage</button><div className="account-menu"><button type="button" className="admin-user" aria-expanded={accountMenuOpen} onClick={() => setAccountMenuOpen((open) => !open)}>{adminName}</button>{accountMenuOpen && <div className="account-dropdown"><strong>Appearance</strong><button onClick={() => { setTheme("system"); setAccountMenuOpen(false); }}>System Default</button><button onClick={() => { setTheme("light"); setAccountMenuOpen(false); }}>Light</button><button onClick={() => { setTheme("dark"); setAccountMenuOpen(false); }}>Dark</button><strong>Language</strong><button onClick={() => { setLanguage("en"); setAccountMenuOpen(false); }}>English</button><button onClick={() => { setLanguage("ur"); setAccountMenuOpen(false); }}>Urdu</button><strong>Account</strong><button onClick={openSecurityModal}>Account Security</button><button className="sign-out" onClick={signOut}>{t.signOut}</button></div>}</div></div>
                 </header>
                 <div className="admin-app-body">
                     <aside className="admin-sidebar">
@@ -1898,6 +2129,82 @@ function AdminPage() {
                             </div>
                         </div>
                     )}
+                    {securityModalOpen && (
+                        <div className="confirmation-overlay" onClick={closeSecurityModal}>
+                            <div className="confirmation-dialog" onClick={(event) => event.stopPropagation()}>
+                                <h3>Account Security</h3>
+
+                                {securityLoading && !securityStatus ? (
+                                    <p>Loading...</p>
+                                ) : securityStatus ? (
+                                    <>
+                                        <p>
+                                            <strong>Email</strong><br />
+                                            {securityStatus.email || "No email on file"}<br />
+                                            <span className={securityStatus.email_verified ? "whitelist-success" : "admin-error"}>
+                                                {securityStatus.email_verified ? "Verified" : "Not verified"}
+                                            </span>
+                                        </p>
+
+                                        {!securityStatus.email_verified && !securityStatus.email && (
+                                            <p className="admin-message">Add an email to your admin account before it can be verified.</p>
+                                        )}
+
+                                        {!securityStatus.email_verified && securityStatus.email && !securityEmailCodeSent && (
+                                            <button type="button" className="confirmation-confirm" onClick={handleSendEmailVerification} disabled={securityLoading}>
+                                                Verify email
+                                            </button>
+                                        )}
+
+                                        {securityEmailCodeSent && (
+                                            <form onSubmit={handleVerifyEmailCode}>
+                                                <label htmlFor="security-email-code">Enter verification code</label>
+                                                <input id="security-email-code" value={securityEmailCode} onChange={(event) => setSecurityEmailCode(event.target.value)} autoComplete="one-time-code" required />
+                                                <button type="submit" className="confirmation-confirm" disabled={securityLoading}>Verify</button>
+                                            </form>
+                                        )}
+
+                                        <p>
+                                            <strong>Authenticator</strong><br />
+                                            {securityStatus.totp_enabled ? "Enabled" : "Not configured"}
+                                        </p>
+
+                                        {!securityStatus.totp_enabled && !securityStatus.email_verified && (
+                                            <p className="admin-message">Verify your email before setting up an authenticator.</p>
+                                        )}
+
+                                        {!securityStatus.totp_enabled && securityStatus.email_verified && !securityTotpSetup && (
+                                            <button type="button" className="confirmation-confirm" onClick={handleSetupTotp} disabled={securityLoading}>
+                                                Set up authenticator
+                                            </button>
+                                        )}
+
+                                        {securityTotpSetup && (
+                                            <div>
+                                                <p>Setup key:</p>
+                                                <p><code>{securityTotpSetup.secret}</code></p>
+                                                <p className="admin-message">
+                                                    Google Authenticator: tap + → Enter a setup key → Account name: Parking Garage → paste the key above → Time based.
+                                                </p>
+                                                <form onSubmit={handleConfirmTotp}>
+                                                    <label htmlFor="security-totp-code">Enter the 6-digit code from your authenticator</label>
+                                                    <input id="security-totp-code" value={securityTotpCode} onChange={(event) => setSecurityTotpCode(event.target.value)} autoComplete="one-time-code" required />
+                                                    <button type="submit" className="confirmation-confirm" disabled={securityLoading}>Confirm authenticator</button>
+                                                </form>
+                                            </div>
+                                        )}
+                                    </>
+                                ) : null}
+
+                                {securityError && <p className="admin-error" role="alert">{securityError}</p>}
+                                {securityMessage && <p className="whitelist-success" role="status">{securityMessage}</p>}
+
+                                <div className="confirmation-actions">
+                                    <button type="button" className="confirmation-cancel" onClick={closeSecurityModal}>Close</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
                 </div>
             </main>
         );
@@ -1914,15 +2221,82 @@ function AdminPage() {
                 <div className="admin-form-wrap">
                     {forgotPasswordOpen ? (
                         <>
-                            <p className="admin-label">{t.forgotPassword}</p>
-                            <h2>{t.forgotPasswordTitle}</h2>
-                            <form onSubmit={handleForgotPasswordSubmit}>
-                                <label htmlFor="admin-forgot-identifier">{t.forgotPasswordHint}</label>
-                                <input id="admin-forgot-identifier" value={identifier} onChange={(event) => setIdentifier(event.target.value)} autoComplete="username" required />
-                                {forgotNotice && <p className="admin-message" role="status">{forgotNotice}</p>}
-                                <button type="submit">{t.continueLabel}<span>→</span></button>
-                            </form>
-                            <button type="button" className="admin-forgot-link" onClick={() => { setForgotNotice(""); setForgotPasswordOpen(false); }}>{t.backToSignIn}</button>
+                            {forgotStep === "forgot_identifier" && (
+                                <>
+                                    <p className="admin-label">{t.forgotPassword}</p>
+                                    <h2>{t.forgotPasswordTitle}</h2>
+                                    <form onSubmit={handleRecoveryIdentifierSubmit}>
+                                        <label htmlFor="admin-forgot-identifier">{t.forgotPasswordHint}</label>
+                                        <input id="admin-forgot-identifier" value={identifier} onChange={(event) => setIdentifier(event.target.value)} autoComplete="username" required />
+                                        {forgotError && <p className="admin-error" role="alert">{forgotError}</p>}
+                                        <button type="submit" disabled={forgotSubmitting}>{forgotSubmitting ? t.signingIn : t.continueLabel}<span>→</span></button>
+                                    </form>
+                                    <button type="button" className="admin-forgot-link" onClick={closeForgotPassword}>{t.backToSignIn}</button>
+                                </>
+                            )}
+
+                            {forgotStep === "forgot_email_code" && (
+                                <>
+                                    <p className="admin-label">Verification</p>
+                                    <h2>We sent a code to your registered email.</h2>
+                                    <form onSubmit={handleRecoveryEmailCodeSubmit}>
+                                        <label htmlFor="admin-recovery-email-code">Code</label>
+                                        <input id="admin-recovery-email-code" value={recoveryEmailCode} onChange={(event) => setRecoveryEmailCode(event.target.value)} autoComplete="one-time-code" inputMode="numeric" required />
+                                        {forgotNotice && <p className="admin-message" role="status">{forgotNotice}</p>}
+                                        {forgotError && <p className="admin-error" role="alert">{forgotError}</p>}
+                                        <button type="submit" disabled={forgotSubmitting}>{forgotSubmitting ? "Verifying..." : "Verify"}<span>→</span></button>
+                                    </form>
+                                    <button type="button" className="admin-forgot-link" onClick={closeForgotPassword}>{t.backToSignIn}</button>
+                                </>
+                            )}
+
+                            {forgotStep === "forgot_totp" && (
+                                <>
+                                    <p className="admin-label">Authenticator verification</p>
+                                    <h2>Enter the 6-digit code from Google Authenticator.</h2>
+                                    <form onSubmit={handleRecoveryTotpSubmit}>
+                                        <label htmlFor="admin-recovery-totp-code">Code</label>
+                                        <input id="admin-recovery-totp-code" value={recoveryTotpCode} onChange={(event) => setRecoveryTotpCode(event.target.value)} autoComplete="one-time-code" inputMode="numeric" required />
+                                        {forgotError && <p className="admin-error" role="alert">{forgotError}</p>}
+                                        <button type="submit" disabled={forgotSubmitting}>{forgotSubmitting ? "Verifying..." : "Verify"}<span>→</span></button>
+                                    </form>
+                                    <button type="button" className="admin-forgot-link" onClick={closeForgotPassword}>{t.backToSignIn}</button>
+                                </>
+                            )}
+
+                            {forgotStep === "forgot_new_password" && (
+                                <>
+                                    <p className="admin-label">{t.forgotPassword}</p>
+                                    <h2>Create new password</h2>
+                                    <form onSubmit={handleRecoveryResetSubmit}>
+                                        <label htmlFor="admin-recovery-new-password">New password</label>
+                                        <div className="admin-password-field">
+                                            <input id="admin-recovery-new-password" type={recoveryShowNewPassword ? "text" : "password"} value={recoveryNewPassword} onChange={(event) => setRecoveryNewPassword(event.target.value)} autoComplete="new-password" minLength={12} maxLength={128} required />
+                                            <button type="button" className="admin-password-toggle" aria-label={recoveryShowNewPassword ? t.hidePassword : t.showPassword} onClick={() => setRecoveryShowNewPassword((current) => !current)}>
+                                                {recoveryShowNewPassword ? <EyeOffIcon /> : <EyeIcon />}
+                                            </button>
+                                        </div>
+                                        <label htmlFor="admin-recovery-confirm-password">Confirm new password</label>
+                                        <div className="admin-password-field">
+                                            <input id="admin-recovery-confirm-password" type={recoveryShowConfirmPassword ? "text" : "password"} value={recoveryConfirmPassword} onChange={(event) => setRecoveryConfirmPassword(event.target.value)} autoComplete="new-password" minLength={12} maxLength={128} required />
+                                            <button type="button" className="admin-password-toggle" aria-label={recoveryShowConfirmPassword ? t.hidePassword : t.showPassword} onClick={() => setRecoveryShowConfirmPassword((current) => !current)}>
+                                                {recoveryShowConfirmPassword ? <EyeOffIcon /> : <EyeIcon />}
+                                            </button>
+                                        </div>
+                                        {forgotError && <p className="admin-error" role="alert">{forgotError}</p>}
+                                        <button type="submit" disabled={forgotSubmitting}>{forgotSubmitting ? "Changing..." : "Change password"}<span>→</span></button>
+                                    </form>
+                                    <button type="button" className="admin-forgot-link" onClick={closeForgotPassword}>{t.backToSignIn}</button>
+                                </>
+                            )}
+
+                            {forgotStep === "forgot_success" && (
+                                <>
+                                    <p className="admin-label">{t.forgotPassword}</p>
+                                    <h2>Password changed successfully.</h2>
+                                    <button type="button" onClick={closeForgotPassword}>{t.backToSignIn}<span>→</span></button>
+                                </>
+                            )}
                         </>
                     ) : (
                         <>
@@ -1941,7 +2315,7 @@ function AdminPage() {
                                 {error && <p className="admin-error" role="alert">{error}</p>}
                                 <button type="submit" disabled={submitting}>{submitting ? t.signingIn : t.enterWorkspace}<span>→</span></button>
                             </form>
-                            <button type="button" className="admin-forgot-link" onClick={() => { setForgotNotice(""); setForgotPasswordOpen(true); }}>{t.forgotPassword}</button>
+                            <button type="button" className="admin-forgot-link" onClick={openForgotPassword}>{t.forgotPassword}</button>
                         </>
                     )}
                     <a className="admin-return" href="/">{t.returnGarage}</a>

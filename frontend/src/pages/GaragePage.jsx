@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import {
     getParkingSpaces,
     registerEntry,
+    getActiveParkingSession,
     exitUsingPlate,
     getExitPaymentRequired,
     detectPlateFromFrame,
@@ -26,6 +27,13 @@ const GARAGE_THEME_KEY = "parking_garage_theme";
 const MULTI_CAMERA_ORCHESTRATION_TEST = false;
 const PARTIAL_GUARD_EVIDENCE_TTL_MS = 3000;
 const PARTIAL_GUARD_STRONG_CONFIDENCE = 0.85;
+// Restored from known-good commit 8e6a5293a ("Bugs Fixed"): a read below
+// MIN_VOTING_CONFIDENCE never enters voting at all, and enough very-high or
+// medium confidence agreement lets a plate lock on fewer votes (and sooner)
+// than a noisy/uncertain read requiring the full 4-vote fallback.
+const VERY_HIGH_OCR_CONFIDENCE = 0.92;
+const MEDIUM_OCR_CONFIDENCE = 0.80;
+const MIN_VOTING_CONFIDENCE = 0.60;
 
 // ============================================================
 // Parking-space snapshot cache (stale-while-revalidate)
@@ -104,6 +112,43 @@ function GaragePage() {
     const [vehicleAction, setVehicleAction] = useState(null);
     const [detectionSource, setDetectionSource] = useState(null);
 
+    // Per-camera vehicle/action state, restored from 8e6a5293a. Every
+    // camera slot gets its own entry in this map (keyed by cameraId), so
+    // Entry Camera 1 detecting/confirming a plate never touches Entry
+    // Camera 2's (or an Exit camera's) own pending plate, space selection,
+    // loading flag, or result. The single detectedPlate/vehicleAction/etc.
+    // state above is kept only for the legacy single-camera code path
+    // (processCameraFrame) below, which no longer renders any <video> and
+    // is otherwise unused.
+    const [cameraVehicleState, setCameraVehicleState] = useState({});
+    // Kept in sync every render, same reason as adminSettingsRef below:
+    // code invoked from the long-lived, self-perpetuating camera detection
+    // loop (runSlotDetection/resolveConfirmedCameraPlate) must read the
+    // latest per-camera state, not whatever cameraVehicleState was at the
+    // render when that loop's closure was originally created.
+    const cameraVehicleStateRef = useRef({});
+    cameraVehicleStateRef.current = cameraVehicleState;
+    const [activeEntryCameraId, setActiveEntryCameraId] = useState(null);
+
+    function updateCameraVehicleState(cameraId, updates) {
+        setCameraVehicleState((current) => ({
+            ...current,
+            [cameraId]: {
+                ...(current[cameraId] || {}),
+                ...updates,
+            },
+        }));
+    }
+
+    function clearCameraVehicleState(cameraId) {
+        setCameraVehicleState((current) => {
+            if (!current[cameraId]) return current;
+            const next = { ...current };
+            delete next[cameraId];
+            return next;
+        });
+    }
+
     const detectedPlateRef = useRef({});
     const lastCompletedPlateRef = useRef({});
     const plateCandidateRef = useRef("");
@@ -122,8 +167,16 @@ function GaragePage() {
     const entrySubmittingRef = useRef({});
     const exitSubmittingRef = useRef({});
     const automaticExitAttemptRef = useRef({});
-    const pendingAutomaticExitRef = useRef({ plate: "", source: "" });
-    const exitPaymentPrefetchRef = useRef({ plate: "", promise: null, result: null, error: null });
+    // Restored per-camera timer map -- clears a camera's terminal
+    // (already-parked / not-logged / rejected) state 1s after it locks, but
+    // only that camera's timer/state, never another camera's.
+    const terminalClearTimersRef = useRef({});
+    // Restored as per-camera maps (keyed by source) instead of a single
+    // shared object -- previously, a second exit camera's pending payment
+    // check would silently overwrite the first camera's in-flight/blocked
+    // exit before it ever reached handlePaymentSelection.
+    const pendingAutomaticExitRef = useRef({});
+    const exitPaymentPrefetchRef = useRef({});
 
     const [selectedSpaceId, setSelectedSpaceId] = useState(null);
     const [entryLoading, setEntryLoading] = useState(false);
@@ -146,6 +199,196 @@ function GaragePage() {
         }
 
         delete partialPlateEvidenceRef.current[source];
+    }
+
+    // Restored from 8e6a5293a: fully releases one camera's OCR/lock refs so
+    // it can detect a fresh plate again, without touching any other
+    // camera's refs.
+    function clearCompletedCameraPlate(source) {
+        window.clearTimeout(terminalClearTimersRef.current[source]);
+        delete terminalClearTimersRef.current[source];
+        delete detectedPlateRef.current[source];
+        delete confirmedPlateLockRef.current[source];
+        delete confirmedPlateLastDetectedAtRef.current[source];
+        delete confirmedLockImageRef.current[source];
+        delete completedLockActionRef.current[source];
+        delete automaticExitAttemptRef.current[source];
+        delete pendingAutomaticExitRef.current[source];
+        delete exitPaymentPrefetchRef.current[source];
+        clearPlateCandidates(source);
+        plateVoteHistoryRef.current[source] = { reads: [], lastSeenAt: 0 };
+    }
+
+    // Restored from 8e6a5293a: 1s after a camera reaches a terminal state
+    // (already parked / not logged / rejected) with no further action
+    // possible, release its lock and clear its own per-camera UI state --
+    // scoped to that one camera/plate pair so it never clears a newer lock
+    // that camera may have already moved on to.
+    function scheduleTerminalCameraClear(cameraId, plate) {
+        window.clearTimeout(terminalClearTimersRef.current[cameraId]);
+        terminalClearTimersRef.current[cameraId] = window.setTimeout(() => {
+            if (
+                detectedPlateRef.current[cameraId] !== plate ||
+                confirmedPlateLockRef.current[cameraId] !== plate
+            ) return;
+            clearCompletedCameraPlate(cameraId);
+            clearCameraVehicleState(cameraId);
+        }, 1000);
+    }
+
+    // Restored from 8e6a5293a: runs once per confirmed lock (called from
+    // runSlotDetection right after a plate reaches its vote threshold).
+    // Everything here reads/writes ONLY cameraVehicleState[cameraId] and
+    // this camera's own refs, so it can never step on another camera's
+    // pending plate, space selection, or exit/payment flow.
+    async function resolveConfirmedCameraPlate(cameraId, plate, image) {
+        const isEntry = cameraId.startsWith("entry-");
+        updateCameraVehicleState(cameraId, {
+            plate,
+            action: null,
+            loading: true,
+            alreadyParked: false,
+            selectedSpaceId: null,
+            entryResult: null,
+            exitResult: null,
+            paymentRequired: false,
+            paymentMethod: null,
+            ratePerMinute: null,
+            error: "",
+        });
+
+        // A plate can fully confirm before the mount-time admin-settings
+        // fetch resolves. Await that exact (fast, settings-only) load --
+        // not the combined settings+parking-spaces one below -- so a
+        // Tracking Mode plate never misclassifies itself as Parking
+        // Garage and waits on a parking-space startup load it doesn't
+        // need. Resolves instantly once settings have already loaded.
+        if (adminSettingsInitialLoadRef.current) {
+            await adminSettingsInitialLoadRef.current;
+            if (
+                detectedPlateRef.current[cameraId] !== plate ||
+                confirmedPlateLockRef.current[cameraId] !== plate
+            ) return;
+        }
+
+        const trackingMode = adminSettingsRef.current?.garage_settings?.mode === "tracking";
+
+        let active;
+        try {
+            const result = await getActiveParkingSession(plate);
+            if (
+                detectedPlateRef.current[cameraId] !== plate ||
+                confirmedPlateLockRef.current[cameraId] !== plate
+            ) return;
+            active = Boolean(result.active);
+        } catch (error) {
+            if (detectedPlateRef.current[cameraId] !== plate) return;
+            updateCameraVehicleState(cameraId, { loading: false, action: null, error: error.message || "Could not check vehicle status." });
+            return;
+        }
+
+        if (isEntry && active) {
+            updateCameraVehicleState(cameraId, {
+                plate, action: null, loading: false, alreadyParked: true,
+                selectedSpaceId: null, error: "",
+            });
+            scheduleTerminalCameraClear(cameraId, plate);
+            return;
+        }
+
+        if (!isEntry && !active) {
+            updateCameraVehicleState(cameraId, {
+                plate, action: null, loading: false, selectedSpaceId: null,
+                error: "This vehicle is not logged.",
+            });
+            scheduleTerminalCameraClear(cameraId, plate);
+            return;
+        }
+
+        if (isEntry) {
+            if (trackingMode) {
+                if (automaticEntryRef.current && !MULTI_CAMERA_ORCHESTRATION_TEST) {
+                    void handleConfirmEntry(plate, null, cameraId, true);
+                } else {
+                    updateCameraVehicleState(cameraId, { plate, action: "entry", loading: false, selectedSpaceId: null, error: "" });
+                }
+                return;
+            }
+
+            // A plate can fully confirm before the mount-time garage
+            // settings + parking-spaces load resolves. Await that exact
+            // load (not a guessed delay) so the very first confirmation
+            // sees real data instead of the empty initial [] -- this
+            // resolves instantly once the load has already completed, and
+            // never resolves to a false "no space" for a load that just
+            // hasn't happened yet.
+            if (parkingSpacesInitialLoadRef.current) {
+                await parkingSpacesInitialLoadRef.current;
+                if (
+                    detectedPlateRef.current[cameraId] !== plate ||
+                    confirmedPlateLockRef.current[cameraId] !== plate
+                ) return;
+            }
+
+            const parkedSpace = parkingSpacesRef.current.find(
+                (space) => space.is_occupied && space.license_plate === plate
+            );
+            if (parkedSpace) {
+                updateCameraVehicleState(cameraId, { plate, action: null, loading: false, alreadyParked: true, selectedSpaceId: null, error: "" });
+                scheduleTerminalCameraClear(cameraId, plate);
+                return;
+            }
+
+            if (automaticEntryRef.current && !MULTI_CAMERA_ORCHESTRATION_TEST) {
+                void handleConfirmEntry(plate, null, cameraId, true);
+                return;
+            }
+
+            // Automatic Entry is off, but the parking space is still
+            // chosen automatically -- the user only presses Confirm.
+            // Compute and apply the pick inside one functional state
+            // update so two cameras confirming at nearly the same instant
+            // can never both read the same "next free space" before
+            // either has recorded its own pick (React applies queued
+            // functional updates one at a time, each seeing the previous
+            // one's result).
+            setCameraVehicleState((current) => {
+                const reservedByOtherPendingCameras = new Set(
+                    Object.entries(current)
+                        .filter(
+                            ([otherCameraId, state]) =>
+                                otherCameraId !== cameraId &&
+                                state?.action === "entry" &&
+                                state?.selectedSpaceId != null
+                        )
+                        .map(([, state]) => String(state.selectedSpaceId))
+                );
+                const automaticSpace = getSortedAvailableSpaces().find(
+                    (space) => !reservedByOtherPendingCameras.has(String(space.id))
+                ) || null;
+
+                return {
+                    ...current,
+                    [cameraId]: {
+                        ...(current[cameraId] || {}),
+                        plate,
+                        action: automaticSpace ? "entry" : null,
+                        loading: false,
+                        selectedSpaceId: automaticSpace ? automaticSpace.id : null,
+                        error: automaticSpace ? "" : "No parking space is available for this vehicle.",
+                    },
+                };
+            });
+            return;
+        }
+
+        // Exit runs through the exact same automatic-exit + billing path
+        // regardless of garage mode. If billing is off (or tracking mode
+        // simply has no payment methods configured), startAutomaticExit
+        // resolves with no payment step, same as it always has.
+        updateCameraVehicleState(cameraId, { plate, action: null, loading: true, selectedSpaceId: null, error: "" });
+        void prefetchExitPaymentRequired(plate, cameraId);
+        void startAutomaticExit(plate, cameraId);
     }
 
     function saveConfirmedLockImageAfterAction(plate, source) {
@@ -177,40 +420,40 @@ function GaragePage() {
             });
     }
 
-    function prefetchExitPaymentRequired(plate) {
-        const cached = exitPaymentPrefetchRef.current;
+    function prefetchExitPaymentRequired(plate, source) {
+        const cached = exitPaymentPrefetchRef.current[source] || {};
         if (cached.plate === plate && (cached.promise || cached.result)) {
             return cached.promise || Promise.resolve(cached.result);
         }
 
         const promise = getExitPaymentRequired(plate)
             .then((result) => {
-                if (exitPaymentPrefetchRef.current.plate === plate) {
-                    exitPaymentPrefetchRef.current = { plate, promise: null, result, error: null };
+                if (exitPaymentPrefetchRef.current[source]?.plate === plate) {
+                    exitPaymentPrefetchRef.current[source] = { plate, promise: null, result, error: null };
                 }
                 return result;
             })
             .catch((error) => {
-                if (exitPaymentPrefetchRef.current.plate === plate) {
-                    exitPaymentPrefetchRef.current = { plate, promise: null, result: null, error };
+                if (exitPaymentPrefetchRef.current[source]?.plate === plate) {
+                    exitPaymentPrefetchRef.current[source] = { plate, promise: null, result: null, error };
                 }
                 return null;
             });
 
-        exitPaymentPrefetchRef.current = { plate, promise, result: null, error: null };
+        exitPaymentPrefetchRef.current[source] = { plate, promise, result: null, error: null };
         return promise;
     }
 
-    async function getPrefetchedExitPaymentRequired(plate) {
-        const cached = exitPaymentPrefetchRef.current;
+    async function getPrefetchedExitPaymentRequired(plate, source) {
+        const cached = exitPaymentPrefetchRef.current[source] || {};
         if (cached.plate === plate) {
             if (cached.result) return cached.result;
             if (cached.promise) {
                 const result = await cached.promise;
                 if (result) return result;
             }
-            if (exitPaymentPrefetchRef.current.error) {
-                throw exitPaymentPrefetchRef.current.error;
+            if (exitPaymentPrefetchRef.current[source]?.error) {
+                throw exitPaymentPrefetchRef.current[source].error;
             }
         }
         return getExitPaymentRequired(plate);
@@ -219,10 +462,35 @@ function GaragePage() {
     const [parkingSpaces, setParkingSpaces] = useState(() => readParkingSpacesCache()?.spaces || []);
     const parkingSpacesRef = useRef(parkingSpaces);
     const parkingSpacesRequestRef = useRef(null);
+    // Restored from 8e6a5293a: resolves once the mount-time parking-spaces
+    // load completes. A plate can fully confirm before that first load
+    // resolves; resolveConfirmedCameraPlate awaits this exact promise so it
+    // sees the real spaces instead of the empty initial [] (or the cache),
+    // with zero added latency once the load has already finished.
+    const parkingSpacesInitialLoadRef = useRef(null);
+    // Restored from 8e6a5293a: bumped on every entry/exit mutation so a
+    // background getParkingSpaces() response that was already in flight
+    // when the mutation applied its optimistic update can detect it's now
+    // stale and skip overwriting that optimistic state.
+    const parkingMutationVersionRef = useRef(0);
+    const optimisticEntriesRef = useRef({});
     const [parkingLoading, setParkingLoading] = useState(false);
     const [parkingError, setParkingError] = useState("");
     const [openLevel, setOpenLevel] = useState(1);
     const [adminSettings, setAdminSettings] = useState(null);
+    // Restored from 8e6a5293a: kept in sync every render so the long-lived
+    // camera detection loop always reads the latest garage mode/billing
+    // config instead of whatever adminSettings was when that loop's
+    // closure was first created.
+    const adminSettingsRef = useRef(null);
+    adminSettingsRef.current = adminSettings;
+    // Restored from 8e6a5293a: resolves as soon as the initial garage
+    // settings fetch completes. A plate can fully confirm before that
+    // fetch resolves; awaiting this (fast, settings-only) promise instead
+    // of the combined settings+spaces one means a Tracking Mode plate is
+    // never misclassified as Parking Garage mode just because adminSettings
+    // was still null.
+    const adminSettingsInitialLoadRef = useRef(null);
     const localImageSavingRef = useRef(false);
     const automaticEntryRef = useRef(false);
     const [garageAuthFailed, setGarageAuthFailed] = useState(false);
@@ -533,7 +801,7 @@ function GaragePage() {
                         setExitResult(null);
                         setPaymentMethod(null);
                         setExitRatePerMinute(null);
-                        void prefetchExitPaymentRequired(plate);
+                        void prefetchExitPaymentRequired(plate, source);
                         void startAutomaticExit(plate, source);
                     }
 
@@ -978,16 +1246,60 @@ function GaragePage() {
             try {
                 setParkingLoading(true);
                 setParkingError("");
+                // Restored from 8e6a5293a: snapshot the mutation version
+                // before the request goes out. If an entry/exit applies its
+                // own optimistic update while this GET is still in flight,
+                // the version will have moved on by the time this resolves,
+                // so we skip clobbering the newer optimistic state with a
+                // stale response.
+                const requestVersion = parkingMutationVersionRef.current;
 
                 const result =
                     await getParkingSpaces();
 
+                if (requestVersion !== parkingMutationVersionRef.current) {
+                    return false;
+                }
+
                 if (result.success) {
                     const spaces = result.spaces || [];
 
-                    setParkingSpaces(spaces);
-                    parkingSpacesRef.current = spaces;
-                    writeParkingSpacesCache(spaces);
+                    // Restored from 8e6a5293a: a just-applied optimistic
+                    // entry can arrive at the backend slightly after this
+                    // GET was issued. Keep the optimistic occupancy for a
+                    // space until the backend actually reflects it, instead
+                    // of flashing that space back to "available" for one
+                    // refresh cycle.
+                    const mergedSpaces = spaces.map((space) => {
+                        const optimistic = optimisticEntriesRef.current[String(space.id)];
+
+                        if (!optimistic) return space;
+
+                        if (
+                            space.is_occupied &&
+                            space.license_plate === optimistic.license_plate
+                        ) {
+                            delete optimisticEntriesRef.current[String(space.id)];
+                            return space;
+                        }
+
+                        return {
+                            ...space,
+                            is_occupied: true,
+                            license_plate: optimistic.license_plate,
+                            entry_time: optimistic.entry_time,
+                        };
+                    });
+
+                    setParkingSpaces(mergedSpaces);
+                    parkingSpacesRef.current = mergedSpaces;
+                    writeParkingSpacesCache(mergedSpaces);
+                    // Availability may have shifted for reasons outside any
+                    // pending camera's own action (another exit, an admin
+                    // change, etc.) -- recheck pending manual Entry
+                    // reservations so none is left pointing at a space that
+                    // just became occupied or duplicated.
+                    reconcilePendingEntrySpaceReservations();
                     return true;
                 } else {
                     setParkingError(
@@ -1037,13 +1349,18 @@ function GaragePage() {
     // AUTOMATIC PARKING SPACE ASSIGNMENT
     // ============================================================
 
-    function getAutomaticParkingSpace() {
+    // Restored from 8e6a5293a (previously inlined into
+    // getAutomaticParkingSpace, which now just takes the first result of
+    // this list). Exposed separately because reconcilePendingEntrySpaceReservations
+    // also needs the full sorted/available list, not just the first space.
+    function getSortedAvailableSpaces() {
         // Always start checking from the first parking space.
         // This means that when an earlier space becomes free after
         // a vehicle exits, the next vehicle will loop back and use
         // that earlier space before moving to later spaces.
-        const spaces = [...parkingSpacesRef.current].sort(
-            (a, b) => {
+        return [...parkingSpacesRef.current]
+            .filter((space) => !space.is_occupied)
+            .sort((a, b) => {
                 const levelA = Number(a.level) || 0;
                 const levelB = Number(b.level) || 0;
 
@@ -1059,14 +1376,101 @@ function GaragePage() {
                 );
 
                 return numberA - numberB;
-            }
-        );
+            });
+    }
 
-        return (
-            spaces.find(
-                (space) => !space.is_occupied
-            ) || null
-        );
+    function getAutomaticParkingSpace() {
+        return getSortedAvailableSpaces()[0] || null;
+    }
+
+    // Restored from 8e6a5293a: re-checks every currently pending manual
+    // Entry camera (Automatic Entry off, Parking Garage mode) and
+    // reassigns only the ones whose reservation is no longer valid --
+    // occupied out from under it, or duplicated with another pending
+    // camera. Cameras already holding a valid, non-conflicting space are
+    // left completely untouched, so this never reshuffles a reservation
+    // that's still correct. Processed in a stable cameraId order so
+    // results are deterministic no matter which camera's update triggered
+    // the recheck. This is what stops two Entry cameras from both landing
+    // on the same automatically-picked space.
+    function reconcilePendingEntrySpaceReservations() {
+        if (adminSettingsRef.current?.garage_settings?.mode === "tracking") {
+            return;
+        }
+
+        setCameraVehicleState((current) => {
+            const pendingEntries = Object.entries(current)
+                .filter(
+                    ([cameraId, state]) =>
+                        cameraId.startsWith("entry-") &&
+                        state?.action === "entry" &&
+                        state?.plate &&
+                        state?.selectedSpaceId !== undefined
+                )
+                .sort(([a], [b]) => a.localeCompare(b));
+
+            if (pendingEntries.length === 0) return current;
+
+            const availableSpaces = getSortedAvailableSpaces();
+            const availableIds = new Set(
+                availableSpaces.map((space) => String(space.id))
+            );
+            const claimed = new Set();
+            let changed = false;
+            const next = { ...current };
+
+            for (const [cameraId, state] of pendingEntries) {
+                const currentSelection = state.selectedSpaceId;
+                const stillValid =
+                    currentSelection != null &&
+                    availableIds.has(String(currentSelection)) &&
+                    !claimed.has(String(currentSelection));
+
+                if (stillValid) {
+                    claimed.add(String(currentSelection));
+                    continue;
+                }
+
+                const replacement =
+                    availableSpaces.find(
+                        (space) => !claimed.has(String(space.id))
+                    ) || null;
+                const newSelectedSpaceId = replacement ? replacement.id : null;
+
+                if (replacement) {
+                    claimed.add(String(replacement.id));
+                }
+
+                if (newSelectedSpaceId !== currentSelection) {
+                    next[cameraId] = {
+                        ...state,
+                        selectedSpaceId: newSelectedSpaceId,
+                    };
+                    changed = true;
+                }
+            }
+
+            return changed ? next : current;
+        });
+    }
+
+    // Restored from 8e6a5293a: which entry camera's pending confirmation
+    // the shared parking grid should reflect (selection highlight, click
+    // handling) when more than one Entry camera has a plate awaiting
+    // manual confirmation at once.
+    function getPendingEntryCameraId() {
+        if (
+            activeEntryCameraId &&
+            cameraVehicleState[activeEntryCameraId]?.plate &&
+            cameraVehicleState[activeEntryCameraId]?.action === "entry"
+        ) {
+            return activeEntryCameraId;
+        }
+
+        const firstPendingEntry = Object.entries(cameraVehicleState)
+            .find(([, state]) => state?.plate && state.action === "entry");
+
+        return firstPendingEntry ? firstPendingEntry[0] : null;
     }
 
 
@@ -1150,9 +1554,15 @@ function GaragePage() {
     useEffect(() => {
         // Load settings and spaces concurrently so the parking layout can
         // render as soon as its own request resolves, instead of waiting
-        // for the settings request to finish first.
-        void loadAdminSettings();
-        void loadParkingSpaces();
+        // for the settings request to finish first. Each promise is also
+        // captured separately (restored from 8e6a5293a) so a plate that
+        // confirms before either resolves can await the exact one it
+        // needs -- e.g. Tracking Mode detection only needs the settings
+        // promise, not the slower settings+spaces combination.
+        const initialSettingsLoad = loadAdminSettings();
+        const initialSpacesLoad = loadParkingSpaces();
+        adminSettingsInitialLoadRef.current = initialSettingsLoad;
+        parkingSpacesInitialLoadRef.current = initialSpacesLoad;
 
         // Primary sync mechanism: poll the backend directly every few
         // seconds so any admin change (remove/edit a live session, or a
@@ -1219,7 +1629,10 @@ function GaragePage() {
     }, [adminSettings, openLevel]);
 
 
-    useEffect(() => () => Object.keys(cameraStreamsRef.current).forEach(stopSlotCamera), []);
+    useEffect(() => () => {
+        Object.keys(cameraStreamsRef.current).forEach(stopSlotCamera);
+        Object.values(terminalClearTimersRef.current).forEach((timer) => window.clearTimeout(timer));
+    }, []);
 
 
     function handleSelectEntry() {
@@ -1249,6 +1662,12 @@ function GaragePage() {
     }
 
 
+    // Restored from 8e6a5293a: writes exclusively into
+    // cameraVehicleState[source] via updateCameraVehicleState (and the
+    // per-camera pendingAutomaticExitRef/exitPaymentPrefetchRef maps),
+    // instead of the single global vehicleAction/exitError/etc. state --
+    // so two Exit cameras running an automatic exit at the same time each
+    // keep their own loading/payment/result state.
     async function startAutomaticExit(plate, source) {
         if (
             !source.startsWith("exit-") ||
@@ -1260,47 +1679,43 @@ function GaragePage() {
 
         automaticExitAttemptRef.current[source] = plate;
 
-        pendingAutomaticExitRef.current = {
-            plate: "",
-            source: "",
-        };
+        pendingAutomaticExitRef.current[source] = { plate: "", source: "" };
 
         // Do not start exit UI until backend confirms
         // that this vehicle is actually parked.
-        setVehicleAction(null);
-        setEntryError("");
-        setExitError("");
-        setEntryResult(null);
-        setExitResult(null);
-        setSelectedSpaceId(null);
-        setPaymentMethod(null);
-        setExitPaymentRequired(false);
-        setExitRatePerMinute(null);
-        setExitLoading(true);
+        updateCameraVehicleState(source, {
+            action: null,
+            loading: true,
+            error: "",
+            entryResult: null,
+            exitResult: null,
+            selectedSpaceId: null,
+            paymentMethod: null,
+            paymentRequired: false,
+            ratePerMinute: null,
+        });
 
         try {
             const result =
-                await getPrefetchedExitPaymentRequired(plate);
+                await getPrefetchedExitPaymentRequired(plate, source);
 
             // Backend confirmed active parking session.
-            setVehicleAction("exit");
-
             const paymentRequired =
                 Boolean(result.payment_required);
 
-            setExitRatePerMinute(
-                result.rate_per_minute ?? 1.67
-            );
+            updateCameraVehicleState(source, {
+                action: "exit",
+                loading: true,
+                paymentRequired,
+                ratePerMinute: result.rate_per_minute ?? 1.67,
+            });
 
-            setExitPaymentRequired(
-                paymentRequired
-            );
-
+            const currentBillingConfig = adminSettingsRef.current?.billing_config;
             const allowedMethods = [
-                adminSettings?.billing_config?.cash_enabled
+                currentBillingConfig?.cash_enabled
                 && "cash",
 
-                adminSettings?.billing_config?.card_enabled
+                currentBillingConfig?.card_enabled
                 && "card",
             ].filter(Boolean);
 
@@ -1318,7 +1733,7 @@ function GaragePage() {
                 const method =
                     allowedMethods[0];
 
-                setPaymentMethod(method);
+                updateCameraVehicleState(source, { paymentMethod: method });
 
                 await handleConfirmExit(
                     method,
@@ -1329,12 +1744,12 @@ function GaragePage() {
 
             } else {
 
-                pendingAutomaticExitRef.current = {
+                pendingAutomaticExitRef.current[source] = {
                     plate,
                     source,
                 };
 
-                setExitLoading(false);
+                updateCameraVehicleState(source, { loading: false });
             }
 
         } catch (error) {
@@ -1362,34 +1777,21 @@ function GaragePage() {
                 }
 
                 // Clear any cached exit check for this plate.
-                if (
-                    exitPaymentPrefetchRef.current.plate
-                    === plate
-                ) {
-                    exitPaymentPrefetchRef.current = {
-                        plate: "",
-                        promise: null,
-                        result: null,
-                        error: null,
-                    };
+                if (exitPaymentPrefetchRef.current[source]?.plate === plate) {
+                    delete exitPaymentPrefetchRef.current[source];
                 }
 
                 // Keep plate visible but completely block exit.
-                setVehicleAction(null);
+                updateCameraVehicleState(source, {
+                    action: null,
+                    error: "This vehicle is not parked in the garage.",
+                    paymentMethod: null,
+                    paymentRequired: false,
+                    ratePerMinute: null,
+                    loading: false,
+                });
 
-                setExitError(
-                    "This vehicle is not parked in the garage."
-                );
-
-                setPaymentMethod(null);
-                setExitPaymentRequired(false);
-                setExitRatePerMinute(null);
-                setExitLoading(false);
-
-                pendingAutomaticExitRef.current = {
-                    plate: "",
-                    source: "",
-                };
+                delete pendingAutomaticExitRef.current[source];
 
                 return;
             }
@@ -1408,74 +1810,100 @@ function GaragePage() {
                 ];
             }
 
-            if (
-                exitPaymentPrefetchRef.current.plate
-                === plate
-            ) {
-                exitPaymentPrefetchRef.current = {
-                    plate: "",
-                    promise: null,
-                    result: null,
-                    error: null,
-                };
+            if (exitPaymentPrefetchRef.current[source]?.plate === plate) {
+                delete exitPaymentPrefetchRef.current[source];
             }
 
-            setVehicleAction(null);
+            updateCameraVehicleState(source, {
+                action: null,
+                error: error.message || "Could not check vehicle parking status.",
+                paymentMethod: null,
+                paymentRequired: false,
+                ratePerMinute: null,
+                loading: false,
+            });
 
-            setExitError(
-                error.message ||
-                "Could not check vehicle parking status."
-            );
-
-            setPaymentMethod(null);
-            setExitPaymentRequired(false);
-            setExitRatePerMinute(null);
-            setExitLoading(false);
-
-            pendingAutomaticExitRef.current = {
-                plate: "",
-                source: "",
-            };
+            delete pendingAutomaticExitRef.current[source];
         }
     }
 
-    function handlePaymentSelection(method) {
-        setPaymentMethod(method);
-        setExitError("");
+    // Restored per-camera: source now identifies which Exit camera's
+    // pending payment selection this click resolves, instead of always
+    // acting on a single shared pendingAutomaticExitRef.
+    function handlePaymentSelection(method, source = detectionSource || activeDetectionSourceRef.current) {
+        const pendingExit = pendingAutomaticExitRef.current[source];
+        if (!pendingExit?.plate) return;
+        updateCameraVehicleState(source, { paymentMethod: method, error: "" });
         void handleConfirmExit(
             method,
             true,
-            pendingAutomaticExitRef.current.plate,
-            pendingAutomaticExitRef.current.source
+            pendingExit.plate,
+            source
         );
     }
 
 
-    function handleSpaceSelection(space) {
+    // Restored from 8e6a5293a: cameraId defaults to whichever Entry camera
+    // currently has a pending confirmation (getPendingEntryCameraId), and
+    // the pick is written into that camera's own cameraVehicleState entry
+    // instead of the single shared selectedSpaceId.
+    function handleSpaceSelection(space, cameraId = null) {
+        cameraId = cameraId || getPendingEntryCameraId();
+        const cameraState = cameraId ? cameraVehicleState[cameraId] || {} : null;
         if (
             space.is_occupied ||
-            entryLoading ||
-            exitLoading ||
-            vehicleAction !== "entry"
+            (cameraId ? cameraState.loading : entryLoading) ||
+            (cameraId ? cameraState.action !== "entry" : exitLoading) ||
+            (!cameraId && vehicleAction !== "entry")
         ) {
             return;
         }
 
-        setSelectedSpaceId(space.id);
-        setEntryError("");
+        if (cameraId) {
+            updateCameraVehicleState(cameraId, {
+                selectedSpaceId: space.id,
+                error: "",
+            });
+            // The shared grid is informational/optional -- manual space
+            // assignment is not required for the normal flow -- but if it
+            // is used and happens to pick a space another pending camera
+            // already holds, immediately resolve the conflict rather than
+            // leaving two cameras pointing at the same space.
+            reconcilePendingEntrySpaceReservations();
+        } else {
+            setSelectedSpaceId(space.id);
+            setEntryError("");
+        }
     }
 
 
+    // Restored from 8e6a5293a: writes into cameraVehicleState[sourceOverride]
+    // instead of the shared entryLoading/entryError/entryResult/etc. state,
+    // adds Tracking Mode (no parking space at all), and applies the
+    // optimistic parking-space update under parkingMutationVersionRef so a
+    // stale in-flight GET /parking/spaces can't clobber it -- with a
+    // rollback to the previous spaces snapshot if the backend call fails.
     async function handleConfirmEntry(plateOverride = detectedPlate, spaceOverride = selectedSpaceId, sourceOverride = detectionSource || activeDetectionSourceRef.current, automatic = false) {
+        const cameraState = cameraVehicleState[sourceOverride] || {};
+        const plate = plateOverride || cameraState.plate || detectedPlate;
+        const trackingMode = adminSettingsRef.current?.garage_settings?.mode === "tracking";
+        const spaceId = trackingMode ? null : spaceOverride ?? cameraState.selectedSpaceId ?? selectedSpaceId;
+
         if (entrySubmittingRef.current[sourceOverride]) return;
-        if (!plateOverride) {
+        if (!plate) {
+            updateCameraVehicleState(sourceOverride, {
+                error: "No vehicle license plate has been detected.",
+            });
             setEntryError(
                 "No vehicle license plate has been detected."
             );
             return;
         }
 
-        if (!automatic && !spaceOverride) {
+        if (!trackingMode && !automatic && !spaceId) {
+            updateCameraVehicleState(sourceOverride, {
+                error: "No parking space is available for this vehicle.",
+            });
             setEntryError(
                 "No parking space is available for this vehicle."
             );
@@ -1483,19 +1911,68 @@ function GaragePage() {
         }
 
         entrySubmittingRef.current[sourceOverride] = true;
+        parkingMutationVersionRef.current += 1;
+        updateCameraVehicleState(sourceOverride, {
+            action: "entry",
+            loading: true,
+            error: "",
+            entryResult: null,
+        });
         setEntryLoading(true);
         setEntryError("");
         setEntryResult(null);
 
-        try {
-            const result = automatic
-                ? await registerEntry(plateOverride)
-                : await registerEntry(
-                    plateOverride,
-                    spaceOverride
+        const previousSpaces = parkingSpacesRef.current;
+
+        if (!trackingMode && spaceId != null) {
+            const optimisticEntry = {
+                license_plate: plate,
+                entry_time: new Date().toISOString(),
+            };
+
+            optimisticEntriesRef.current[String(spaceId)] = optimisticEntry;
+
+            const optimisticSpaces =
+                parkingSpacesRef.current.map((space) =>
+                    String(space.id) === String(spaceId)
+                        ? {
+                            ...space,
+                            is_occupied: true,
+                            ...optimisticEntry,
+                        }
+                        : space
                 );
 
+            parkingSpacesRef.current = optimisticSpaces;
+            setParkingSpaces(optimisticSpaces);
+        }
+
+        if (!automatic) {
+            clearCameraVehicleState(sourceOverride);
+            setActiveEntryCameraId((current) => (current === sourceOverride ? null : current));
+        }
+
+        let entryCompleted = false;
+        try {
+            const result = trackingMode
+                ? await registerEntry(plate, null)
+                : automatic
+                    ? await registerEntry(plate)
+                    : await registerEntry(
+                        plate,
+                        spaceId
+                    );
+
+            if (
+                detectedPlateRef.current[sourceOverride] !== plate ||
+                confirmedPlateLockRef.current[sourceOverride] !== plate
+            ) return;
+
             if (!result.success) {
+                updateCameraVehicleState(sourceOverride, {
+                    loading: false,
+                    error: result.error || "Vehicle entry failed.",
+                });
                 setEntryError(
                     result.error ||
                     "Vehicle entry failed."
@@ -1507,29 +1984,42 @@ function GaragePage() {
 
             // Keep this plate blocked until
             // the camera no longer sees it.
-            lastCompletedPlateRef.current[sourceOverride] = plateOverride;
-            completedLockActionRef.current[sourceOverride] = plateOverride;
-            saveConfirmedLockImageAfterAction(plateOverride, sourceOverride);
+            lastCompletedPlateRef.current[sourceOverride] = plate;
+            completedLockActionRef.current[sourceOverride] = plate;
+            saveConfirmedLockImageAfterAction(plate, sourceOverride);
 
+            const enteredSpaceId = automatic
+                ? vehicle.parking_space_id ?? vehicle.space_id ?? null
+                : spaceId;
             const nextSpaces =
                 parkingSpacesRef.current.map(
-                    (space) =>
-                        (automatic
-                            ? space.level === vehicle.level && space.space === vehicle.space
-                            : space.id === spaceOverride)
+                    (space) => {
+                        const enteredSpace = !trackingMode && (enteredSpaceId != null
+                            ? space.id === enteredSpaceId
+                            : automatic &&
+                            Number(space.level) === Number(vehicle.level) &&
+                            String(space.space) === String(vehicle.space));
+
+                        return enteredSpace
                             ? {
                                 ...space,
                                 is_occupied: true,
-                                license_plate:
-                                    vehicle.license_plate,
-                                entry_time:
-                                    vehicle.entry_time,
+                                license_plate: vehicle.license_plate,
+                                entry_time: vehicle.entry_time,
                             }
-                            : space
+                            : space;
+                    }
                 );
 
-            parkingSpacesRef.current = nextSpaces;
-            setParkingSpaces(nextSpaces);
+            if (!trackingMode) {
+                parkingSpacesRef.current = nextSpaces;
+                setParkingSpaces(nextSpaces);
+            }
+
+            entryCompleted = true;
+            clearCompletedCameraPlate(sourceOverride);
+            clearCameraVehicleState(sourceOverride);
+            setActiveEntryCameraId((current) => (current === sourceOverride ? null : current));
 
             setEntryResult(vehicle);
 
@@ -1549,6 +2039,16 @@ function GaragePage() {
             void loadParkingSpaces();
 
         } catch (error) {
+            if (!trackingMode) {
+                parkingSpacesRef.current = previousSpaces;
+                setParkingSpaces(previousSpaces);
+            }
+
+            updateCameraVehicleState(sourceOverride, {
+                loading: false,
+                error: error.message || "Vehicle entry failed.",
+            });
+
             console.error(
                 "Vehicle entry error:",
                 error
@@ -1561,19 +2061,34 @@ function GaragePage() {
 
         } finally {
             delete entrySubmittingRef.current[sourceOverride];
+            if (!entryCompleted) {
+                updateCameraVehicleState(sourceOverride, { loading: false });
+            }
             setEntryLoading(false);
         }
     }
 
 
+    // Restored from 8e6a5293a: per-camera cameraVehicleState writes and
+    // Tracking Mode support (no parking-space bookkeeping), mirroring
+    // handleConfirmEntry above.
     async function handleConfirmExit(
         selectedPaymentMethod = paymentMethod,
         paymentRequired = exitPaymentRequired,
         plateOverride = detectedPlate,
         sourceOverride = detectionSource || activeDetectionSourceRef.current
     ) {
+        const cameraState = cameraVehicleState[sourceOverride] || {};
+        const plate = plateOverride || cameraState.plate || detectedPlate;
+        const trackingMode = adminSettingsRef.current?.garage_settings?.mode === "tracking";
+        const chosenPaymentMethod = selectedPaymentMethod ?? cameraState.paymentMethod ?? paymentMethod;
+        const requiresPayment = paymentRequired ?? cameraState.paymentRequired ?? exitPaymentRequired;
+
         if (exitSubmittingRef.current[sourceOverride]) return;
-        if (!plateOverride) {
+        if (!plate) {
+            updateCameraVehicleState(sourceOverride, {
+                error: "No vehicle license plate has been detected.",
+            });
             setExitError(
                 "No vehicle license plate has been detected."
             );
@@ -1581,11 +2096,14 @@ function GaragePage() {
         }
 
         const normalizedPaymentMethod =
-            selectedPaymentMethod === "cash" || selectedPaymentMethod === "card"
-                ? selectedPaymentMethod
+            chosenPaymentMethod === "cash" || chosenPaymentMethod === "card"
+                ? chosenPaymentMethod
                 : null;
 
-        if (paymentRequired && !selectedPaymentMethod) {
+        if (requiresPayment && !chosenPaymentMethod) {
+            updateCameraVehicleState(sourceOverride, {
+                error: "Please select cash or card payment.",
+            });
             setExitError(
                 "Please select cash or card payment."
             );
@@ -1593,17 +2111,31 @@ function GaragePage() {
         }
 
         exitSubmittingRef.current[sourceOverride] = true;
+        updateCameraVehicleState(sourceOverride, {
+            loading: true,
+            error: "",
+        });
         setExitLoading(true);
         setExitError("");
 
+        let exitCompleted = false;
         try {
             const result =
                 await exitUsingPlate(
-                    plateOverride,
-                    paymentRequired ? normalizedPaymentMethod : null
+                    plate,
+                    requiresPayment ? normalizedPaymentMethod : null
                 );
 
+            if (
+                detectedPlateRef.current[sourceOverride] !== plate ||
+                confirmedPlateLockRef.current[sourceOverride] !== plate
+            ) return;
+
             if (!result.success) {
+                updateCameraVehicleState(sourceOverride, {
+                    loading: false,
+                    error: result.error || "Vehicle exit failed.",
+                });
                 setExitError(
                     result.error ||
                     "Vehicle exit failed."
@@ -1613,17 +2145,18 @@ function GaragePage() {
 
             const receipt = result.vehicle;
 
-            lastCompletedPlateRef.current[sourceOverride] = plateOverride;
-            completedLockActionRef.current[sourceOverride] = plateOverride;
-            saveConfirmedLockImageAfterAction(plateOverride, sourceOverride);
+            lastCompletedPlateRef.current[sourceOverride] = plate;
+            completedLockActionRef.current[sourceOverride] = plate;
+            saveConfirmedLockImageAfterAction(plate, sourceOverride);
+            clearCompletedCameraPlate(sourceOverride);
             delete automaticExitAttemptRef.current[sourceOverride];
-            pendingAutomaticExitRef.current = { plate: "", source: "" };
+            delete pendingAutomaticExitRef.current[sourceOverride];
 
             const nextSpaces =
                 parkingSpacesRef.current.map((space) => {
                     if (
                         space.is_occupied &&
-                        space.license_plate === plateOverride
+                        space.license_plate === plate
                     ) {
                         return {
                             ...space,
@@ -1636,8 +2169,24 @@ function GaragePage() {
                     return space;
                 });
 
-            parkingSpacesRef.current = nextSpaces;
-            setParkingSpaces(nextSpaces);
+            if (!trackingMode) {
+                parkingSpacesRef.current = nextSpaces;
+                setParkingSpaces(nextSpaces);
+            }
+
+            exitCompleted = true;
+            updateCameraVehicleState(sourceOverride, {
+                plate: null,
+                action: null,
+                loading: false,
+                error: "",
+                selectedSpaceId: null,
+                paymentMethod: null,
+                paymentRequired: false,
+                ratePerMinute: receipt.rate_per_minute ?? cameraState.ratePerMinute,
+                exitResult: receipt,
+            });
+            clearCompletedCameraPlate(sourceOverride);
 
             setExitResult(receipt);
 
@@ -1663,6 +2212,10 @@ function GaragePage() {
                 error
             );
 
+            updateCameraVehicleState(sourceOverride, {
+                loading: false,
+                error: error.message || "Vehicle exit failed.",
+            });
             setExitError(
                 error.message ||
                 "Vehicle exit failed."
@@ -1670,6 +2223,9 @@ function GaragePage() {
 
         } finally {
             delete exitSubmittingRef.current[sourceOverride];
+            if (!exitCompleted) {
+                updateCameraVehicleState(sourceOverride, { loading: false });
+            }
             setExitLoading(false);
         }
     }
@@ -1697,7 +2253,16 @@ function GaragePage() {
         availableSpaces === 0;
 
 
+    // Restored from 8e6a5293a: the shared grid now reflects whichever
+    // Entry camera currently has a pending confirmation
+    // (getPendingEntryCameraId), so its selection highlight/click-to-select
+    // acts on that camera's own reservation instead of the single global
+    // selectedSpaceId when multiple Entry cameras may be active at once.
     function renderLevel(level) {
+        const pendingEntryCameraId = getPendingEntryCameraId();
+        const pendingEntryState = pendingEntryCameraId
+            ? cameraVehicleState[pendingEntryCameraId] || {}
+            : null;
         const spaces =
             parkingSpaces.filter(
                 (space) =>
@@ -1713,9 +2278,9 @@ function GaragePage() {
                 {openLevel === level && (
                     <div className="parking-grid">
                         {spaces.map((space) => {
-                            const isSelected =
-                                selectedSpaceId ===
-                                space.id;
+                            const isSelected = pendingEntryState
+                                ? pendingEntryState.selectedSpaceId === space.id
+                                : selectedSpaceId === space.id;
 
                             const vehicle =
                                 space.is_occupied
@@ -1742,15 +2307,15 @@ function GaragePage() {
                                     }
                                     onClick={() =>
                                         handleSpaceSelection(
-                                            space
+                                            space,
+                                            pendingEntryCameraId
                                         )
                                     }
                                     disabled={
                                         space.is_occupied ||
-                                        entryLoading ||
-                                        exitLoading ||
-                                        vehicleAction !==
-                                        "entry"
+                                        (pendingEntryState
+                                            ? pendingEntryState.loading || pendingEntryState.action !== "entry"
+                                            : entryLoading || exitLoading || vehicleAction !== "entry")
                                     }
                                 >
                                     <span className="parking-space-number">
@@ -2213,6 +2778,20 @@ function GaragePage() {
                                 });
                             }
                         } else if (plate) {
+                            // Restored from 8e6a5293a: confidence can arrive
+                            // as a 0-1 fraction or a 0-100 percentage;
+                            // normalize before comparing against the
+                            // confidence tiers below. A read below
+                            // MIN_VOTING_CONFIDENCE never enters voting at
+                            // all -- it's noise, not a candidate.
+                            const rawConfidence = Number(result.confidence || 0);
+                            const normalizedConfidence =
+                                rawConfidence > 1 ? rawConfidence / 100 : rawConfidence;
+
+                            if (normalizedConfidence < MIN_VOTING_CONFIDENCE) {
+                                return;
+                            }
+
                             const voteState =
                                 plateVoteHistoryRef.current[cameraId] || {
                                     reads: [],
@@ -2229,7 +2808,7 @@ function GaragePage() {
                             voteState.lastSeenAt = now;
                             voteState.reads.push({
                                 plate,
-                                confidence: Number(result.confidence || 0),
+                                confidence: normalizedConfidence,
                             });
                             voteState.reads = voteState.reads.slice(-5);
                             plateVoteHistoryRef.current[cameraId] = voteState;
@@ -2241,7 +2820,7 @@ function GaragePage() {
 
                             evidenceState.push({
                                 plate,
-                                confidence: Number(result.confidence || 0),
+                                confidence: normalizedConfidence,
                                 seenAt: now,
                             });
 
@@ -2266,13 +2845,29 @@ function GaragePage() {
                             const bestPlate = bestVote?.[0] || plate;
                             const bestCount = bestVote?.[1] || 1;
 
+                            // Restored from 8e6a5293a: a plate read with
+                            // enough very-high (or medium) confidence
+                            // agreement can lock on fewer votes, and sooner,
+                            // than a noisy/uncertain read -- which still
+                            // needs the full 4-vote fallback.
+                            const bestPlateReads = voteState.reads.filter(
+                                (read) => read.plate === bestPlate
+                            );
+                            const veryHighConfidenceMatches = bestPlateReads.filter(
+                                (read) => read.confidence >= VERY_HIGH_OCR_CONFIDENCE
+                            ).length;
+                            const mediumConfidenceMatches = bestPlateReads.filter(
+                                (read) => read.confidence >= MEDIUM_OCR_CONFIDENCE
+                            ).length;
+
                             console.log("[Vision confirming]", {
                                 source: cameraId,
                                 incoming: plate,
                                 reads: voteState.reads.map((read) => read.plate),
                                 bestPlate,
                                 bestCount,
-                                requiredVotes: 4,
+                                veryHighConfidenceMatches,
+                                mediumConfidenceMatches,
                                 windowSize: 5,
                             });
                             // PARTIAL_PLATE_LOCK_GUARD_V2
@@ -2377,10 +2972,23 @@ function GaragePage() {
                             const isCustomShortCandidate =
                                 /^\d{1,4}$/.test(normalizedBest);
 
-                            const requiredVotesForCandidate = 4;
+                            let requiredVotesForCandidate = 4;
+                            let adaptiveReason = "fallback-4";
+                            if (!isCustomShortCandidate && veryHighConfidenceMatches >= 2) {
+                                requiredVotesForCandidate = 2;
+                                adaptiveReason = "very-high-2";
+                            } else if (!isCustomShortCandidate && mediumConfidenceMatches >= 3) {
+                                requiredVotesForCandidate = 3;
+                                adaptiveReason = "medium-3";
+                            }
 
-                            const requiredAgeMsForCandidate =
-                                isCustomShortCandidate ? 1200 : 700;
+                            const requiredAgeMsForCandidate = isCustomShortCandidate
+                                ? 1200
+                                : adaptiveReason === "very-high-2"
+                                    ? 250
+                                    : adaptiveReason === "medium-3"
+                                        ? 500
+                                        : 700;
                             const matureEnough =
                                 candidateAgeMs >= requiredAgeMsForCandidate;
 
@@ -2393,16 +3001,12 @@ function GaragePage() {
                                 confirmedPlateLastDetectedAtRef.current[cameraId] = now;
                                 detectedPlateRef.current[cameraId] = bestPlate;
 
-                                setDetectedPlate(bestPlate);
-                                setDetectionSource(cameraId);
-                                setVehicleAction(null);
-                                confirmedLockImageRef.current[cameraId] = canvas.toDataURL("image/jpeg", 0.82);
-
                                 console.log("[Vision confirmed lock]", {
                                     source: cameraId,
                                     plate: bestPlate,
                                     bestCount,
                                     requiredVotes: requiredVotesForCandidate,
+                                    adaptiveReason,
                                     windowSize: 5,
                                     partialGuard: true,
                                     customShortCandidate: isCustomShortCandidate,
@@ -2410,56 +3014,9 @@ function GaragePage() {
                                     candidateAgeMs,
                                 });
 
-                                if (cameraId.startsWith("entry-")) {
-                                    setAlreadyParked(false);
-                                    setEntryError("");
-                                    setEntryResult(null);
-                                } else {
-                                    setExitError("");
-                                    setExitResult(null);
-                                    setPaymentMethod(null);
-                                    setExitRatePerMinute(null);
-                                    if (!MULTI_CAMERA_ORCHESTRATION_TEST) {
-                                        void prefetchExitPaymentRequired(bestPlate);
-                                        void startAutomaticExit(bestPlate, cameraId);
-                                    } else {
-                                        console.log("[MC TEST] Exit action blocked", {
-                                            source: cameraId,
-                                            plate: bestPlate,
-                                        });
-                                    }
-
-                                }
-
-                                const parkedSpace = cameraId.startsWith("entry-")
-                                    ? parkingSpacesRef.current.find(
-                                        (space) => space.is_occupied && space.license_plate === bestPlate
-                                    )
-                                    : null;
-
-                                if (parkedSpace) {
-                                    setAlreadyParked(true);
-                                    setEntryError("Car is already parked in the garage.");
-                                } else if (cameraId.startsWith("entry-")) {
-                                    if (automaticEntryRef.current && !MULTI_CAMERA_ORCHESTRATION_TEST) {
-                                        setVehicleAction("entry");
-                                        void handleConfirmEntry(bestPlate, null, cameraId, true);
-                                    } else {
-                                        const automaticSpace = getAutomaticParkingSpace();
-                                        if (automaticSpace) {
-                                            setSelectedSpaceId(automaticSpace.id);
-                                            if (automaticEntryRef.current) {
-                                                console.log("[MC TEST] Entry action blocked", {
-                                                    source: cameraId,
-                                                    plate: bestPlate,
-                                                    space: automaticSpace.id,
-                                                });
-                                            }
-                                        } else {
-                                            setSelectedSpaceId(null);
-                                        }
-                                    }
-                                }
+                                const lockImage = canvas.toDataURL("image/jpeg", 0.82);
+                                confirmedLockImageRef.current[cameraId] = lockImage;
+                                void resolveConfirmedCameraPlate(cameraId, bestPlate, lockImage);
                             } else if (
                                 bestCount >= requiredVotesForCandidate &&
                                 (!matureEnough || longerCompatiblePlate)
@@ -2528,9 +3085,103 @@ function GaragePage() {
         }
     }
 
+    function renderCameraVehicleAction(cameraId, vehicleState) {
+        const trackingMode = adminSettings?.garage_settings?.mode === "tracking";
+        const selectedCameraSpace = trackingMode
+            ? null
+            : parkingSpaces.find(
+                (space) => space.id === vehicleState.selectedSpaceId
+            );
+        const isExit = cameraId.startsWith("exit-");
+        // PLATE_TRACKING_BILLING_PARITY_V1
+        // vehicleState.paymentRequired is already a server-verified signal
+        // (from getExitPaymentRequired), so payment selection no longer
+        // depends on the frontend's parkingSpaces cache -- that cache is
+        // never kept in sync for tracking mode, and billing must still work
+        // there when enabled.
+        const showPaymentSelection = isExit && vehicleState.paymentRequired &&
+            Boolean(adminSettings?.billing_config?.payments_enabled &&
+                adminSettings?.billing_config?.cash_enabled &&
+                adminSettings?.billing_config?.card_enabled);
+
+        if (!vehicleState.plate) return null;
+
+        return (
+            <div
+                className="camera-vehicle-actions"
+                onClick={() => {
+                    if (
+                        cameraId.startsWith("entry-") &&
+                        vehicleState.action === "entry"
+                    ) {
+                        setActiveEntryCameraId(cameraId);
+                    }
+                }}
+            >
+                {vehicleState.alreadyParked && <div className="error">{trackingMode ? "Vehicle is already logged." : "Vehicle is already parked in the garage."}</div>}
+                {vehicleState.error && <div className="error">{vehicleState.error}</div>}
+                {vehicleState.loading && !vehicleState.action && <p className="description">Checking vehicle status...</p>}
+
+                {vehicleState.action === "entry" && (
+                    <div className="entry-mode">
+                        {vehicleState.loading ? (
+                            <p className="description">Processing Entry...</p>
+                        ) : (
+                            <>
+                                <h3>{trackingMode ? "Log Vehicle Entry" : "Select Parking Space"}</h3>
+                                {!trackingMode && <div className="selected-space-info">
+                                    <strong>Selected Space:</strong>
+                                    <span>{selectedCameraSpace ? `Level ${selectedCameraSpace.level} - ${selectedCameraSpace.space}` : "No space available"}</span>
+                                </div>}
+                                <div className="confirmation-buttons">
+                                    <button
+                                        type="button"
+                                        className="confirm-button"
+                                        onClick={() => handleConfirmEntry(vehicleState.plate, trackingMode ? null : vehicleState.selectedSpaceId, cameraId)}
+                                        disabled={!trackingMode && !vehicleState.selectedSpaceId}
+                                    >
+                                        Confirm Entry
+                                    </button>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                )}
+
+                {isExit && vehicleState.action === "exit" && (
+                    <div className="exit-mode">
+                        <h3>{trackingMode ? "Log Vehicle Exit" : "Exit Vehicle"}</h3>
+                        <p className="description">
+                            {showPaymentSelection
+                                ? `Select a payment method. Parking is billed at ${formatRupees(vehicleState.ratePerMinute ?? 1.67)} per minute.`
+                                : "Exit is being processed automatically."}
+                        </p>
+                        {showPaymentSelection && (
+                            <div className="payment-options">
+                                {(["cash", "card"]).map((method) => (
+                                    <button
+                                        type="button"
+                                        key={method}
+                                        className={`payment-option ${vehicleState.paymentMethod === method ? "selected" : ""}`}
+                                        onClick={() => handlePaymentSelection(method, cameraId)}
+                                        disabled={vehicleState.loading}
+                                    >
+                                        <span>{method === "cash" ? "Cash" : "Card"}</span>
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                        {vehicleState.loading && <p className="description">Processing Exit...</p>}
+                    </div>
+                )}
+            </div>
+        );
+    }
+
     function renderSlotCamera(slot) {
         const view = cameraViews[slot.id] || {};
         const assigned = Boolean(cameraAssignments[slot.id]);
+        const vehicleState = cameraVehicleState[slot.id] || {};
 
         return (
             <div className="camera-panel" key={slot.id}>
@@ -2569,6 +3220,17 @@ function GaragePage() {
                 </div>
 
                 {view.error && <div className="error">{view.error}</div>}
+
+                <VehicleInformation
+                    exitResult={vehicleState.exitResult}
+                    entryResult={vehicleState.entryResult}
+                    detectedPlate={vehicleState.plate}
+                    vehicleAction={vehicleState.action}
+                    selectedSpace={parkingSpaces.find((space) => space.id === vehicleState.selectedSpaceId)}
+                    trackingMode={adminSettings?.garage_settings?.mode === "tracking"}
+                    onReceiptDone={() => updateCameraVehicleState(slot.id, { exitResult: null })}
+                />
+                {renderCameraVehicleAction(slot.id, vehicleState)}
             </div>
         );
     }
@@ -2770,329 +3432,7 @@ function GaragePage() {
                         )}
 
 
-                        {!detectedPlate &&
-                            !exitResult &&
-                            !entryResult && (
-                                <div className="waiting-panel">
-
-                                    <div className="camera-icon">
-                                        📷
-                                    </div>
-
-                                    <strong>
-                                        Waiting for vehicle...
-                                    </strong>
-
-                                    <p>
-                                        Position a vehicle in front
-                                        of the camera.
-                                    </p>
-
-                                </div>
-                            )}
-
-
-                        {detectedPlate && (
-                            <div className="detected-panel">
-
-                                <div className="detected-header">
-
-                                    <div>
-                                        <span className="detected-label">
-                                            Vehicle Detected
-                                        </span>
-
-                                        <h3>
-                                            {detectedPlate}
-                                        </h3>
-                                    </div>
-
-                                    <span className="live-indicator">
-                                        ● LIVE
-                                    </span>
-
-                                </div>
-
-
-                                <p className="description">
-                                    License plate detected automatically.
-                                    Select whether the vehicle is entering
-                                    or exiting.
-                                </p>
-
-
-                                <div className="plate-display">
-
-                                    <span className="field-label">
-                                        Detected License Plate
-                                    </span>
-
-                                    <div className="plate-readonly">
-                                        {detectedPlate}
-                                    </div>
-
-                                </div>
-
-
-                                {alreadyParked && (
-                                    <div className="error">
-                                        Vehicle is already parked in the garage.
-                                    </div>
-                                )}
-
-                                {detectionSource?.startsWith("exit-") &&
-                                    !vehicleAction &&
-                                    !exitError && (
-                                        <div className="status-message">
-                                            Checking vehicle status...
-                                        </div>
-                                    )}
-
-                                {exitError && (
-                                    <div className="error">
-                                        {exitError}
-                                    </div>
-                                )}
-
-                                {!vehicleAction &&
-                                    !alreadyParked &&
-                                    !exitError &&
-                                    !lockActionAlreadyCompleted &&
-                                    detectionSource?.startsWith("entry-") && (
-                                        <div className="action-selection">
-
-                                            <p className="action-title">
-                                                Confirm vehicle entry
-                                            </p>
-
-                                            <div className="vehicle-action-buttons">
-                                                <button
-                                                    className="confirm-button"
-                                                    onClick={handleSelectEntry}
-                                                    disabled={
-                                                        garageFull ||
-                                                        entryLoading ||
-                                                        exitLoading
-                                                    }
-                                                >
-                                                    {garageFull
-                                                        ? "Garage Full"
-                                                        : "Entry Vehicle"}
-                                                </button>
-                                            </div>
-
-                                            {garageFull && (
-                                                <p className="description">
-                                                    The garage is currently full.
-                                                    Entry is unavailable.
-                                                </p>
-                                            )}
-
-                                        </div>
-                                    )}
-
-                                {vehicleAction ===
-                                    "entry" && (
-                                        <div className="entry-mode">
-
-                                            <h3>
-                                                Select Parking Space
-                                            </h3>
-
-
-                                            <p className="description">
-                                                A parking space has been
-                                                automatically assigned.
-                                                Click another available
-                                                space if you want to
-                                                change it.
-                                            </p>
-
-
-                                            <div className="selected-space-info">
-
-                                                <strong>
-                                                    Selected Space:
-                                                </strong>
-
-                                                <span>
-                                                    {selectedSpace
-                                                        ? `Level ${selectedSpace.level} — ${selectedSpace.space}`
-                                                        : "No space available"}
-                                                </span>
-
-                                            </div>
-
-
-                                            {entryError && (
-                                                <div className="error">
-                                                    {entryError}
-                                                </div>
-                                            )}
-
-
-                                            <div className="confirmation-buttons">
-
-                                                <button
-                                                    className="confirm-button"
-                                                    onClick={() => handleConfirmEntry()}
-                                                    disabled={
-                                                        entryLoading ||
-                                                        !selectedSpaceId
-                                                    }
-                                                >
-                                                    {entryLoading
-                                                        ? "Processing Entry..."
-                                                        : "Confirm Entry"}
-                                                </button>
-
-
-                                                <button
-                                                    className="cancel-button"
-                                                    onClick={() => {
-                                                        setVehicleAction(
-                                                            null
-                                                        );
-
-                                                        setSelectedSpaceId(
-                                                            null
-                                                        );
-
-                                                        setEntryError(
-                                                            ""
-                                                        );
-                                                    }}
-                                                    disabled={
-                                                        entryLoading
-                                                    }
-                                                >
-                                                    Back
-                                                </button>
-
-                                            </div>
-
-                                        </div>
-                                    )}
-
-
-                                {vehicleAction ===
-                                    "exit" && (
-                                        <div className="exit-mode">
-
-                                            <h3>
-                                                Exit Vehicle
-                                            </h3>
-
-
-                                            <p className="description">
-                                                {exitPaymentRequired
-                                                    ? `Select a payment method. Parking is billed at ${formatRupees(exitRatePerMinute ?? 1.67)} per minute.`
-                                                    : "Exit is being processed automatically."}
-                                            </p>
-
-
-                                            <div className="exit-plate-confirmation">
-
-                                                <strong>
-                                                    Exit plate:
-                                                </strong>
-
-                                                <span>
-                                                    {detectedPlate}
-                                                </span>
-
-                                            </div>
-
-
-                                            {exitPaymentRequired && (
-                                                <>
-                                                    <p className="action-title">
-                                                        Payment method
-                                                    </p>
-
-
-                                                    <div className="payment-options">
-
-                                                        {showCashPayment && <button
-                                                            type="button"
-                                                            className={
-                                                                `payment-option ${paymentMethod ===
-                                                                    "cash"
-                                                                    ? "selected"
-                                                                    : ""
-                                                                }`
-                                                            }
-                                                            onClick={() => handlePaymentSelection("cash")}
-                                                            disabled={
-                                                                exitLoading
-                                                            }
-                                                        >
-                                                            <span>💵</span><span>Cash</span>
-                                                        </button>}
-
-
-                                                        {showCardPayment && <button
-                                                            type="button"
-                                                            className={
-                                                                `payment-option ${paymentMethod ===
-                                                                    "card"
-                                                                    ? "selected"
-                                                                    : ""
-                                                                }`
-                                                            }
-                                                            onClick={() => handlePaymentSelection("card")}
-                                                            disabled={
-                                                                exitLoading
-                                                            }
-                                                        >
-                                                            <span>💳</span><span>Card</span>
-                                                        </button>}
-
-                                                    </div>
-                                                </>
-                                            )}
-
-
-                                            {exitError && (
-                                                <div className="error">
-                                                    {exitError}
-                                                </div>
-                                            )}
-
-                                            {exitLoading && <p className="description">Processing Exit...</p>}
-
-                                        </div>
-                                    )}
-
-                            </div>
-                        )}
-
                     </section>
-
-
-                    {(exitResult || detectionSource?.startsWith("exit-")) && (
-                        <section className="card vehicle-information-card">
-
-                            <h2>
-                                Receipt
-                            </h2>
-
-                            <p className="description">
-                                Entry and exit details appear here
-                                after a vehicle is processed.
-                            </p>
-
-                            <VehicleInformation
-                                exitResult={exitResult}
-                                entryResult={entryResult}
-                                detectedPlate={detectedPlate}
-                                vehicleAction={vehicleAction}
-                                selectedSpace={selectedSpace}
-                                onReceiptDone={() => setExitResult(null)}
-                            />
-
-                        </section>
-                    )}
 
                 </section>
 

@@ -398,3 +398,100 @@ export async function getAnalytics(token, period = "7d") {
     if (!response.ok) throw requestError(response, data, `Failed to load analytics: ${response.status}`);
     return data;
 }
+
+
+// ============================================================
+// Account Security (authenticated) -- email verification + TOTP
+// ============================================================
+
+export async function getAdminSecurityStatus(token) {
+    const response = await fetch(`${API_BASE_URL}/admin/security/status`, { headers: { Authorization: `Bearer ${token}` } });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw requestError(response, data, "Unable to load security status.");
+    return data;
+}
+
+export async function sendAdminEmailVerification(token) {
+    const response = await fetch(`${API_BASE_URL}/admin/security/email/send-verification`, { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw requestError(response, data, "Unable to send verification code.");
+    return data;
+}
+
+export async function verifyAdminEmail(token, code) {
+    const response = await fetch(`${API_BASE_URL}/admin/security/email/verify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ code }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw requestError(response, data, "Unable to verify email.");
+    return data;
+}
+
+export async function setupAdminTotp(token) {
+    const response = await fetch(`${API_BASE_URL}/admin/security/totp/setup`, { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw requestError(response, data, "Unable to start authenticator setup.");
+    return data;
+}
+
+export async function confirmAdminTotp(token, code) {
+    const response = await fetch(`${API_BASE_URL}/admin/security/totp/confirm`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ code }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw requestError(response, data, "Unable to confirm authenticator.");
+    return data;
+}
+
+
+// ============================================================
+// Forgot Password (public recovery flow)
+// ============================================================
+
+export async function requestPasswordRecovery(identifier) {
+    const response = await fetch(`${API_BASE_URL}/admin/password-recovery/request`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ identifier }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw requestError(response, data, "Unable to start password recovery.");
+    return data;
+}
+
+export async function verifyRecoveryEmail(challengeToken, code) {
+    const response = await fetch(`${API_BASE_URL}/admin/password-recovery/verify-email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ challenge_token: challengeToken, code }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw requestError(response, data, "Invalid or expired verification code.");
+    return data;
+}
+
+export async function verifyRecoveryTotp(challengeToken, code) {
+    const response = await fetch(`${API_BASE_URL}/admin/password-recovery/verify-totp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ challenge_token: challengeToken, code }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw requestError(response, data, "Invalid or expired verification code.");
+    return data;
+}
+
+export async function resetAdminPassword(resetToken, newPassword) {
+    const response = await fetch(`${API_BASE_URL}/admin/password-recovery/reset`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reset_token: resetToken, new_password: newPassword }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw requestError(response, data, "Unable to reset password.");
+    return data;
+}
