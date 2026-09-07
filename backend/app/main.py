@@ -10,6 +10,8 @@ from app.logging_config import configure_logging
 
 from app.api.vision import router as vision_router
 from app.api.admin import router as admin_router, current_admin
+from app.api.admin_security import router as admin_security_router
+from app.api.password_recovery import router as password_recovery_router
 
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -138,6 +140,8 @@ app.add_middleware(
 
 app.include_router(vision_router)
 app.include_router(admin_router)
+app.include_router(admin_security_router)
+app.include_router(password_recovery_router)
 
 
 # ============================================================
