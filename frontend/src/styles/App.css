@@ -2705,12 +2705,27 @@ body {
     gap: calc(var(--gu) * 0.625);
 }
 
+.app .mini-receipt .entry-info .vehicle-info-row strong,
+.app .mini-receipt .entry-info .vehicle-info-row span {
+    color: var(--garage-ink);
+}
+
 .app .mini-receipt .vehicle-info-amount {
     margin-top: calc(var(--gu) * 0.5);
 }
 
 .app .mini-receipt .camera-vehicle-actions {
     padding-left: 0;
+}
+
+.app.garage-theme-dark .mini-receipt.entry-receipt .vehicle-info-row strong,
+.app.garage-theme-dark .mini-receipt.entry-receipt .vehicle-info-row span,
+.app.garage-theme-dark .mini-receipt.entry-receipt .selected-space-info strong
+{
+    color: #edf4ef;
+}
+.app.garage-theme-dark .mini-receipt.entry-receipt .selected-space-info span{
+    color: #189dea;
 }
 
 /* The entry/exit action block and its buttons carry generous spacing

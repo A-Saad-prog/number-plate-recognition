@@ -2197,7 +2197,7 @@ function GaragePage() {
     function renderCameraReceipt(slot) {
         const vehicleState = cameraVehicleState[slot.id] || {};
         return (
-            <div className="mini-receipt" key={slot.id}>
+            <div className={`mini-receipt ${slot.lane === "Entry" ? "entry-receipt" : "exit-receipt"}`} key={slot.id}>
                 <div className="mini-receipt-source">{slot.label}</div>
                 <VehicleInformation
                     exitResult={vehicleState.exitResult}
