@@ -318,6 +318,7 @@ function AdminPage() {
     const [confirmationOpen, setConfirmationOpen] = useState(false);
     const [confirmationSection, setConfirmationSection] = useState(null);
     const [settingsSubmitting, setSettingsSubmitting] = useState(null);
+    const [garageSettingsAttention, setGarageSettingsAttention] = useState(false);
     const [billingConfig, setBillingConfig] = useState({ payments_enabled: false, cash_enabled: false, card_enabled: false, rate_per_minute: 1.67, rate_unit: "minute" });
     const [billingMessage, setBillingMessage] = useState("");
     const [billingMessageType, setBillingMessageType] = useState("success");
@@ -1280,6 +1281,11 @@ function AdminPage() {
         setConfirmationSection(null);
     }
 
+    function triggerGarageSettingsAttention() {
+        setGarageSettingsAttention(true);
+        window.setTimeout(() => setGarageSettingsAttention(false), 5000);
+    }
+
     async function confirmCameraSettings() {
         if (settingsSubmitting) return;
         setSettingsSubmitting("camera");
@@ -1299,6 +1305,7 @@ function AdminPage() {
             setCameraMessageType("success");
             setCameraMessage(t.camerasSaved);
             localStorage.setItem(GARAGE_SETTINGS_UPDATED_KEY, String(Date.now()));
+            triggerGarageSettingsAttention();
             setConfirmationOpen(false);
             setConfirmationSection(null);
         } catch {
@@ -1324,6 +1331,7 @@ function AdminPage() {
             setBillingMessageType("success");
             setBillingMessage(t.billingApplied);
             localStorage.setItem(GARAGE_SETTINGS_UPDATED_KEY, String(Date.now()));
+            triggerGarageSettingsAttention();
             setConfirmationOpen(false);
             setConfirmationSection(null);
         } catch {
@@ -1622,7 +1630,7 @@ function AdminPage() {
                 };
                 setGarageSettings(normalizedSaved);
                 setSavedGarageSettings(normalizedSaved);
-                setGarageSettingsMessageType("success"); setGarageSettingsMessage("Plate tracking mode applied."); localStorage.setItem(GARAGE_SETTINGS_UPDATED_KEY, String(Date.now())); emitParkingDataUpdated(); setConfirmationOpen(false); return;
+                setGarageSettingsMessageType("success"); setGarageSettingsMessage("Plate tracking mode applied."); localStorage.setItem(GARAGE_SETTINGS_UPDATED_KEY, String(Date.now())); triggerGarageSettingsAttention(); emitParkingDataUpdated(); setConfirmationOpen(false); return;
             } catch (err) { setGarageSettingsMessageType("warning"); setGarageSettingsMessage(err?.message || t.requestFailed); return; }
             finally { setSettingsSubmitting(null); }
         }
@@ -1710,6 +1718,7 @@ function AdminPage() {
             setGarageSettingsMessageType("success");
             setGarageSettingsMessage(t.garageApplied);
             localStorage.setItem(GARAGE_SETTINGS_UPDATED_KEY, String(Date.now()));
+            triggerGarageSettingsAttention();
             emitParkingDataUpdated();
             setConfirmationOpen(false);
             setConfirmationSection(null);
@@ -1730,7 +1739,7 @@ function AdminPage() {
             <main className={`admin-shell admin-theme-${appliedTheme}`} dir={isUrdu ? "rtl" : "ltr"} lang={language}>
                 <header className="admin-header">
                     <a href="/" className="admin-logo">PARKING<span>OS</span></a>
-                    <div className="admin-header-actions"><button type="button" className="theme-toggle" onClick={() => openOrFocusNamedTab("/", "parkingos-garage")}>Open Garage</button><div className="account-menu"><button type="button" className="admin-user" data-tour="account-menu" aria-expanded={accountMenuOpen} onClick={() => setAccountMenuOpen((open) => !open)}>{adminName}</button>{accountMenuOpen && <div className="account-dropdown"><strong>Appearance</strong><button onClick={() => { setTheme("system"); setAccountMenuOpen(false); }}>System Default</button><button onClick={() => { setTheme("light"); setAccountMenuOpen(false); }}>Light</button><button onClick={() => { setTheme("dark"); setAccountMenuOpen(false); }}>Dark</button><strong>Language</strong><button onClick={() => { setLanguage("en"); setAccountMenuOpen(false); }}>English</button><button onClick={() => { setLanguage("ur"); setAccountMenuOpen(false); }}>Urdu</button><strong>Account</strong><button onClick={openSecurityModal}>Account Security</button><button className="sign-out" onClick={signOut}>{t.signOut}</button></div>}</div></div>
+                    <div className="admin-header-actions"><button type="button" className={`theme-toggle${garageSettingsAttention ? " garage-settings-attention" : ""}`} onClick={() => openOrFocusNamedTab("/", "parkingos-garage")}><svg className="garage-door-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 21V5.5L12 3l9 2.5V21M6 21V9h12v12M6 13h12M6 17h12" /></svg><span>Open Garage</span></button><div className="account-menu"><button type="button" className="admin-user" data-tour="account-menu" aria-expanded={accountMenuOpen} onClick={() => setAccountMenuOpen((open) => !open)}>{adminName}</button>{accountMenuOpen && <div className="account-dropdown"><strong>Appearance</strong><button onClick={() => { setTheme("system"); setAccountMenuOpen(false); }}>System Default</button><button onClick={() => { setTheme("light"); setAccountMenuOpen(false); }}>Light</button><button onClick={() => { setTheme("dark"); setAccountMenuOpen(false); }}>Dark</button><strong>Language</strong><button onClick={() => { setLanguage("en"); setAccountMenuOpen(false); }}>English</button><button onClick={() => { setLanguage("ur"); setAccountMenuOpen(false); }}>Urdu</button><strong>Account</strong><button onClick={openSecurityModal}>Account Security</button><button className="sign-out" onClick={signOut}>{t.signOut}</button></div>}</div></div>
                 </header>
                 <div className="admin-app-body">
                     <aside className="admin-sidebar">

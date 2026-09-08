@@ -472,6 +472,7 @@ function GaragePage() {
         }
     });
     const [receiptTab, setReceiptTab] = useState("entry");
+    const adminLoggedIn = Boolean(localStorage.getItem(ADMIN_TOKEN_STORAGE_KEY)) && !garageAuthFailed;
 
     useEffect(() => {
         try {
@@ -2301,7 +2302,7 @@ function GaragePage() {
             <header className="garage-top">
                 <div className="garage-logo">PARKING<span>OS</span> / GARAGE</div>
                 <div className="garage-top-actions">
-                    <span className="garage-status-pill"><i className="garage-status-dot" /> SYSTEM ONLINE</span>
+                    <span className={`garage-status-pill ${adminLoggedIn ? "online" : "offline"}`}><svg className="garage-status-dot" viewBox="0 0 10 10" aria-hidden="true"><circle cx="5" cy="5" r="5" /></svg> {adminLoggedIn ? "SYSTEM ONLINE" : "SYSTEM OFFLINE"}</span>
                     <button
                         type="button"
                         className="garage-theme-slider"
@@ -2326,7 +2327,7 @@ function GaragePage() {
             <div className="garage-layout">
                 <main className="garage-main">
                     <section className="garage-camera-panel">
-                        <h2>Vehicle <span>detection.</span></h2>
+                        <h2>Vehicle <span>detection</span></h2>
                         <p className="description">The camera automatically detects the vehicle's license plate.</p>
 
                         <div className={`camera-slot-grid ${cameraSlots.length === 2 ? "camera-slot-grid-pair" : ""}`}>{cameraSlots.map(renderSlotCamera)}</div>
@@ -2337,7 +2338,7 @@ function GaragePage() {
                             <div className="floor-panel-head">
                                 <div>
                                     <p className="eyebrow">Garage occupancy</p>
-                                    <h2>Parking <span>floor.</span></h2>
+                                    <h2>Parking <span>floor</span></h2>
                                 </div>
 
                                 {parkingSpaces.length > 0 && (

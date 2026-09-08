@@ -2,7 +2,14 @@
 
 .admin-shell {
     min-height: 100vh;
-    background: #e8efe6;
+    background:
+        radial-gradient(
+            circle at 85% -10%,
+            rgba(224, 91, 53, .13) 0,
+            transparent 32%
+        ),
+        #e8efe6;
+    background-attachment: fixed;
     color: #10231c;
     font-family: 'Manrope', sans-serif;
     -webkit-font-smoothing: auto;
@@ -270,11 +277,15 @@
 
 .admin-header {
     align-items: center;
+    background: #e8efe6;
     border-bottom: 1px solid rgba(16, 35, 28, .14);
     direction: ltr;
     display: flex;
     justify-content: space-between;
     padding: 18px clamp(20px, 4vw, 64px);
+    position: sticky;
+    top: 0;
+    z-index: 10;
 }
 
 .admin-header-actions {
@@ -283,12 +294,13 @@
 
 .admin-header-actions > .theme-toggle {
     background: transparent;
-    border: 1px solid #bdcbc0;
+    border: 1px solid #aebfb2;
     border-radius: 999px;
-    color: #10231c;
+    color: #29483b;
     cursor: pointer;
     font: 700 10px 'Manrope', sans-serif;
     padding: 7px 10px;
+    box-shadow: 0 2px 5px rgba(16, 35, 28, .12);
 }
 
 .admin-header-actions > .theme-toggle:hover {
@@ -1789,7 +1801,7 @@ It can make small UI text appear soft/blurry in Chromium.
 }
 
 .admin-theme-dark .admin-header {
-    background: rgba(8, 21, 17, .78);
+    background: #081511;
     border-color: rgba(138, 191, 167, .16);
     box-shadow: 0 12px 32px rgba(0, 0, 0, .14);
 }
@@ -1953,7 +1965,8 @@ It can make small UI text appear soft/blurry in Chromium.
 
 .admin-theme-dark .theme-toggle {
     color: #edf2ee;
-    border-color: rgba(145, 199, 174, .55);
+    border-color: rgba(145, 199, 174, .65);
+    box-shadow: none;
 }
 
 .admin-theme-dark .account-dropdown,
@@ -2273,4 +2286,24 @@ It can make small UI text appear soft/blurry in Chromium.
     .local-image-setting .camera-refresh-button {
         justify-self: start;
     }
+}
+
+.garage-door-icon {
+    fill: none;
+    height: 13px;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1.5;
+    width: 13px;
+}
+
+.admin-header-actions > .theme-toggle.garage-settings-attention {
+    animation: garage-settings-attention 5s ease-in-out;
+}
+
+@keyframes garage-settings-attention {
+    0%, 100% { box-shadow: 0 0 0 rgba(224, 91, 53, 0); }
+    35% { box-shadow: 0 0 0 5px rgba(224, 91, 53, .24), 0 0 20px rgba(224, 91, 53, .62); }
+    65% { box-shadow: 0 0 0 3px rgba(224, 91, 53, .16), 0 0 13px rgba(224, 91, 53, .42); }
 }

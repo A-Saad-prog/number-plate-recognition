@@ -2132,11 +2132,15 @@ body {
 }
 
 .app .garage-status-dot {
+    display: inline-block;
     width: calc(var(--gu) * 0.4375);
     height: calc(var(--gu) * 0.4375);
-    border-radius: 50%;
-    background: #31a86b;
+    fill: #31a86b;
     flex-shrink: 0;
+}
+
+.app .garage-status-pill.offline .garage-status-dot {
+    fill: #e2503f;
 }
 
 .app .garage-admin-link {
