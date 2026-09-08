@@ -33,7 +33,7 @@ function VehicleInformation({
                         <div className="vehicle-info-amount"><span>Amount Owed</span><strong>{formatRupees(exitResult.amount)}</strong></div>
                     </>
                 )}
-                <button type="button" className="cancel-button receipt-done-button" onClick={onReceiptDone}>Done</button>
+                <button type="button" className="confirm-button receipt-done-button" onClick={onReceiptDone}>Done</button>
             </div>
         );
     }

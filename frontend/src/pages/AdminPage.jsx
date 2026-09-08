@@ -41,6 +41,9 @@ const CAMERA_ASSIGNMENTS_KEY = "parking_camera_assignments";
 const GARAGE_SETTINGS_UPDATED_KEY = "parking_garage_settings_updated";
 const PARKING_DATA_UPDATED_KEY = "parking_data_updated";
 const PARKING_DATA_UPDATED_EVENT = "parking-data-updated";
+const MAX_GARAGE_LEVELS = 25;
+const MAX_TOTAL_PARKING_SPACES = 1000;
+const GARAGE_CAPACITY_ERROR_PREFIX = "Maximum parking capacity is";
 
 // Signals an open GaragePage (same tab or another tab/window) to re-fetch
 // parking spaces. The storage write reaches other tabs; the custom event
@@ -83,8 +86,8 @@ const TRANSLATIONS = {
         cameraTitle: "Entry & exit", cameraSetupTitle: "camera setup.", cameraIntro: "Set the number of cameras for each lane. Each lane must have 1–4 cameras.", entryCameras: "Entry lane cameras", exitCameras: "Exit lane cameras", saveCameras: "Save cameras",
         paymentTitle: "Payment", paymentSettings: "settings.", paymentIntro: "Enable or disable payment options for your parking garage.", enablePayments: "Enable payment options", acceptedPayments: "Select accepted payment methods:", cash: "Cash", card: "Card",
         workspace: "Admin workspace", welcomeBack: "Welcome back,", online: "System online", workspaceIntro: "Select a feature from the sidebar to manage your garage.",
-        adminAccess: "Garage administration", makeEvery: "Make every", spaceCount: "space count.", loginIntro: "A clear, quiet view of the operation behind your parking floor.", secureAccess: "Secure admin access", signInTitle: "Sign in to", yourWorkspace: "your workspace.", username: "Username or Email", password: "Password", signingIn: "Signing in...", enterWorkspace: "Enter workspace", returnGarage: "← Return to garage view", showPassword: "Show password", hidePassword: "Hide password", forgotPassword: "Forgot password?", forgotPasswordTitle: "Forgot password", forgotPasswordHint: "Enter your Username or Email", continueLabel: "Continue", backToSignIn: "← Back to sign in", forgotPasswordNotice: "Password recovery isn't available yet. Please contact your administrator.",
-        required: "This field is required.", zero: "This field cannot be zero.", positiveNumber: "Please enter a valid positive number.", maxLevels: "Maximum 12 levels allowed.", cameraRange: "Please enter a value between 1 and 4.", fixErrors: "Please fix the errors before applying.", fixCameraErrors: "Please fix the camera lane errors before saving.", vehicleAdded: "Vehicle added to the whitelist.", vehicleRemoved: "Vehicle removed from the whitelist.", garageApplied: "Garage layout applied successfully.", camerasSaved: "Camera allocation saved successfully.", billingApplied: "Billing settings applied successfully.", loginFailed: "Unable to sign in. Please check your credentials.", requestFailed: "Unable to complete that request. Please try again.", checkingSession: "Checking session...", examplePlate: "e.g. ABC-123", exampleManager: "e.g. Manager",
+        adminAccess: "Garage administration", makeEvery: "Make every", spaceCount: "space count.", loginIntro: "A clear, quiet view of the operation behind your parking floor.", secureAccess: "Secure admin access", signInTitle: "Sign in to", yourWorkspace: "your workspace.", username: "Username or Email", password: "Password", signingIn: "Signing in...", enterWorkspace: "Enter workspace", showPassword: "Show password", hidePassword: "Hide password", forgotPassword: "Forgot password?", forgotPasswordTitle: "Forgot password", forgotPasswordHint: "Enter your Username or Email", continueLabel: "Continue", backToSignIn: "← Back to sign in", forgotPasswordNotice: "Password recovery isn't available yet. Please contact your administrator.",
+        required: "This field is required.", zero: "This field cannot be zero.", positiveNumber: "Please enter a valid positive number.", maxLevels: "Maximum 25 levels allowed.", cameraRange: "Please enter a value between 1 and 4.", fixErrors: "Please fix the errors before applying.", fixCameraErrors: "Please fix the camera lane errors before saving.", vehicleAdded: "Vehicle added to the whitelist.", vehicleRemoved: "Vehicle removed from the whitelist.", garageApplied: "Garage layout applied successfully.", camerasSaved: "Camera allocation saved successfully.", billingApplied: "Billing settings applied successfully.", loginFailed: "Unable to sign in. Please check your credentials.", requestFailed: "Unable to complete that request. Please try again.", checkingSession: "Checking session...", examplePlate: "e.g. ABC-123", exampleManager: "e.g. Manager",
     },
     ur: {
         language: "English", theme: "ڈارک موڈ", lightTheme: "لائٹ موڈ", signOut: "سائن آؤٹ",
@@ -99,8 +102,8 @@ const TRANSLATIONS = {
         cameraTitle: "انٹری اور ایگزٹ", cameraSetupTitle: "کیمرہ سیٹ اپ۔", cameraIntro: "ہر لین کے لیے کیمروں کی تعداد سیٹ کریں۔ ہر لین میں 1 سے 4 کیمرے ہونے چاہئیں۔", entryCameras: "انٹری لین کیمرے", exitCameras: "ایگزٹ لین کیمرے", saveCameras: "کیمرے سیو کریں",
         paymentTitle: "پیمنٹ", paymentSettings: "سیٹنگز۔", paymentIntro: "اپنے پارکنگ گیراج کے لیے پیمنٹ آپشنز اینیبل یا ڈس ایبل کریں۔", enablePayments: "پیمنٹ آپشنز اینیبل کریں", acceptedPayments: "ایکسیپٹڈ پیمنٹ میتھڈز سلیکٹ کریں:", cash: "کیش", card: "کارڈ",
         workspace: "ایڈمن ورک اسپیس", welcomeBack: "ویلکم بیک،", online: "سسٹم آن لائن ہے", workspaceIntro: "اپنا گیراج منیج کرنے کے لیے سائیڈ بار سے ایک فیچر سلیکٹ کریں۔",
-        adminAccess: "گیراج ایڈمنسٹریشن", makeEvery: "ہر", spaceCount: "سپیس اہم بنائیں۔", loginIntro: "آپ کے پارکنگ فلور کے آپریشن کا ایک کلیئر، کوائٹ ویو۔", secureAccess: "سیکیور ایڈمن ایکسیس", signInTitle: "اپنی ورک اسپیس میں", yourWorkspace: "سائن ان کریں۔", username: "یوزر نیم یا ای میل", password: "پاس ورڈ", signingIn: "سائن ان ہو رہا ہے...", enterWorkspace: "ورک اسپیس اینٹر کریں", returnGarage: "گیراج ویو پر بیک جائیں →", showPassword: "پاس ورڈ شو کریں", hidePassword: "پاس ورڈ ہائیڈ کریں", forgotPassword: "پاس ورڈ بھول گئے؟", forgotPasswordTitle: "پاس ورڈ بھول گئے", forgotPasswordHint: "اپنا یوزر نیم یا ای میل درج کریں", continueLabel: "کنٹینیو کریں", backToSignIn: "← سائن ان پر بیک جائیں", forgotPasswordNotice: "پاس ورڈ ریکوری ابھی دستیاب نہیں۔ براہ کرم اپنے ایڈمنسٹریٹر سے کانٹیکٹ کریں۔",
-        required: "یہ فیلڈ ضروری ہے۔", zero: "یہ فیلڈ زیرو نہیں ہو سکتی۔", positiveNumber: "براہ کرم ایک ویلڈ پازیٹو نمبر درج کریں۔", maxLevels: "زیادہ سے زیادہ 12 لیولز الاؤڈ ہیں۔", cameraRange: "براہ کرم 1 سے 4 کے درمیان ویلیو درج کریں۔", fixErrors: "اپلائی کرنے سے پہلے ایررز فکس کریں۔", fixCameraErrors: "سیو کرنے سے پہلے کیمرہ لین ایررز فکس کریں۔", vehicleAdded: "وہیکل وائٹ لسٹ میں ایڈ ہو گئی ہے۔", vehicleRemoved: "وہیکل وائٹ لسٹ سے ریموو ہو گئی ہے۔", garageApplied: "گیراج لے آؤٹ کامیابی سے اپلائی ہو گیا ہے۔", camerasSaved: "کیمرہ الوکیشن کامیابی سے سیو ہو گئی ہے۔", billingApplied: "بلنگ سیٹنگز کامیابی سے اپلائی ہو گئی ہیں۔", loginFailed: "سائن ان نہیں ہو سکا۔ براہ کرم اپنی کریڈینشلز چیک کریں۔", requestFailed: "وہ ریکویسٹ کمپلیٹ نہیں ہو سکی۔ براہ کرم دوبارہ ٹرائی کریں۔", checkingSession: "سیشن چیک ہو رہا ہے...", examplePlate: "مثلاً ABC-123", exampleManager: "مثلاً منیجر",
+        adminAccess: "گیراج ایڈمنسٹریشن", makeEvery: "ہر", spaceCount: "سپیس اہم بنائیں۔", loginIntro: "آپ کے پارکنگ فلور کے آپریشن کا ایک کلیئر، کوائٹ ویو۔", secureAccess: "سیکیور ایڈمن ایکسیس", signInTitle: "اپنی ورک اسپیس میں", yourWorkspace: "سائن ان کریں۔", username: "یوزر نیم یا ای میل", password: "پاس ورڈ", signingIn: "سائن ان ہو رہا ہے...", enterWorkspace: "ورک اسپیس اینٹر کریں", showPassword: "پاس ورڈ شو کریں", hidePassword: "پاس ورڈ ہائیڈ کریں", forgotPassword: "پاس ورڈ بھول گئے؟", forgotPasswordTitle: "پاس ورڈ بھول گئے", forgotPasswordHint: "اپنا یوزر نیم یا ای میل درج کریں", continueLabel: "کنٹینیو کریں", backToSignIn: "← سائن ان پر بیک جائیں", forgotPasswordNotice: "پاس ورڈ ریکوری ابھی دستیاب نہیں۔ براہ کرم اپنے ایڈمنسٹریٹر سے کانٹیکٹ کریں۔",
+        required: "یہ فیلڈ ضروری ہے۔", zero: "یہ فیلڈ زیرو نہیں ہو سکتی۔", positiveNumber: "براہ کرم ایک ویلڈ پازیٹو نمبر درج کریں۔", maxLevels: "زیادہ سے زیادہ 25 لیولز الاؤڈ ہیں۔", cameraRange: "براہ کرم 1 سے 4 کے درمیان ویلیو درج کریں۔", fixErrors: "اپلائی کرنے سے پہلے ایررز فکس کریں۔", fixCameraErrors: "سیو کرنے سے پہلے کیمرہ لین ایررز فکس کریں۔", vehicleAdded: "وہیکل وائٹ لسٹ میں ایڈ ہو گئی ہے۔", vehicleRemoved: "وہیکل وائٹ لسٹ سے ریموو ہو گئی ہے۔", garageApplied: "گیراج لے آؤٹ کامیابی سے اپلائی ہو گیا ہے۔", camerasSaved: "کیمرہ الوکیشن کامیابی سے سیو ہو گئی ہے۔", billingApplied: "بلنگ سیٹنگز کامیابی سے اپلائی ہو گئی ہیں۔", loginFailed: "سائن ان نہیں ہو سکا۔ براہ کرم اپنی کریڈینشلز چیک کریں۔", requestFailed: "وہ ریکویسٹ کمپلیٹ نہیں ہو سکی۔ براہ کرم دوبارہ ٹرائی کریں۔", checkingSession: "سیشن چیک ہو رہا ہے...", examplePlate: "مثلاً ABC-123", exampleManager: "مثلاً منیجر",
     },
 };
 
@@ -441,6 +444,20 @@ function AdminPage() {
             ) && !pendingLocalImageFolder
         );
     }, [garageSettings, savedGarageSettings, pendingLocalImageFolder]);
+    // Live capacity feedback as levels/spaces are edited, ahead of the
+    // hard checks at apply/save time. Only touches the message when it
+    // owns it (the capacity text), so it never clobbers an unrelated
+    // success/warning message set elsewhere.
+    useEffect(() => {
+        if ((garageSettings.mode || "parking") !== "parking") return;
+        const capacityError = buildGarageCapacityError(computeGarageTotalSpaces(garageSettings.levels));
+        if (capacityError) {
+            setGarageSettingsMessageType("warning");
+            setGarageSettingsMessage(capacityError);
+        } else {
+            setGarageSettingsMessage((current) => (current.startsWith(GARAGE_CAPACITY_ERROR_PREFIX) ? "" : current));
+        }
+    }, [garageSettings.levels, garageSettings.mode, advancedGarageSettings]);
 
     async function handleSubmit(event) {
         event.preventDefault();
@@ -827,14 +844,14 @@ function AdminPage() {
 
     async function removeLiveSession(sessionId) {
         if (!window.confirm("Remove this vehicle from parking and free its space?")) return;
-        try { await removeParkingSession(token, sessionId); await loadParkingActivity(); emitParkingDataUpdated(); }
+        try { await removeParkingSession(token, sessionId); emitParkingDataUpdated(); await loadParkingActivity(); }
         catch (err) { setActivityError(err.message || "Unable to remove parking."); }
     }
 
     async function editLiveSession(session) {
         const nextPlate = window.prompt("Number plate", session.plate);
         if (!nextPlate || nextPlate.trim().toUpperCase() === session.plate) return;
-        try { await updateParkingVehicle(token, session.session_id, nextPlate.trim().toUpperCase()); await loadParkingActivity(); emitParkingDataUpdated(); }
+        try { await updateParkingVehicle(token, session.session_id, nextPlate.trim().toUpperCase()); emitParkingDataUpdated(); await loadParkingActivity(); }
         catch (err) { setActivityError(err.message || "Unable to update vehicle."); }
     }
 
@@ -1297,7 +1314,7 @@ function AdminPage() {
             return t.positiveNumber;
         }
 
-        if (field === "levels" && numericValue > 12) {
+        if (field === "levels" && numericValue > MAX_GARAGE_LEVELS) {
             return t.maxLevels;
         }
 
@@ -1327,7 +1344,7 @@ function AdminPage() {
                 };
             }
 
-            const numericCount = Math.min(12, Math.max(1, Number(cleanedValue) || 1));
+            const numericCount = Math.min(MAX_GARAGE_LEVELS, Math.max(1, Number(cleanedValue) || 1));
             const existingLevels = current.levels || [];
             const nextLevels = Array.from({ length: numericCount }, (_, index) => {
                 const levelNumber = index + 1;
@@ -1422,6 +1439,24 @@ function AdminPage() {
         return { errors, hasError };
     }
 
+    // The actual save payload (payloadLevels in confirmGarageSettings) is
+    // always built from garageSettings.levels, whether or not the advanced
+    // editor is open -- so summing per-level spaces is the true effective
+    // total in both basic mode (where every level is kept in sync with the
+    // shared spaces-per-level field) and advanced mode (independent values).
+    function computeGarageTotalSpaces(levels) {
+        return (levels || []).reduce((total, level) => total + (Number(level.spaces) || 0), 0);
+    }
+
+    function buildGarageCapacityError(total) {
+        if (total <= MAX_TOTAL_PARKING_SPACES) return "";
+        const capLabel = MAX_TOTAL_PARKING_SPACES.toLocaleString();
+        const totalLabel = total.toLocaleString();
+        return advancedGarageSettings
+            ? `${GARAGE_CAPACITY_ERROR_PREFIX} ${capLabel} spaces. The configured levels currently exceed this limit. Current configuration: ${totalLabel} spaces.`
+            : `${GARAGE_CAPACITY_ERROR_PREFIX} ${capLabel} spaces. Reduce the number of levels or spaces per level. Current configuration: ${totalLabel} spaces.`;
+    }
+
     function handleGarageSettingsApply(event) {
         event.preventDefault();
         if (settingsSubmitting === "garage") return;
@@ -1463,6 +1498,14 @@ function AdminPage() {
         if (hasError || advancedValidation.hasError) {
             setGarageSettingsMessageType("warning");
             setGarageSettingsMessage(t.fixErrors);
+            setConfirmationOpen(false);
+            return;
+        }
+
+        const capacityError = buildGarageCapacityError(computeGarageTotalSpaces(garageSettings.levels));
+        if (capacityError) {
+            setGarageSettingsMessageType("warning");
+            setGarageSettingsMessage(capacityError);
             setConfirmationOpen(false);
             return;
         }
@@ -1527,6 +1570,14 @@ function AdminPage() {
         if (levelsError || spacesError || advancedValidation.hasError) {
             setGarageSettingsMessageType("warning");
             setGarageSettingsMessage(t.fixErrors);
+            setConfirmationOpen(false);
+            return;
+        }
+
+        const capacityError = buildGarageCapacityError(computeGarageTotalSpaces(garageSettings.levels));
+        if (capacityError) {
+            setGarageSettingsMessageType("warning");
+            setGarageSettingsMessage(capacityError);
             setConfirmationOpen(false);
             return;
         }
@@ -2318,7 +2369,6 @@ function AdminPage() {
                             <button type="button" className="admin-forgot-link" onClick={openForgotPassword}>{t.forgotPassword}</button>
                         </>
                     )}
-                    <a className="admin-return" href="/">{t.returnGarage}</a>
                 </div>
             </section>
         </main>

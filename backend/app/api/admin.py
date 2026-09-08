@@ -25,6 +25,9 @@ from app.services.daily_analytics_service import backfill_completed_days, live_d
 router = APIRouter(prefix="/admin", tags=["admin"])
 bearer_scheme = HTTPBearer(auto_error=False)
 
+MAX_GARAGE_LEVELS = 25
+MAX_TOTAL_PARKING_SPACES = 1000
+
 
 class AdminLoginRequest(BaseModel):
     username: str = Field(min_length=1, max_length=80)
@@ -42,16 +45,16 @@ class WhitelistRemoveRequest(BaseModel):
 
 
 class GarageLevelRequest(BaseModel):
-    id: int = Field(ge=1, le=12)
+    id: int = Field(ge=1, le=MAX_GARAGE_LEVELS)
     name: str = Field(min_length=1, max_length=100)
-    spaces: int = Field(ge=1, le=1000)
+    spaces: int = Field(ge=1, le=MAX_TOTAL_PARKING_SPACES)
 
 
 class GarageSettingsRequest(BaseModel):
     mode: str = "parking"
-    level_count: int = Field(ge=0, le=12)
-    spaces_per_level: int = Field(ge=0, le=1000)
-    levels: list[GarageLevelRequest] = Field(default_factory=list, max_length=12)
+    level_count: int = Field(ge=0, le=MAX_GARAGE_LEVELS)
+    spaces_per_level: int = Field(ge=0, le=MAX_TOTAL_PARKING_SPACES)
+    levels: list[GarageLevelRequest] = Field(default_factory=list, max_length=MAX_GARAGE_LEVELS)
     automatic_entry: bool = False
     local_image_saving: bool = False
 
@@ -67,6 +70,12 @@ class GarageSettingsRequest(BaseModel):
             raise ValueError("The number of levels must match level_count.")
         if len({level.id for level in self.levels}) != len(self.levels):
             raise ValueError("Each level must have a unique id.")
+        total_spaces = sum(level.spaces for level in self.levels)
+        if total_spaces > MAX_TOTAL_PARKING_SPACES:
+            raise ValueError(
+                f"Maximum parking capacity is {MAX_TOTAL_PARKING_SPACES} spaces. "
+                f"Current configuration: {total_spaces} spaces."
+            )
         return self
 
 

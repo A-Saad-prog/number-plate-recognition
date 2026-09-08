@@ -22,7 +22,7 @@ const VISION_DEBUG = import.meta.env.DEV && import.meta.env.VITE_VISION_DEBUG ==
 const GARAGE_SETTINGS_UPDATED_KEY = "parking_garage_settings_updated";
 const PARKING_DATA_UPDATED_KEY = "parking_data_updated";
 const PARKING_DATA_UPDATED_EVENT = "parking-data-updated";
-const GARAGE_THEME_KEY = "parking_garage_theme";
+const ADMIN_TOKEN_STORAGE_KEY = "parking_admin_token";
 const MULTI_CAMERA_ORCHESTRATION_TEST = false;
 const PARTIAL_GUARD_EVIDENCE_TTL_MS = 3000;
 const PARTIAL_GUARD_STRONG_CONFIDENCE = 0.85;
@@ -397,6 +397,11 @@ function GaragePage() {
     // exact real data, with zero added latency once it has resolved.
     const parkingSpacesInitialLoadRef = useRef(null);
     const parkingMutationVersionRef = useRef(0);
+    // Coalesces overlapping loadParkingSpaces() calls (e.g. an admin
+    // update event firing while the poll interval's request is still
+    // in flight): instead of racing a duplicate request, queue one
+    // trailing refresh so the latest data is still fetched exactly once.
+    const parkingSpacesFetchStateRef = useRef({ inFlight: false, queued: false });
     const optimisticEntriesRef = useRef({});
     const [parkingLoading, setParkingLoading] = useState(false);
     const [parkingError, setParkingError] = useState("");
@@ -419,19 +424,13 @@ function GaragePage() {
     const automaticEntryRef = useRef(false);
     const [garageAuthFailed, setGarageAuthFailed] = useState(false);
     const garageAuthFailedRef = useRef(false);
-    const [showSettingsReloadNotice, setShowSettingsReloadNotice] = useState(false);
-    const [garageTheme, setGarageTheme] = useState(() => (
-        ["system", "light", "dark"].includes(localStorage.getItem(GARAGE_THEME_KEY))
-            ? localStorage.getItem(GARAGE_THEME_KEY)
-            : "light"
-    ));
-    const [garageSystemDark, setGarageSystemDark] = useState(
-        () => window.matchMedia?.("(prefers-color-scheme: dark)")?.matches || false
-    );
-    const appliedGarageTheme =
-        garageTheme === "system"
-            ? (garageSystemDark ? "dark" : "light")
-            : garageTheme;
+    // Mandatory reload prompt: shown when an admin changes Garage
+    // configuration, or logs into Admin, while this Garage tab is open.
+    // Unlike the old dismissable notice, this blocks interaction until
+    // Reload is clicked -- stale config/session must not be actionable.
+    const [reloadRequired, setReloadRequired] = useState(false);
+    const reloadDialogRef = useRef(null);
+    const reloadButtonRef = useRef(null);
 
     const [activeLane, setActiveLane] = useState("entry");
     const activeLaneRef = useRef("entry");
@@ -586,6 +585,13 @@ function GaragePage() {
 
     async function loadParkingSpaces() {
         if (garageAuthFailedRef.current) return false;
+
+        if (parkingSpacesFetchStateRef.current.inFlight) {
+            parkingSpacesFetchStateRef.current.queued = true;
+            return false;
+        }
+        parkingSpacesFetchStateRef.current.inFlight = true;
+
         try {
             setParkingLoading(true);
             setParkingError("");
@@ -657,6 +663,11 @@ function GaragePage() {
 
         } finally {
             setParkingLoading(false);
+            parkingSpacesFetchStateRef.current.inFlight = false;
+            if (parkingSpacesFetchStateRef.current.queued) {
+                parkingSpacesFetchStateRef.current.queued = false;
+                void loadParkingSpaces();
+            }
         }
     }
 
@@ -780,13 +791,38 @@ function GaragePage() {
     useEffect(() => {
         const handleSettingsUpdate = (event) => {
             if (event.key === GARAGE_SETTINGS_UPDATED_KEY && event.newValue) {
-                void loadAdminSettings();
-                setShowSettingsReloadNotice(true);
+                setReloadRequired(true);
             }
         };
         window.addEventListener("storage", handleSettingsUpdate);
         return () => window.removeEventListener("storage", handleSettingsUpdate);
     }, []);
+
+    // A genuinely new admin login (not a logout, not the same session
+    // being re-saved) in another tab must also force a reload here, since
+    // that session may carry configuration this tab hasn't seen yet.
+    useEffect(() => {
+        const handleAdminTokenChange = (event) => {
+            if (
+                event.key === ADMIN_TOKEN_STORAGE_KEY &&
+                event.newValue &&
+                event.newValue !== event.oldValue
+            ) {
+                setReloadRequired(true);
+            }
+        };
+        window.addEventListener("storage", handleAdminTokenChange);
+        return () => window.removeEventListener("storage", handleAdminTokenChange);
+    }, []);
+
+    useEffect(() => {
+        const dialog = reloadDialogRef.current;
+        if (!dialog) return;
+        if (reloadRequired && !dialog.open) {
+            dialog.showModal();
+            reloadButtonRef.current?.focus();
+        }
+    }, [reloadRequired]);
 
     useEffect(() => {
         const handleParkingDataUpdate = (event) => {
@@ -815,30 +851,6 @@ function GaragePage() {
                 handleParkingDataUpdatedEvent
             );
         };
-    }, []);
-
-    useEffect(() => {
-        localStorage.setItem(GARAGE_THEME_KEY, garageTheme);
-    }, [garageTheme]);
-
-    useEffect(() => {
-        const mediaQuery =
-            window.matchMedia?.("(prefers-color-scheme: dark)");
-
-        if (!mediaQuery) return;
-
-        const updateSystemTheme = (event) =>
-            setGarageSystemDark(event.matches);
-
-        setGarageSystemDark(mediaQuery.matches);
-
-        mediaQuery.addEventListener?.("change", updateSystemTheme);
-
-        return () =>
-            mediaQuery.removeEventListener?.(
-                "change",
-                updateSystemTheme
-            );
     }, []);
 
     useEffect(() => {
@@ -2100,14 +2112,36 @@ function GaragePage() {
     }
 
     return (
-        <div className={`app garage-theme-${appliedGarageTheme}`}>
-            {showSettingsReloadNotice && (
-                <div className="settings-reload-notice" role="status">
-                    <span>Admin changes applied. Reload Garage to use the latest configuration.</span>
-                    <button type="button" onClick={() => window.location.reload()}>Reload</button>
-                    <button type="button" onClick={() => setShowSettingsReloadNotice(false)}>Dismiss</button>
-                </div>
-            )}
+        <div className="app">
+            <dialog
+                ref={reloadDialogRef}
+                className="garage-reload-dialog"
+                role="alertdialog"
+                aria-labelledby="garage-reload-title"
+                aria-describedby="garage-reload-message"
+                onCancel={(event) => event.preventDefault()}
+                onClose={() => {
+                    // This code never calls .close() itself (the only way
+                    // out is window.location.reload()), and the cancel
+                    // handler above already blocks Escape -- so the only
+                    // way this fires while reloadRequired is still true is
+                    // some platform edge case forcing the dialog shut.
+                    // Reopen immediately rather than leaving Garage
+                    // interactive with stale config/session.
+                    if (reloadRequired) {
+                        reloadDialogRef.current?.showModal();
+                        reloadButtonRef.current?.focus();
+                    }
+                }}
+            >
+                <h2 id="garage-reload-title">Garage Update Required</h2>
+                <p id="garage-reload-message">
+                    Garage settings were updated by an administrator. Reload to apply the latest configuration.
+                </p>
+                <button ref={reloadButtonRef} type="button" autoFocus onClick={() => window.location.reload()}>
+                    Reload
+                </button>
+            </dialog>
             {garageAuthFailed && <div className="settings-reload-notice" role="alert">Your admin session has expired. <a href="/admin">Sign in again</a></div>}
             <header className="header">
                 <div>
@@ -2116,17 +2150,6 @@ function GaragePage() {
                     </h1>
 
                     <div className="garage-header-controls">
-                        <select
-                            className="garage-theme-select"
-                            value={garageTheme}
-                            onChange={(event) => setGarageTheme(event.target.value)}
-                            aria-label="Select theme"
-                        >
-                            <option value="system">System Default</option>
-                            <option value="light">Light</option>
-                            <option value="dark">Dark</option>
-                        </select>
-
                         <button
                             type="button"
                             className="garage-admin-link"

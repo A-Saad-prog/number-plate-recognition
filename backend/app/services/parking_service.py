@@ -32,8 +32,49 @@ def get_all_spaces(
     active vehicle information.
     """
 
-    spaces = (
-        db.query(ParkingSpace)
+    ranked_sessions = (
+        db.query(
+            ParkingSession.parking_space_id.label("parking_space_id"),
+            ParkingSession.vehicle_id.label("vehicle_id"),
+            ParkingSession.entry_time.label("entry_time"),
+            func.row_number()
+            .over(
+                partition_by=ParkingSession.parking_space_id,
+                order_by=ParkingSession.entry_time.asc(),
+            )
+            .label("rn"),
+        )
+        .filter(
+            ParkingSession.tenant_id == tenant_id,
+            ParkingSession.status == "active",
+            ParkingSession.exit_time == None,
+        )
+        .subquery()
+    )
+
+    active_session = (
+        db.query(ranked_sessions)
+        .filter(ranked_sessions.c.rn == 1)
+        .subquery()
+    )
+
+    rows = (
+        db.query(
+            ParkingSpace.id,
+            ParkingSpace.level,
+            ParkingSpace.space_number,
+            active_session.c.entry_time,
+            Vehicle.license_plate,
+        )
+        .outerjoin(
+            active_session,
+            active_session.c.parking_space_id == ParkingSpace.id,
+        )
+        .outerjoin(
+            Vehicle,
+            (Vehicle.id == active_session.c.vehicle_id)
+            & (Vehicle.tenant_id == tenant_id),
+        )
         .filter(
             ParkingSpace.tenant_id == tenant_id,
             ParkingSpace.is_active == True,
@@ -53,47 +94,17 @@ def get_all_spaces(
 
     result = []
 
-    for space in spaces:
-        license_plate = None
-        entry_time = None
-
-        session = (
-            db.query(ParkingSession)
-            .filter(
-                ParkingSession.parking_space_id == space.id,
-                ParkingSession.tenant_id == tenant_id,
-                ParkingSession.status == "active",
-                ParkingSession.exit_time == None,
-            )
-            .order_by(ParkingSession.entry_time.asc())
-            .first()
-        )
-
-        actually_occupied = session is not None
-
-        if session:
-            vehicle = (
-                db.query(Vehicle)
-                .filter(
-                    Vehicle.id == session.vehicle_id,
-                    Vehicle.tenant_id == tenant_id,
-                )
-                .first()
-            )
-
-            if vehicle:
-                license_plate = vehicle.license_plate
-
-            entry_time = session.entry_time
+    for row in rows:
+        actually_occupied = row.entry_time is not None
 
         result.append(
             {
-                "id": space.id,
-                "level": space.level,
-                "space": space.space_number,
+                "id": row.id,
+                "level": row.level,
+                "space": row.space_number,
                 "is_occupied": actually_occupied,
-                "license_plate": license_plate,
-                "entry_time": entry_time,
+                "license_plate": row.license_plate if actually_occupied else None,
+                "entry_time": row.entry_time,
             }
         )
 
