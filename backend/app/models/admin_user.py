@@ -24,3 +24,6 @@ class AdminUser(Base):
     # Bumped whenever the password changes (e.g. via recovery) to invalidate
     # JWTs issued before that point -- see auth_service.get_current_admin.
     session_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
+    # Whether this admin has completed (or skipped) the first-login onboarding tour.
+    onboarding_completed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

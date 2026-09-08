@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import {
@@ -24,6 +24,7 @@ import {
     verifyRecoveryEmail,
     verifyRecoveryTotp,
     resetAdminPassword,
+    completeAdminOnboarding,
 } from "../services/api";
 
 import {
@@ -33,6 +34,8 @@ import {
 
 import "../styles/AdminPage.css";
 import { activatePlateImageFolder, localPlateImageSupport, savedPlateImageFolderName, selectPlateImageFolder } from "../services/localPlateImages";
+import AdminTour from "../components/AdminTour";
+import { ADMIN_TOUR_STEPS } from "../config/adminTourSteps";
 
 const TOKEN_KEY = "parking_admin_token";
 const LANGUAGE_KEY = "parking_admin_language";
@@ -258,6 +261,9 @@ function AdminPage() {
     const [securityTotpSetup, setSecurityTotpSetup] = useState(null);
     const [securityTotpCode, setSecurityTotpCode] = useState("");
     const [adminName, setAdminName] = useState("");
+    const [onboardingCompleted, setOnboardingCompleted] = useState(true);
+    const [tourOpen, setTourOpen] = useState(false);
+    const tourAutoStartedRef = useRef(false);
     const [token, setToken] = useState(() => {
         return localStorage.getItem(TOKEN_KEY);
     });
@@ -387,8 +393,16 @@ function AdminPage() {
 
     useEffect(() => {
         if (!token) return;
+        // A new token means a genuinely new authenticated session (fresh
+        // login, or re-login after sign-out in the same tab) -- always give
+        // it an honest chance to auto-start based on freshly fetched data,
+        // rather than inheriting a previous admin's "already shown" guard.
+        tourAutoStartedRef.current = false;
         getAdminSession(token)
-            .then((session) => setAdminName(session.username))
+            .then((session) => {
+                setAdminName(session.username);
+                setOnboardingCompleted(Boolean(session.onboarding_completed));
+            })
             .catch((sessionError) => {
                 if (sessionError.status === 401) {
                     localStorage.removeItem(TOKEN_KEY);
@@ -435,6 +449,65 @@ function AdminPage() {
             })
             .catch(() => { });
     }, [token]);
+
+    // Auto-start the onboarding tour once for a genuinely new admin, after
+    // the authenticated workspace has fully rendered and no other modal is
+    // in the way. tourAutoStartedRef guards against re-triggering if
+    // onboardingCompleted flips during this session (e.g. after Finish/Skip).
+    useEffect(() => {
+        if (!token || loading) return;
+        if (onboardingCompleted) return;
+        if (securityModalOpen || confirmationOpen) return;
+        if (tourAutoStartedRef.current) return;
+        tourAutoStartedRef.current = true;
+        setTourOpen(true);
+    }, [token, loading, onboardingCompleted, securityModalOpen, confirmationOpen]);
+
+    // Self-heal without needing a page reload: if the admin's onboarding
+    // flag was changed directly in the database while this tab was already
+    // open (or just sitting in the background), pick that up the moment the
+    // tab becomes active again instead of requiring a manual refresh.
+    useEffect(() => {
+        if (!token) return;
+        const recheckOnboardingStatus = () => {
+            if (document.visibilityState !== "visible") return;
+            getAdminSession(token)
+                .then((session) => {
+                    setOnboardingCompleted(Boolean(session.onboarding_completed));
+                })
+                .catch(() => { });
+        };
+        document.addEventListener("visibilitychange", recheckOnboardingStatus);
+        window.addEventListener("focus", recheckOnboardingStatus);
+        return () => {
+            document.removeEventListener("visibilitychange", recheckOnboardingStatus);
+            window.removeEventListener("focus", recheckOnboardingStatus);
+        };
+    }, [token]);
+
+    const finishOnboardingTour = useCallback(() => {
+        setTourOpen(false);
+        setOnboardingCompleted(true);
+        if (token) {
+            completeAdminOnboarding(token).catch(() => { });
+        }
+    }, [token]);
+
+    // Manual replay from the floating "?" button -- never resets the
+    // persisted completion flag, it just reopens the tour from step 1.
+    const startAdminTour = useCallback(() => {
+        setTourOpen(true);
+    }, []);
+
+    // Intentionally not memoized: AdminTour stores this in a ref and reads
+    // the latest closure on each step change, so it always sees current
+    // loadParkingActivity/loadAnalytics instances rather than a stale one.
+    const handleTourNavigate = (feature) => {
+        setActiveFeature(feature);
+        if (feature === "parking-activity") loadParkingActivity();
+        if (feature === "analytics") loadAnalytics();
+    };
+
     useEffect(() => { savedPlateImageFolderName().then((name) => setLocalImageFolder(name || "")).catch(() => { }); }, []);
     useEffect(() => {
         setGarageSettingsAlreadyApplied(
@@ -586,6 +659,8 @@ function AdminPage() {
         sessionStorage.removeItem(TOKEN_KEY);
         setToken(null);
         setAdminName("");
+        setTourOpen(false);
+        setOnboardingCompleted(true);
         setSecurityModalOpen(false);
         setSecurityStatus(null);
         setSecurityEmailCodeSent(false);
@@ -1655,7 +1730,7 @@ function AdminPage() {
             <main className={`admin-shell admin-theme-${appliedTheme}`} dir={isUrdu ? "rtl" : "ltr"} lang={language}>
                 <header className="admin-header">
                     <a href="/" className="admin-logo">PARKING<span>OS</span></a>
-                    <div className="admin-header-actions"><button type="button" className="theme-toggle" onClick={() => openOrFocusNamedTab("/", "parkingos-garage")}>Open Garage</button><div className="account-menu"><button type="button" className="admin-user" aria-expanded={accountMenuOpen} onClick={() => setAccountMenuOpen((open) => !open)}>{adminName}</button>{accountMenuOpen && <div className="account-dropdown"><strong>Appearance</strong><button onClick={() => { setTheme("system"); setAccountMenuOpen(false); }}>System Default</button><button onClick={() => { setTheme("light"); setAccountMenuOpen(false); }}>Light</button><button onClick={() => { setTheme("dark"); setAccountMenuOpen(false); }}>Dark</button><strong>Language</strong><button onClick={() => { setLanguage("en"); setAccountMenuOpen(false); }}>English</button><button onClick={() => { setLanguage("ur"); setAccountMenuOpen(false); }}>Urdu</button><strong>Account</strong><button onClick={openSecurityModal}>Account Security</button><button className="sign-out" onClick={signOut}>{t.signOut}</button></div>}</div></div>
+                    <div className="admin-header-actions"><button type="button" className="theme-toggle" onClick={() => openOrFocusNamedTab("/", "parkingos-garage")}>Open Garage</button><div className="account-menu"><button type="button" className="admin-user" data-tour="account-menu" aria-expanded={accountMenuOpen} onClick={() => setAccountMenuOpen((open) => !open)}>{adminName}</button>{accountMenuOpen && <div className="account-dropdown"><strong>Appearance</strong><button onClick={() => { setTheme("system"); setAccountMenuOpen(false); }}>System Default</button><button onClick={() => { setTheme("light"); setAccountMenuOpen(false); }}>Light</button><button onClick={() => { setTheme("dark"); setAccountMenuOpen(false); }}>Dark</button><strong>Language</strong><button onClick={() => { setLanguage("en"); setAccountMenuOpen(false); }}>English</button><button onClick={() => { setLanguage("ur"); setAccountMenuOpen(false); }}>Urdu</button><strong>Account</strong><button onClick={openSecurityModal}>Account Security</button><button className="sign-out" onClick={signOut}>{t.signOut}</button></div>}</div></div>
                 </header>
                 <div className="admin-app-body">
                     <aside className="admin-sidebar">
@@ -1679,7 +1754,7 @@ function AdminPage() {
                     </aside>
                     <section className="admin-dashboard">
                         {activeFeature === "parking-activity" ? (
-                            <div className="feature-view">
+                            <div className="feature-view" data-tour="parking-activity-panel">
                                 <h1>Parking<br /><span>activity.</span></h1>
                                 <p className="admin-message">Live parking, recent visits, and active space status.</p>
                                 <button type="button" className="activity-refresh" onClick={loadParkingActivity} disabled={activityLoading} aria-label="Refresh activity"><span className={activityLoading ? "spinning" : ""}>↻</span></button>
@@ -1812,7 +1887,7 @@ function AdminPage() {
                                 </>}
                             </div>
                         ) : activeFeature === "analytics" ? (
-                            <div className="feature-view">
+                            <div className="feature-view" data-tour="analytics-panel">
                                 <h1>Garage<br /><span>analytics.</span></h1>
                                 {analytics ? (
                                     <>
@@ -1854,7 +1929,7 @@ function AdminPage() {
                                 )}
                             </div>
                         ) : activeFeature === "whitelist" ? (
-                            <div className="feature-view">
+                            <div className="feature-view" data-tour="whitelist-panel">
                                 <h1>{t.vehicleTitle}<br /><span>{t.whitelistTitle}</span></h1>
                                 <p className="admin-message">{t.vehicleIntro}</p>
                                 <div className="whitelist-actions">
@@ -1867,7 +1942,7 @@ function AdminPage() {
                                 {whitelistVisible && <div className={`whitelist-table-wrap${whitelistListLoading || whitelist.length === 0 ? " admin-loading" : ""}`}>{whitelistListLoading ? "Loading list..." : whitelist.length > 0 ? <table><thead><tr><th>{t.name}</th><th>{t.numberPlate}</th><th>{t.discount}</th><th>{t.added}</th></tr></thead><tbody>{whitelist.map((entry) => <tr key={entry.id}><td>{entry.vehicle_name}</td><td>{entry.license_plate}</td><td>{entry.discount_percent}%</td><td>{entry.created_at ? new Date(entry.created_at).toLocaleDateString(language === "ur" ? "ur-PK" : "en-PK", { timeZone: "Asia/Karachi" }) : "-"}</td></tr>)}</tbody></table> : "No whitelist entries."}</div>}
                             </div>
                         ) : activeFeature === "garage-settings" ? (
-                            <div className="feature-view">
+                            <div className="feature-view" data-tour="garage-settings-panel">
                                 <h1>{t.garageTitle}<br /><span>{t.layoutTitle}</span></h1>
                                 <p className="admin-message">{t.garageIntro}</p>
 
@@ -1990,7 +2065,7 @@ function AdminPage() {
 
                             </div>
                         ) : activeFeature === "camera-config" ? (
-                            <div className="feature-view">
+                            <div className="feature-view" data-tour="camera-config-panel">
                                 <h1>{t.cameraTitle}<br /><span>{t.cameraSetupTitle}</span></h1>
                                 <p className="admin-message">{t.cameraIntro}</p>
                                 <p className="form-hint">Up to 4 cameras can be assigned across entry and exit lanes. {Math.min(4, safeEntryCameraCount + safeExitCameraCount)} of 4 assigned.</p>
@@ -2101,7 +2176,7 @@ function AdminPage() {
                                 </form>
                             </div>
                         ) : activeFeature === "billing" ? (
-                            <div className="feature-view">
+                            <div className="feature-view" data-tour="billing-panel">
                                 <h1>{t.paymentTitle}<br /><span>{t.paymentSettings}</span></h1>
                                 <p className="admin-message">{t.paymentIntro}</p>
 
@@ -2147,7 +2222,7 @@ function AdminPage() {
                                 </form>
                             </div>
                         ) : (
-                            <div className="feature-view">
+                            <div className="feature-view" data-tour="admin-dashboard">
                                 <p className="admin-label">{t.workspace}</p>
                                 <h1>{t.welcomeBack}<br /><span>{adminName}.</span></h1>
                                 <div className="admin-status"><b /> {t.online}</div>
@@ -2257,6 +2332,21 @@ function AdminPage() {
                         </div>
                     )}
                 </div>
+                <button
+                    type="button"
+                    className="admin-help-button"
+                    aria-label="Start admin tutorial"
+                    onClick={startAdminTour}
+                >
+                    ?
+                </button>
+                <AdminTour
+                    steps={ADMIN_TOUR_STEPS}
+                    open={tourOpen}
+                    onNavigate={handleTourNavigate}
+                    onFinish={finishOnboardingTour}
+                    onSkip={finishOnboardingTour}
+                />
             </main>
         );
     }

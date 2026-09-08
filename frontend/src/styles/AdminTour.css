@@ -1,0 +1,259 @@
+.admin-tour-root {
+    position: fixed;
+    inset: 0;
+    z-index: 4000;
+}
+
+.admin-tour-mask {
+    position: fixed;
+    background: rgba(16, 35, 28, 0.55);
+    pointer-events: auto;
+    transition: top .25s ease, left .25s ease, right .25s ease, bottom .25s ease, height .25s ease, width .25s ease;
+}
+
+.admin-tour-spotlight {
+    position: fixed;
+    border-radius: 10px;
+    box-shadow:
+        0 0 0 2px rgba(224, 91, 53, .65),
+        0 0 0 6px rgba(224, 91, 53, .18),
+        0 0 26px rgba(224, 91, 53, .35);
+    pointer-events: auto;
+    transition: top .25s ease, left .25s ease, width .25s ease, height .25s ease;
+}
+
+.admin-tour-card {
+    position: fixed;
+    background: #f8faf7;
+    border: 1px solid #d3ded4;
+    border-radius: 10px;
+    box-shadow: 0 12px 28px rgba(0, 0, 0, .18);
+    padding: 16px 18px;
+    font-family: 'Manrope', sans-serif;
+    color: #10231c;
+    transition: top .25s ease, left .25s ease;
+    outline: none;
+}
+
+.admin-tour-card h3 {
+    margin: 10px 0 6px;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+.admin-tour-card p {
+    margin: 0 0 14px;
+    font-size: 13px;
+    line-height: 1.5;
+    color: #587066;
+}
+
+.admin-tour-card::after {
+    content: "";
+    position: absolute;
+    width: 12px;
+    height: 12px;
+    background: inherit;
+    border: inherit;
+}
+
+.admin-tour-card-bottom::after {
+    top: -7px;
+    left: var(--arrow-offset, 24px);
+    transform: translateX(-50%) rotate(45deg);
+    border-right: none;
+    border-bottom: none;
+}
+
+.admin-tour-card-top::after {
+    bottom: -7px;
+    left: var(--arrow-offset, 24px);
+    transform: translateX(-50%) rotate(45deg);
+    border-left: none;
+    border-top: none;
+}
+
+.admin-tour-card-right::after {
+    left: -7px;
+    top: var(--arrow-offset, 24px);
+    transform: translateY(-50%) rotate(45deg);
+    border-right: none;
+    border-top: none;
+}
+
+.admin-tour-card-left::after {
+    right: -7px;
+    top: var(--arrow-offset, 24px);
+    transform: translateY(-50%) rotate(45deg);
+    border-left: none;
+    border-bottom: none;
+}
+
+.admin-tour-dots {
+    display: flex;
+    gap: 5px;
+}
+
+.admin-tour-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #d3ded4;
+}
+
+.admin-tour-dot.active {
+    background: #e05b35;
+}
+
+.admin-tour-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.admin-tour-count {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: #587066;
+}
+
+.admin-tour-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.admin-tour-skip,
+.admin-tour-previous,
+.admin-tour-next {
+    font-family: 'Manrope', sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    border-radius: 999px;
+    padding: 7px 14px;
+    transition: background .15s ease, color .15s ease, border-color .15s ease;
+}
+
+.admin-tour-skip {
+    background: none;
+    border: none;
+    color: #587066;
+    padding: 7px 4px;
+}
+
+.admin-tour-skip:hover,
+.admin-tour-skip:focus-visible {
+    color: #10231c;
+}
+
+.admin-tour-previous {
+    background: none;
+    border: 1px solid #d3ded4;
+    color: #10231c;
+}
+
+.admin-tour-previous:hover,
+.admin-tour-previous:focus-visible {
+    border-color: #587066;
+}
+
+.admin-tour-next {
+    background: #10231c;
+    border: 1px solid #10231c;
+    color: #f8faf7;
+}
+
+.admin-tour-next:hover,
+.admin-tour-next:focus-visible {
+    background: #e05b35;
+    border-color: #e05b35;
+}
+
+.admin-tour-skip:focus-visible,
+.admin-tour-previous:focus-visible,
+.admin-tour-next:focus-visible {
+    outline: 2px solid #e05b35;
+    outline-offset: 2px;
+}
+
+.admin-theme-dark .admin-tour-card {
+    background: rgba(20, 43, 35, .95);
+    border-color: rgba(145, 199, 174, .28);
+    box-shadow: 0 18px 42px rgba(0, 0, 0, .35);
+    color: #edf7f2;
+}
+
+.admin-theme-dark .admin-tour-card p {
+    color: #b7cdc2;
+}
+
+.admin-theme-dark .admin-tour-previous {
+    border-color: rgba(145, 199, 174, .35);
+    color: #edf7f2;
+}
+
+.admin-theme-dark .admin-tour-skip {
+    color: #b7cdc2;
+}
+
+.admin-theme-dark .admin-tour-skip:hover,
+.admin-theme-dark .admin-tour-skip:focus-visible {
+    color: #edf7f2;
+}
+
+.admin-help-button {
+    position: fixed;
+    right: 22px;
+    bottom: 22px;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: #10231c;
+    color: #f8faf7;
+    border: 1px solid #10231c;
+    font-family: 'Manrope', sans-serif;
+    font-size: 18px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 12px 28px rgba(0, 0, 0, .22);
+    z-index: 200;
+    transition: background .15s ease, transform .15s ease;
+}
+
+.admin-help-button:hover {
+    background: #e05b35;
+    border-color: #e05b35;
+    transform: translateY(-1px);
+}
+
+.admin-help-button:focus-visible {
+    outline: 2px solid #e05b35;
+    outline-offset: 3px;
+}
+
+.admin-theme-dark .admin-help-button {
+    background: rgba(20, 43, 35, .95);
+    border-color: rgba(145, 199, 174, .35);
+    color: #edf7f2;
+}
+
+.admin-theme-dark .admin-help-button:hover {
+    background: #e05b35;
+    border-color: #e05b35;
+    color: #f8faf7;
+}
+
+@media (max-width: 520px) {
+    .admin-tour-card {
+        width: calc(100vw - 32px) !important;
+        left: 16px !important;
+    }
+}

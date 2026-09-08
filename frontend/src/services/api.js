@@ -276,6 +276,23 @@ export async function getAdminSession(token) {
     return data;
 }
 
+export async function completeAdminOnboarding(token) {
+    const response = await fetch(`${API_BASE_URL}/admin/onboarding/complete`, {
+        method: "PUT",
+        headers: {
+            Authorization: `Bearer ${token}`,
+        },
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+        throw new Error(data.detail || `Failed to save onboarding status: ${response.status}`);
+    }
+
+    return data;
+}
+
 export async function getWhitelist(token) {
     const response = await fetch(`${API_BASE_URL}/admin/whitelist`, {
         headers: {

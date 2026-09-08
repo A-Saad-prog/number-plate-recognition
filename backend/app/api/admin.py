@@ -140,7 +140,21 @@ def admin_session(
 ):
     token = credentials.credentials if credentials else None
     admin = get_current_admin(token, db)
-    return {"authenticated": True, "username": admin.username}
+    return {
+        "authenticated": True,
+        "username": admin.username,
+        "onboarding_completed": admin.onboarding_completed,
+    }
+
+
+@router.put("/onboarding/complete")
+def complete_onboarding(
+    db: Session = Depends(get_db),
+    admin=Depends(current_admin),
+):
+    admin.onboarding_completed = True
+    db.commit()
+    return {"success": True, "onboarding_completed": True}
 
 
 @router.get("/settings")
