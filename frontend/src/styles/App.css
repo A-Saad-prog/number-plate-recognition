@@ -1891,6 +1891,22 @@ body {
     --garage-line: #bdcbc0;
     --garage-input-line: #bdcbc0;
     --garage-shadow: 0 18px 42px rgba(16, 35, 28, .08);
+    /* Fluid scaling unit ("garage unit"): every Garage size below is
+       expressed as calc(var(--gu) * N) instead of a fixed Npx, so the
+       whole UI grows/shrinks together as one proportional design instead
+       of staying pixel-frozen while the viewport's CSS-pixel width
+       changes.
+       The two reference points below are deliberately chosen so the
+       current design is reproduced exactly at 1920x1080 with Windows
+       display scaling at 125% (effective CSS viewport ~1536px wide,
+       where --gu resolves to the ~16px baseline every existing value was
+       authored against), and is then scaled up 1:1 with viewport width
+       so the same physical monitor at 100% scaling (a ~1920px viewport,
+       25% more CSS pixels) renders at the same apparent size rather than
+       looking smaller. Beyond that it plateaus (20px cap) so large/4K
+       viewports gain extra breathing room instead of oversized text and
+       controls; a floor (14px) keeps small laptop widths legible. */
+    --gu: clamp(14px, 1.0417vw, 20px);
     background: #e8efe6;
     color: #10231c;
     font-family: 'Manrope', sans-serif;
@@ -1941,7 +1957,7 @@ body {
     border: 1px solid var(--garage-line);
     border-radius: 8px;
     box-shadow: none;
-    padding: 8px;
+    padding: calc(var(--gu) * 0.5);
     color: var(--garage-ink);
 }
 
@@ -2016,8 +2032,8 @@ body {
     box-shadow: 0 24px 60px rgba(16, 35, 28, .28);
     color: var(--garage-ink, #10231c);
     font-family: 'Manrope', sans-serif;
-    max-width: 380px;
-    padding: 28px 26px;
+    max-width: calc(var(--gu, 16px) * 23.75);
+    padding: calc(var(--gu, 16px) * 1.75) calc(var(--gu, 16px) * 1.625);
     width: calc(100vw - 48px);
 }
 
@@ -2026,16 +2042,16 @@ body {
 }
 
 .garage-reload-dialog h2 {
-    font-size: 18px;
+    font-size: calc(var(--gu, 16px) * 1.125);
     font-weight: 800;
-    margin: 0 0 10px;
+    margin: 0 0 calc(var(--gu, 16px) * 0.625);
 }
 
 .garage-reload-dialog p {
     color: var(--garage-muted, #587066);
-    font-size: 14px;
+    font-size: calc(var(--gu, 16px) * 0.875);
     line-height: 1.5;
-    margin: 0 0 20px;
+    margin: 0 0 calc(var(--gu, 16px) * 1.25);
 }
 
 .garage-reload-dialog button {
@@ -2044,8 +2060,8 @@ body {
     border-radius: 999px;
     color: #fff;
     cursor: pointer;
-    font: 700 13px 'Manrope', sans-serif;
-    padding: 10px 22px;
+    font: 700 calc(var(--gu, 16px) * 0.8125) 'Manrope', sans-serif;
+    padding: calc(var(--gu, 16px) * 0.625) calc(var(--gu, 16px) * 1.375);
     width: 100%;
 }
 
@@ -2081,16 +2097,16 @@ body {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 16px;
+    gap: calc(var(--gu) * 1);
     padding: 0 clamp(20px, 5vw, 40px);
-    height: 54px;
+    height: calc(var(--gu) * 3.375);
     background: var(--garage-bg);
     color: var(--garage-ink);
     border-bottom: 1px solid var(--garage-line);
 }
 
 .app .garage-logo {
-    font: 500 14px 'DM Mono', monospace;
+    font: 500 calc(var(--gu) * 0.875) 'DM Mono', monospace;
     letter-spacing: .08em;
     white-space: nowrap;
 }
@@ -2102,22 +2118,22 @@ body {
 .app .garage-top-actions {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: calc(var(--gu) * 0.75);
 }
 
 .app .garage-status-pill {
     display: flex;
     align-items: center;
-    gap: 7px;
-    font: 500 10px 'DM Mono', monospace;
+    gap: calc(var(--gu) * 0.4375);
+    font: 500 calc(var(--gu) * 0.625) 'DM Mono', monospace;
     letter-spacing: .06em;
     color: var(--garage-muted);
     white-space: nowrap;
 }
 
 .app .garage-status-dot {
-    width: 7px;
-    height: 7px;
+    width: calc(var(--gu) * 0.4375);
+    height: calc(var(--gu) * 0.4375);
     border-radius: 50%;
     background: #31a86b;
     flex-shrink: 0;
@@ -2126,7 +2142,7 @@ body {
 .app .garage-admin-link {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
+    gap: calc(var(--gu) * 0.3125);
 }
 
 /* Sun/Moon theme slider: a single control, not two separate buttons --
@@ -2134,12 +2150,12 @@ body {
    physically slides to sit under whichever icon is active. */
 .app .garage-theme-slider {
     position: relative;
-    width: 66px;
-    height: 32px;
+    width: calc(var(--gu) * 4.125);
+    height: calc(var(--gu) * 2);
     display: grid;
     grid-template-columns: 1fr 1fr;
     align-items: center;
-    padding: 3px;
+    padding: calc(var(--gu) * 0.1875);
     border: 1px solid var(--garage-line);
     border-radius: 999px;
     background: var(--garage-secondary);
@@ -2155,7 +2171,7 @@ body {
     width: 100%;
     height: 100%;
     color: var(--garage-muted);
-    font-size: 13px;
+    font-size: calc(var(--gu) * 0.8125);
     line-height: 1;
     pointer-events: none;
     transition: color .2s ease;
@@ -2164,10 +2180,10 @@ body {
 .app .garage-theme-thumb {
     position: absolute;
     z-index: 1;
-    top: 3px;
-    left: 3px;
-    width: 28px;
-    height: 24px;
+    top: calc(var(--gu) * 0.1875);
+    left: calc(var(--gu) * 0.1875);
+    width: calc(var(--gu) * 1.75);
+    height: calc(var(--gu) * 1.5);
     border-radius: 999px;
     background: #e05b35;
     transition: transform .26s cubic-bezier(.22, .9, .3, 1);
@@ -2175,7 +2191,7 @@ body {
 }
 
 .app .garage-theme-slider[aria-pressed="true"] .garage-theme-thumb {
-    transform: translateX(32px);
+    transform: translateX(calc(var(--gu) * 2));
 }
 
 .app .garage-theme-slider[aria-pressed="true"] .garage-theme-icon.moon,
@@ -2185,17 +2201,23 @@ body {
 
 .app .garage-layout {
     display: grid;
-    grid-template-columns: minmax(0, 1.55fr) minmax(300px, .72fr);
-    gap: 12px;
-    max-width: 1550px;
+    grid-template-columns: minmax(0, 1.55fr) minmax(calc(var(--gu) * 18.75), .72fr);
+    gap: calc(var(--gu) * 0.75);
+    /* Scales with the same unit as everything else, so it reproduces the
+       current 1550px cap exactly at the 1536px reference viewport, but
+       grows toward ~1937px by the time the viewport reaches 1920px --
+       using the extra CSS-pixel width a lower OS display-scaling setting
+       provides on the same physical monitor, instead of leaving it as
+       unused margin on either side. */
+    max-width: calc(var(--gu) * 96.875);
     margin: 0 auto;
-    padding: 12px clamp(16px, 4vw, 32px) 20px;
+    padding: calc(var(--gu) * 0.75) clamp(16px, 4vw, 32px) calc(var(--gu) * 1.25);
 }
 
 .app .garage-main {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: calc(var(--gu) * 0.75);
     min-width: 0;
 }
 
@@ -2205,21 +2227,21 @@ body {
     border: 1px solid var(--garage-line);
     border-radius: 7px;
     box-shadow: var(--garage-shadow);
-    padding: 14px 18px;
+    padding: calc(var(--gu) * 0.875) calc(var(--gu) * 1.125);
 }
 
 .app .garage-camera-panel h2,
 .app .garage-floor-panel h2 {
-    margin: 0 0 2px;
-    font-size: 19px;
+    margin: 0 0 calc(var(--gu) * 0.125);
+    font-size: calc(var(--gu) * 1.1875);
     letter-spacing: -.04em;
     color: var(--garage-ink);
 }
 
 .app .garage-camera-panel .description,
 .app .garage-floor-panel .description {
-    margin: 0 0 10px;
-    font-size: 13px;
+    margin: 0 0 calc(var(--gu) * 0.625);
+    font-size: calc(var(--gu) * 0.8125);
 }
 
 .app .garage-camera-panel h2 span,
@@ -2236,8 +2258,11 @@ body {
    single-column stack that forced a lot of scrolling. */
 .app .camera-slot-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
-    gap: 12px;
+    /* The 420px floor scales too, so "2 columns max on a normal desktop"
+       stays true proportionally instead of fitting more columns simply
+       because --gu grew. */
+    grid-template-columns: repeat(auto-fit, minmax(calc(var(--gu) * 26.25), 1fr));
+    gap: calc(var(--gu) * 0.75);
 }
 
 /* Shorter, wider feed area (closer to the reference's compact card)
@@ -2245,7 +2270,7 @@ body {
    darker than its surrounding camera card in both themes. */
 .app .camera-preview {
     aspect-ratio: 16 / 9;
-    min-height: 130px;
+    min-height: calc(var(--gu) * 8.125);
     margin-top: 0;
     background: #10231c;
     border-color: #10231c;
@@ -2262,7 +2287,7 @@ body {
    needed to keep a 3-4 camera, 2-row layout scroll-free. */
 .app .camera-slot-grid-pair .camera-preview {
     aspect-ratio: 16 / 10;
-    min-height: 220px;
+    min-height: calc(var(--gu) * 13.75);
 }
 
 /* Per-camera footer: just a compact status readout now that the
@@ -2272,38 +2297,38 @@ body {
     display: flex;
     justify-content: space-between;
     align-items: flex-end;
-    gap: 8px;
-    margin-top: 4px;
+    gap: calc(var(--gu) * 0.5);
+    margin-top: calc(var(--gu) * 0.25);
 }
 
 .app .camera-info-plate {
-    margin-top: 2px;
-    font-size: 15px;
+    margin-top: calc(var(--gu) * 0.125);
+    font-size: calc(var(--gu) * 0.9375);
     font-weight: 800;
     letter-spacing: -.02em;
     color: var(--garage-ink);
 }
 
 .app .camera-info-status {
-    margin: 2px 0 0;
+    margin: calc(var(--gu) * 0.125) 0 0;
     color: var(--garage-muted);
-    font-size: 11px;
+    font-size: calc(var(--gu) * 0.6875);
 }
 
 .app .space-status-banner {
-    margin-top: 12px;
+    margin-top: calc(var(--gu) * 0.75);
 }
 
 .app .eyebrow {
     color: #e05b35;
-    font: 500 9px 'DM Mono', monospace;
+    font: 500 calc(var(--gu) * 0.5625) 'DM Mono', monospace;
     letter-spacing: .12em;
     text-transform: uppercase;
 }
 
 .app .parking-summary {
-    margin-top: 12px;
-    padding-top: 10px;
+    margin-top: calc(var(--gu) * 0.75);
+    padding-top: calc(var(--gu) * 0.625);
     border-top: 1px solid var(--garage-line);
 }
 
@@ -2313,13 +2338,13 @@ body {
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
-    gap: 16px;
+    gap: calc(var(--gu) * 1);
     flex-wrap: wrap;
-    margin-bottom: 10px;
+    margin-bottom: calc(var(--gu) * 0.625);
 }
 
 .app .floor-panel-head .eyebrow {
-    margin-bottom: 2px;
+    margin-bottom: calc(var(--gu) * 0.125);
 }
 
 .app .floor-panel-head h2 {
@@ -2328,15 +2353,15 @@ body {
 
 .app .level-tabs {
     display: flex;
-    gap: 8px;
+    gap: calc(var(--gu) * 0.5);
     flex-wrap: nowrap;
     overflow-x: auto;
-    padding-bottom: 8px;
+    padding-bottom: calc(var(--gu) * 0.5);
     scrollbar-width: thin;
 }
 
 .app .level-tabs::-webkit-scrollbar {
-    height: 5px;
+    height: calc(var(--gu) * 0.3125);
 }
 
 .app .level-tabs::-webkit-scrollbar-track {
@@ -2370,9 +2395,9 @@ body {
     /* DM Mono is only loaded at 400/500 -- 700 was a synthetic
        (faux-bold) weight the browser fakes by smearing the glyph,
        which reads as blurry at this size. 500 is a real loaded weight. */
-    font: 500 11px 'DM Mono', monospace;
+    font: 500 calc(var(--gu) * 0.6875) 'DM Mono', monospace;
     letter-spacing: .04em;
-    padding: 6px 10px;
+    padding: calc(var(--gu) * 0.375) calc(var(--gu) * 0.625);
     transition: border-color .15s ease, color .15s ease;
     white-space: nowrap;
 }
@@ -2390,14 +2415,14 @@ body {
 .app .parking-grid {
     display: grid;
     grid-template-columns: repeat(10, minmax(0, 1fr));
-    gap: 6px;
+    gap: calc(var(--gu) * 0.375);
 }
 
 .app .parking-space {
     display: flex;
     align-items: center;
     justify-content: center;
-    min-height: 34px;
+    min-height: calc(var(--gu) * 2.125);
     border: 1px solid var(--garage-line);
     border-radius: 5px;
     background: var(--garage-secondary);
@@ -2411,7 +2436,7 @@ body {
 }
 
 .app .parking-space-number {
-    font: 700 11px 'DM Mono', monospace;
+    font: 700 calc(var(--gu) * 0.6875) 'DM Mono', monospace;
     letter-spacing: .02em;
 }
 
@@ -2444,7 +2469,7 @@ body {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font: 700 11px 'DM Mono', monospace;
+    font: 700 calc(var(--gu) * 0.6875) 'DM Mono', monospace;
     letter-spacing: .02em;
 }
 
@@ -2479,27 +2504,27 @@ body {
 .app .parking-summary-grid {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
-    gap: 8px;
-    margin-top: 8px;
+    gap: calc(var(--gu) * 0.5);
+    margin-top: calc(var(--gu) * 0.5);
 }
 
 .app .summary-stat {
     border-top: 1px solid var(--garage-line);
-    padding-top: 6px;
+    padding-top: calc(var(--gu) * 0.375);
 }
 
 .app .summary-stat span {
     display: block;
     color: var(--garage-muted);
-    font: 500 8px 'DM Mono', monospace;
+    font: 500 calc(var(--gu) * 0.5) 'DM Mono', monospace;
     text-transform: uppercase;
     letter-spacing: .08em;
 }
 
 .app .summary-stat b {
     display: block;
-    margin-top: 2px;
-    font-size: 14px;
+    margin-top: calc(var(--gu) * 0.125);
+    font-size: calc(var(--gu) * 0.875);
     font-weight: 800;
     color: var(--garage-ink);
 }
@@ -2510,7 +2535,7 @@ body {
 .app .summary-live-processes {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: calc(var(--gu) * 0.125);
 }
 
 .app .summary-live-processes span {
@@ -2530,14 +2555,14 @@ body {
     border: 1px solid var(--garage-line);
     border-radius: 7px;
     box-shadow: var(--garage-shadow);
-    padding: 14px;
+    padding: calc(var(--gu) * 0.875);
     position: sticky;
-    top: 12px;
+    top: calc(var(--gu) * 0.75);
 }
 
 .app .side-card h3 {
-    margin: 2px 0 10px;
-    font-size: 16px;
+    margin: calc(var(--gu) * 0.125) 0 calc(var(--gu) * 0.625);
+    font-size: calc(var(--gu) * 1);
     letter-spacing: -.03em;
     color: var(--garage-ink);
 }
@@ -2545,8 +2570,8 @@ body {
 .app .receipt-tabs {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 7px;
-    margin-bottom: 10px;
+    gap: calc(var(--gu) * 0.4375);
+    margin-bottom: calc(var(--gu) * 0.625);
 }
 
 .app .receipt-tab {
@@ -2555,8 +2580,8 @@ body {
     border: 1px solid var(--garage-line);
     background: transparent;
     color: var(--garage-muted);
-    padding: 7px 8px;
-    font: 700 10px 'Manrope', sans-serif;
+    padding: calc(var(--gu) * 0.4375) calc(var(--gu) * 0.5);
+    font: 700 calc(var(--gu) * 0.625) 'Manrope', sans-serif;
     letter-spacing: .02em;
     cursor: pointer;
     transition: border-color .18s ease, color .18s ease, background .18s ease;
@@ -2578,20 +2603,20 @@ body {
     z-index: 2;
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: calc(var(--gu) * 0.375);
 }
 
 .app .receipt-tab .inline-count {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 18px;
-    height: 18px;
-    padding: 0 5px;
+    min-width: calc(var(--gu) * 1.125);
+    height: calc(var(--gu) * 1.125);
+    padding: 0 calc(var(--gu) * 0.3125);
     border-radius: 999px;
     background: #e05b35;
     color: #fff;
-    font: 700 9px 'DM Mono', monospace;
+    font: 700 calc(var(--gu) * 0.5625) 'DM Mono', monospace;
 }
 
 /* Notification glow: clipped inside the tab (overflow: hidden above)
@@ -2641,20 +2666,20 @@ body {
 
 .app .receipt-stack {
     display: grid;
-    gap: 8px;
+    gap: calc(var(--gu) * 0.5);
 }
 
 .app .mini-receipt {
     border: 1px solid var(--garage-line);
     background: var(--garage-bg);
     border-radius: 6px;
-    padding: 10px;
+    padding: calc(var(--gu) * 0.625);
 }
 
 .app .mini-receipt-source {
-    margin-bottom: 4px;
+    margin-bottom: calc(var(--gu) * 0.25);
     color: var(--garage-muted);
-    font: 500 9px 'DM Mono', monospace;
+    font: 500 calc(var(--gu) * 0.5625) 'DM Mono', monospace;
     letter-spacing: .1em;
     text-transform: uppercase;
 }
@@ -2668,16 +2693,16 @@ body {
 }
 
 .app .mini-receipt .vehicle-info-header {
-    margin-bottom: 6px;
+    margin-bottom: calc(var(--gu) * 0.375);
 }
 
 .app .mini-receipt .vehicle-info-row {
-    padding: 6px 0;
-    gap: 10px;
+    padding: calc(var(--gu) * 0.375) 0;
+    gap: calc(var(--gu) * 0.625);
 }
 
 .app .mini-receipt .vehicle-info-amount {
-    margin-top: 8px;
+    margin-top: calc(var(--gu) * 0.5);
 }
 
 .app .mini-receipt .camera-vehicle-actions {
@@ -2689,34 +2714,34 @@ body {
    card doesn't take up more height than it needs to. */
 .app .entry-mode,
 .app .exit-mode {
-    margin-top: 10px;
+    margin-top: calc(var(--gu) * 0.625);
     padding-top: 0;
 }
 
 .app .selected-space-info {
-    margin-top: 8px;
-    gap: 8px;
+    margin-top: calc(var(--gu) * 0.5);
+    gap: calc(var(--gu) * 0.5);
 }
 
 .app .confirmation-buttons {
-    margin-top: 8px;
+    margin-top: calc(var(--gu) * 0.5);
 }
 
 .app .confirm-button,
 .app .exit-button,
 .app .cancel-button {
-    min-height: 36px;
-    padding: 8px 14px;
-    font-size: 13px;
+    min-height: calc(var(--gu) * 2.25);
+    padding: calc(var(--gu) * 0.5) calc(var(--gu) * 0.875);
+    font-size: calc(var(--gu) * 0.8125);
 }
 
 .app .payment-options {
-    margin-top: 6px;
+    margin-top: calc(var(--gu) * 0.375);
 }
 
 .app .payment-option {
-    padding: 8px 12px;
-    font-size: 13px;
+    padding: calc(var(--gu) * 0.5) calc(var(--gu) * 0.75);
+    font-size: calc(var(--gu) * 0.8125);
 }
 
 @media (max-width: 1100px) {
@@ -2733,8 +2758,8 @@ body {
     .app .garage-top {
         height: auto;
         flex-wrap: wrap;
-        padding: 14px 20px;
-        gap: 10px;
+        padding: calc(var(--gu) * 0.875) calc(var(--gu) * 1.25);
+        gap: calc(var(--gu) * 0.625);
     }
 
     .app .parking-summary-grid {
