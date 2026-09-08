@@ -549,6 +549,19 @@
     border-color: #e05b35;
 }
 
+/* Discount is a plain percentage field -- hide the native number-input
+   up/down stepper so it reads like a normal text field. */
+.whitelist-card input#discount {
+    appearance: textfield;
+    -moz-appearance: textfield;
+}
+
+.whitelist-card input#discount::-webkit-inner-spin-button,
+.whitelist-card input#discount::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
 .whitelist-card button,
 .show-list-button {
     background: #10231c;

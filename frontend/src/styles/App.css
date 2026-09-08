@@ -1878,15 +1878,17 @@ body {
 .garage-header-controls { align-items: center; display: flex; gap: 10px; position: absolute; right: clamp(20px, 5vw, 76px); top: 24px; z-index: 2; }
 .garage-admin-link { border: 1px solid rgba(231, 244, 237, .38); border-radius: 999px; background: transparent; color: #f8fbf6; cursor: pointer; font-size: 12px; font-weight: 700; padding: 8px 13px; }
 
-/* Garage visual system: aligned with the Admin workspace. Garage always
-   renders in light mode -- there is no theme switching here. */
+/* Garage visual system: aligned with the Admin workspace. Light mode is
+   the default; the sun/moon toggle in the header applies
+   .garage-theme-dark (see the GARAGE ADMIN-DNA LAYOUT section below)
+   for the dark variant. */
 .app {
     --garage-bg: #e8efe6;
     --garage-ink: #10231c;
     --garage-muted: #587066;
     --garage-surface: #f8faf7;
-    --garage-secondary: #edf2ee;
-    --garage-line: #d3ded4;
+    --garage-secondary: #eef4eb;
+    --garage-line: #bdcbc0;
     --garage-input-line: #bdcbc0;
     --garage-shadow: 0 18px 42px rgba(16, 35, 28, .08);
     background: #e8efe6;
@@ -1918,7 +1920,6 @@ body {
 .app .container { color: var(--garage-ink); }
 
 .app .card,
-.app .camera-panel,
 .app .vehicle-info-panel,
 .app .status-message,
 .app .parking-legend,
@@ -1927,6 +1928,20 @@ body {
     background: var(--garage-surface);
     border-color: var(--garage-line);
     box-shadow: var(--garage-shadow);
+    color: var(--garage-ink);
+}
+
+/* The feed and its label/plate/status text sit together as one card --
+   a soft, subtle tint and hairline border (not the stark
+   same-as-parent white + heavy shadow this used to have) so it groups
+   visually with its own feed without reading as a separate outlined
+   panel stacked on top of .garage-camera-panel. */
+.app .camera-panel {
+    background: var(--garage-surface);
+    border: 1px solid var(--garage-line);
+    border-radius: 8px;
+    box-shadow: none;
+    padding: 8px;
     color: var(--garage-ink);
 }
 
@@ -1957,12 +1972,12 @@ body {
 .app .garage-admin-link {
     background: #10231c;
     border-color: #10231c;
-    color: #edf7f2;
+    color: #f8faf7;
 }
 
 .app .confirm-button:hover:not(:disabled),
 .app .exit-button:hover:not(:disabled),
-.app .garage-admin-link:hover { background: #e05b35; border-color: #e05b35; }
+.app .garage-admin-link:hover { background: #e05b35; border-color: #e05b35; color: #fff; }
 
 /* Secondary action, same treatment as Admin's .confirmation-cancel:
    bordered/transparent instead of the solid primary-button fill. */
@@ -2045,7 +2060,813 @@ body {
 }
 
 @media (max-width: 720px) {
-    .camera-lane-groups {
+    .app .camera-slot-grid {
         grid-template-columns: 1fr;
     }
+}
+
+/* ============================================================
+   GARAGE ADMIN-DNA LAYOUT
+   Visual redesign matching the Admin workspace language (Manrope/DM
+   Mono, light green-grey background, dark green ink, orange accent).
+   Scoped entirely under .app -- GaragePage.jsx is the only page that
+   imports this stylesheet, but every new selector below is still
+   qualified so nothing here can leak onto another page by accident.
+   Garage now supports a light/dark toggle (see .garage-theme-dark);
+   this section replaces the old "Garage always renders in light mode"
+   assumption noted further up this file.
+============================================================ */
+
+.app .garage-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 0 clamp(20px, 5vw, 40px);
+    height: 54px;
+    background: var(--garage-bg);
+    color: var(--garage-ink);
+    border-bottom: 1px solid var(--garage-line);
+}
+
+.app .garage-logo {
+    font: 500 14px 'DM Mono', monospace;
+    letter-spacing: .08em;
+    white-space: nowrap;
+}
+
+.app .garage-logo span {
+    color: #e05b35;
+}
+
+.app .garage-top-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.app .garage-status-pill {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font: 500 10px 'DM Mono', monospace;
+    letter-spacing: .06em;
+    color: var(--garage-muted);
+    white-space: nowrap;
+}
+
+.app .garage-status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #31a86b;
+    flex-shrink: 0;
+}
+
+.app .garage-admin-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+/* Sun/Moon theme slider: a single control, not two separate buttons --
+   clicking anywhere toggles between light and dark, and the thumb
+   physically slides to sit under whichever icon is active. */
+.app .garage-theme-slider {
+    position: relative;
+    width: 66px;
+    height: 32px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-items: center;
+    padding: 3px;
+    border: 1px solid var(--garage-line);
+    border-radius: 999px;
+    background: var(--garage-secondary);
+    cursor: pointer;
+    appearance: none;
+}
+
+.app .garage-theme-icon {
+    position: relative;
+    z-index: 2;
+    display: grid;
+    place-items: center;
+    width: 100%;
+    height: 100%;
+    color: var(--garage-muted);
+    font-size: 13px;
+    line-height: 1;
+    pointer-events: none;
+    transition: color .2s ease;
+}
+
+.app .garage-theme-thumb {
+    position: absolute;
+    z-index: 1;
+    top: 3px;
+    left: 3px;
+    width: 28px;
+    height: 24px;
+    border-radius: 999px;
+    background: #e05b35;
+    transition: transform .26s cubic-bezier(.22, .9, .3, 1);
+    pointer-events: none;
+}
+
+.app .garage-theme-slider[aria-pressed="true"] .garage-theme-thumb {
+    transform: translateX(32px);
+}
+
+.app .garage-theme-slider[aria-pressed="true"] .garage-theme-icon.moon,
+.app .garage-theme-slider:not([aria-pressed="true"]) .garage-theme-icon.sun {
+    color: #fff;
+}
+
+.app .garage-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.55fr) minmax(300px, .72fr);
+    gap: 12px;
+    max-width: 1550px;
+    margin: 0 auto;
+    padding: 12px clamp(16px, 4vw, 32px) 20px;
+}
+
+.app .garage-main {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 0;
+}
+
+.app .garage-camera-panel,
+.app .garage-floor-panel {
+    background: var(--garage-surface);
+    border: 1px solid var(--garage-line);
+    border-radius: 7px;
+    box-shadow: var(--garage-shadow);
+    padding: 14px 18px;
+}
+
+.app .garage-camera-panel h2,
+.app .garage-floor-panel h2 {
+    margin: 0 0 2px;
+    font-size: 19px;
+    letter-spacing: -.04em;
+    color: var(--garage-ink);
+}
+
+.app .garage-camera-panel .description,
+.app .garage-floor-panel .description {
+    margin: 0 0 10px;
+    font-size: 13px;
+}
+
+.app .garage-camera-panel h2 span,
+.app .garage-floor-panel h2 span {
+    color: #e05b35;
+}
+
+/* All configured cameras (entry + exit) now sit together in one grid.
+   auto-fit with a 420px floor naturally caps this at 2 columns on a
+   normal desktop width -- a 3rd/4th camera adds a row instead of
+   shrinking or widening the cards, and a single camera stretches to
+   fill the row instead of leaving dead space. This keeps every card at
+   the same "maximum" size shown in the reference and avoids the tall
+   single-column stack that forced a lot of scrolling. */
+.app .camera-slot-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+    gap: 12px;
+}
+
+/* Shorter, wider feed area (closer to the reference's compact card)
+   instead of the old, taller 4:3 box. The viewport is intentionally
+   darker than its surrounding camera card in both themes. */
+.app .camera-preview {
+    aspect-ratio: 16 / 9;
+    min-height: 130px;
+    margin-top: 0;
+    background: #10231c;
+    border-color: #10231c;
+    color: #d6e1da;
+}
+
+.app .camera-feed-status.camera-status.active {
+    color: #e2503f;
+}
+
+/* With only 2 cameras total the grid is a single row (see
+   cameraSlots.length === 2 in GaragePage.jsx) -- there's headroom to
+   let each feed grow taller instead of staying capped at the size
+   needed to keep a 3-4 camera, 2-row layout scroll-free. */
+.app .camera-slot-grid-pair .camera-preview {
+    aspect-ratio: 16 / 10;
+    min-height: 220px;
+}
+
+/* Per-camera footer: just a compact status readout now that the
+   interactive entry/exit process for this camera lives in the Receipt
+   Center instead of stacking underneath the feed. */
+.app .camera-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 8px;
+    margin-top: 4px;
+}
+
+.app .camera-info-plate {
+    margin-top: 2px;
+    font-size: 15px;
+    font-weight: 800;
+    letter-spacing: -.02em;
+    color: var(--garage-ink);
+}
+
+.app .camera-info-status {
+    margin: 2px 0 0;
+    color: var(--garage-muted);
+    font-size: 11px;
+}
+
+.app .space-status-banner {
+    margin-top: 12px;
+}
+
+.app .eyebrow {
+    color: #e05b35;
+    font: 500 9px 'DM Mono', monospace;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+}
+
+.app .parking-summary {
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid var(--garage-line);
+}
+
+/* ---- Parking floor (garage-occupancy template) ---- */
+
+.app .floor-panel-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+}
+
+.app .floor-panel-head .eyebrow {
+    margin-bottom: 2px;
+}
+
+.app .floor-panel-head h2 {
+    margin: 0;
+}
+
+.app .level-tabs {
+    display: flex;
+    gap: 8px;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 8px;
+    scrollbar-width: thin;
+}
+
+.app .level-tabs::-webkit-scrollbar {
+    height: 5px;
+}
+
+.app .level-tabs::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.app .level-tabs::-webkit-scrollbar-thumb {
+    background: var(--garage-line);
+    border-radius: 999px;
+}
+
+/* Overrides the older unscoped .level-toggle rule's width: 100% /
+   display: flex (still loaded further up this file), which otherwise
+   stretches every tab to fill its row and stacks them into a list. */
+.app .level-toggle {
+    display: inline-flex;
+    width: auto;
+    min-height: 0;
+    flex: 0 0 auto;
+    justify-content: center;
+    /* Solid pill fill (vs. the light bordered grid cells used for
+       parking spaces below) so level tabs read clearly as navigation
+       controls, not more of the same grid. A lighter shade of the ink
+       color in light mode (--garage-muted is that same green, just
+       lighter) instead of a near-black fill; dark mode is unaffected. */
+    border: 1px solid var(--garage-muted);
+    border-radius: 999px;
+    background: var(--garage-muted);
+    color: #edf7f2;
+    cursor: pointer;
+    /* DM Mono is only loaded at 400/500 -- 700 was a synthetic
+       (faux-bold) weight the browser fakes by smearing the glyph,
+       which reads as blurry at this size. 500 is a real loaded weight. */
+    font: 500 11px 'DM Mono', monospace;
+    letter-spacing: .04em;
+    padding: 6px 10px;
+    transition: border-color .15s ease, color .15s ease;
+    white-space: nowrap;
+}
+
+.app .level-toggle:hover {
+    border-color: #e05b35;
+}
+
+.app .level-toggle.active {
+    border-color: #e05b35;
+    background: #e05b35;
+    color: #fff;
+}
+
+.app .parking-grid {
+    display: grid;
+    grid-template-columns: repeat(10, minmax(0, 1fr));
+    gap: 6px;
+}
+
+.app .parking-space {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 34px;
+    border: 1px solid var(--garage-line);
+    border-radius: 5px;
+    background: var(--garage-secondary);
+    color: var(--garage-ink);
+    cursor: pointer;
+    transition: transform .12s ease, border-color .15s ease, background .15s ease;
+}
+
+.app .parking-space:hover:not(:disabled) {
+    transform: translateY(-1px);
+}
+
+.app .parking-space-number {
+    font: 700 11px 'DM Mono', monospace;
+    letter-spacing: .02em;
+}
+
+/* The screenshot template keeps each space to just its label, color
+   coded by state -- the entry-time detail for an occupied space is
+   still real data (used by the Receipt Center and VehicleInformation),
+   it's just not repeated a second time in every grid cell here. An
+   occupied cell instead shows its real license plate in place of the
+   space number. */
+.app .parking-space > small {
+    display: none;
+}
+
+.app .parking-space.occupied .parking-space-number {
+    display: none;
+}
+
+.app .parking-space-vehicle {
+    max-width: 100%;
+    text-align: center;
+}
+
+.app .parking-space-vehicle small {
+    display: none;
+}
+
+.app .parking-space-vehicle strong {
+    display: block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font: 700 11px 'DM Mono', monospace;
+    letter-spacing: .02em;
+}
+
+.app .parking-space.occupied {
+    background: #f9e3d8;
+    border-color: #f0c3a9;
+}
+
+.app .parking-space.occupied .parking-space-vehicle strong {
+    color: #e05b35;
+}
+
+.app .parking-space.selected {
+    background: var(--garage-ink);
+    border-color: var(--garage-ink);
+}
+
+.app .parking-space.selected .parking-space-number {
+    color: #f8faf7;
+}
+
+.app .parking-space:disabled {
+    cursor: default;
+}
+
+@media (max-width: 900px) {
+    .app .parking-grid {
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
+}
+
+.app .parking-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.app .summary-stat {
+    border-top: 1px solid var(--garage-line);
+    padding-top: 6px;
+}
+
+.app .summary-stat span {
+    display: block;
+    color: var(--garage-muted);
+    font: 500 8px 'DM Mono', monospace;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+}
+
+.app .summary-stat b {
+    display: block;
+    margin-top: 2px;
+    font-size: 14px;
+    font-weight: 800;
+    color: var(--garage-ink);
+}
+
+/* Live-process counts must read as strong as the other stats -- not
+   the muted label color used for the "Live processes" caption above
+   them. */
+.app .summary-live-processes {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.app .summary-live-processes span {
+    display: block;
+    font: inherit;
+    text-transform: none;
+    letter-spacing: normal;
+    color: var(--garage-ink);
+}
+
+.app .garage-side {
+    min-width: 0;
+}
+
+.app .side-card {
+    background: var(--garage-surface);
+    border: 1px solid var(--garage-line);
+    border-radius: 7px;
+    box-shadow: var(--garage-shadow);
+    padding: 14px;
+    position: sticky;
+    top: 12px;
+}
+
+.app .side-card h3 {
+    margin: 2px 0 10px;
+    font-size: 16px;
+    letter-spacing: -.03em;
+    color: var(--garage-ink);
+}
+
+.app .receipt-tabs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 7px;
+    margin-bottom: 10px;
+}
+
+.app .receipt-tab {
+    position: relative;
+    overflow: hidden;
+    border: 1px solid var(--garage-line);
+    background: transparent;
+    color: var(--garage-muted);
+    padding: 7px 8px;
+    font: 700 10px 'Manrope', sans-serif;
+    letter-spacing: .02em;
+    cursor: pointer;
+    transition: border-color .18s ease, color .18s ease, background .18s ease;
+}
+
+.app .receipt-tab:hover {
+    border-color: #e05b35;
+    color: #e05b35;
+}
+
+.app .receipt-tab.active {
+    background: var(--garage-ink);
+    border-color: var(--garage-ink);
+    color: #f8faf7;
+}
+
+.app .receipt-tab > span {
+    position: relative;
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.app .receipt-tab .inline-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 999px;
+    background: #e05b35;
+    color: #fff;
+    font: 700 9px 'DM Mono', monospace;
+}
+
+/* Notification glow: clipped inside the tab (overflow: hidden above)
+   so it never spreads past the tab's own boundary, growing from the
+   center outward and fading -- a strong, non-transparent orange, not a
+   distracting animation. */
+.app .receipt-tab.has-new::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 14px;
+    height: 14px;
+    border-radius: 999px;
+    transform: translate(-50%, -50%);
+    background: rgba(224, 91, 53, .75);
+    pointer-events: none;
+    z-index: 0;
+    animation: garageReceiptGlow 1.6s ease-out infinite;
+}
+
+@keyframes garageReceiptGlow {
+    0% {
+        width: 14px;
+        height: 14px;
+        opacity: .9;
+        box-shadow: 0 0 10px 4px rgba(224, 91, 53, .55);
+    }
+    50% {
+        opacity: .6;
+    }
+    100% {
+        width: 160%;
+        height: 220%;
+        opacity: 0;
+        box-shadow: 0 0 18px 9px rgba(224, 91, 53, .3);
+    }
+}
+
+.app .receipt-panel {
+    display: none;
+}
+
+.app .receipt-panel.active {
+    display: block;
+}
+
+.app .receipt-stack {
+    display: grid;
+    gap: 8px;
+}
+
+.app .mini-receipt {
+    border: 1px solid var(--garage-line);
+    background: var(--garage-bg);
+    border-radius: 6px;
+    padding: 10px;
+}
+
+.app .mini-receipt-source {
+    margin-bottom: 4px;
+    color: var(--garage-muted);
+    font: 500 9px 'DM Mono', monospace;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+}
+
+.app .mini-receipt .vehicle-info-panel {
+    box-shadow: none;
+    padding: 0;
+    margin-top: 0;
+    border: none;
+    background: transparent;
+}
+
+.app .mini-receipt .vehicle-info-header {
+    margin-bottom: 6px;
+}
+
+.app .mini-receipt .vehicle-info-row {
+    padding: 6px 0;
+    gap: 10px;
+}
+
+.app .mini-receipt .vehicle-info-amount {
+    margin-top: 8px;
+}
+
+.app .mini-receipt .camera-vehicle-actions {
+    padding-left: 0;
+}
+
+/* The entry/exit action block and its buttons carry generous spacing
+   from their older, larger design -- tighten it here so a receipt
+   card doesn't take up more height than it needs to. */
+.app .entry-mode,
+.app .exit-mode {
+    margin-top: 10px;
+    padding-top: 0;
+}
+
+.app .selected-space-info {
+    margin-top: 8px;
+    gap: 8px;
+}
+
+.app .confirmation-buttons {
+    margin-top: 8px;
+}
+
+.app .confirm-button,
+.app .exit-button,
+.app .cancel-button {
+    min-height: 36px;
+    padding: 8px 14px;
+    font-size: 13px;
+}
+
+.app .payment-options {
+    margin-top: 6px;
+}
+
+.app .payment-option {
+    padding: 8px 12px;
+    font-size: 13px;
+}
+
+@media (max-width: 1100px) {
+    .app .garage-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .app .side-card {
+        position: static;
+    }
+}
+
+@media (max-width: 720px) {
+    .app .garage-top {
+        height: auto;
+        flex-wrap: wrap;
+        padding: 14px 20px;
+        gap: 10px;
+    }
+
+    .app .parking-summary-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+/* ---- Dark mode ---- */
+
+.app.garage-theme-dark {
+    --garage-bg: #101713;
+    --garage-ink: #edf4ef;
+    --garage-muted: #93a89c;
+    --garage-surface: #162019;
+    --garage-secondary: #1a251e;
+    --garage-line: #33463a;
+    --garage-input-line: #33463a;
+    --garage-shadow: 0 18px 42px rgba(0, 0, 0, .35);
+    background: #101713;
+    color: #edf4ef;
+}
+
+.app.garage-theme-dark .garage-top {
+    background: #090e0b;
+    border-bottom-color: rgba(237, 247, 242, .08);
+}
+
+.app.garage-theme-dark .camera-preview {
+    background: #090e0b;
+    border-color: #090e0b;
+    color: #d6e1da;
+}
+
+.app.garage-theme-dark input,
+.app.garage-theme-dark select {
+    background: var(--garage-secondary);
+    border-color: var(--garage-input-line);
+    color: var(--garage-ink);
+}
+
+/* Dark mode inverts the primary button fill to the light ink color
+   (same "primary surface" idea as the receipt tab/level toggle), and
+   only turns orange on hover -- not permanently orange like before. */
+.app.garage-theme-dark .confirm-button,
+.app.garage-theme-dark .exit-button,
+.app.garage-theme-dark .garage-admin-link {
+    background: #edf4ef;
+    border-color: #edf4ef;
+    color: #162019;
+}
+
+.app.garage-theme-dark .confirm-button:hover:not(:disabled),
+.app.garage-theme-dark .exit-button:hover:not(:disabled),
+.app.garage-theme-dark .garage-admin-link:hover {
+    background: #e05b35;
+    border-color: #e05b35;
+    color: #fff;
+}
+
+.app.garage-theme-dark .cancel-button {
+    border-color: var(--garage-line);
+    color: var(--garage-ink);
+}
+
+.app.garage-theme-dark .parking-space.occupied {
+    background: rgba(224, 91, 53, .12);
+    border-color: rgba(224, 91, 53, .4);
+}
+
+.app.garage-theme-dark .parking-space.selected {
+    background: #edf4ef;
+    border-color: #edf4ef;
+}
+
+.app.garage-theme-dark .parking-space.selected .parking-space-number {
+    color: #162019;
+}
+
+.app.garage-theme-dark .selected-box {
+    background: rgba(224, 91, 53, .18);
+    border-color: #e05b35;
+}
+
+.app.garage-theme-dark .detected-info {
+    background: var(--garage-secondary);
+    border-color: var(--garage-line);
+}
+
+.app.garage-theme-dark .level-toggle {
+    background: #edf4ef;
+    border-color: #edf4ef;
+    color: #162019;
+}
+
+.app.garage-theme-dark .level-toggle.active {
+    background: #e05b35;
+    border-color: #e05b35;
+    color: #fff;
+}
+
+.app.garage-theme-dark .receipt-tab.active {
+    background: #edf4ef;
+    border-color: #edf4ef;
+    color: #162019;
+}
+
+/* Sharp corners everywhere on the Garage page -- overrides every
+   rounded/pill shape used above (cards, buttons, badges, the theme
+   slider, parking spaces, etc.) in one place instead of hunting down
+   each border-radius individually. Scoped to .app, which only
+   GaragePage.jsx renders, so no other page is affected. */
+.app,
+.app * {
+    border-radius: 0 !important;
+}
+
+/* Exceptions: the header's Light/Dark toggle and its thumb, and the
+   ADMIN link, keep their original rounded/pill shape. Higher
+   specificity than ".app *" above (2 classes vs. 1), so !important
+   here still wins. */
+.app .garage-theme-slider {
+    border-radius: 999px !important;
+}
+
+.app .garage-theme-thumb {
+    border-radius: 999px !important;
+}
+
+.app .garage-admin-link {
+    border-radius: 999px !important;
+}
+
+.app .inline-count {
+    border-radius: 999px !important;
 }

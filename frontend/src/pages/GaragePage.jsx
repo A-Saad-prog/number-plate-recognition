@@ -184,6 +184,9 @@ function GaragePage() {
             paymentMethod: null,
             ratePerMinute: null,
             error: "",
+            // Detection-order timestamp for the Receipt Center -- purely
+            // presentational, does not affect any camera/entry/exit logic.
+            detectedAt: Date.now(),
         });
 
         // A plate can fully confirm before the mount-time admin-settings
@@ -228,13 +231,35 @@ function GaragePage() {
         if (!isEntry && !active) {
             updateCameraVehicleState(cameraId, {
                 plate, action: null, loading: false, selectedSpaceId: null,
-                error: "This vehicle is not logged.",
+                error: trackingMode ? "This vehicle is not logged." : "This vehicle is not parked in the garage.",
             });
             scheduleTerminalCameraClear(cameraId, plate);
             return;
         }
 
         if (isEntry) {
+            // Two entry cameras can briefly see the same physical vehicle
+            // (e.g. overlapping fields of view, or a car crossing from one
+            // lane's frame into another's before it fully clears). Only
+            // the camera that already holds this plate keeps its pending
+            // Confirm Entry -- a second camera locking onto the identical
+            // plate must not spin up its own duplicate entry request for
+            // the same vehicle.
+            const duplicateEntryCameraId = Object.keys(cameraVehicleStateRef.current).find(
+                (otherCameraId) =>
+                    otherCameraId !== cameraId &&
+                    otherCameraId.startsWith("entry-") &&
+                    cameraVehicleStateRef.current[otherCameraId]?.plate === plate
+            );
+            if (duplicateEntryCameraId) {
+                updateCameraVehicleState(cameraId, {
+                    plate, action: null, loading: false, selectedSpaceId: null,
+                    error: "This vehicle is already being processed by another camera.",
+                });
+                scheduleTerminalCameraClear(cameraId, plate);
+                return;
+            }
+
             if (trackingMode) {
                 if (automaticEntryRef.current && !MULTI_CAMERA_ORCHESTRATION_TEST) {
                     void handleConfirmEntry(plate, null, cameraId, true);
@@ -434,6 +459,33 @@ function GaragePage() {
 
     const [activeLane, setActiveLane] = useState("entry");
     const activeLaneRef = useRef("entry");
+
+    // Presentation-only state: which visual theme is applied, and which
+    // Receipt Center tab is showing. Neither affects camera/entry/exit
+    // business logic in any way.
+    const GARAGE_THEME_STORAGE_KEY = "parking_garage_theme";
+    const [garageTheme, setGarageTheme] = useState(() => {
+        try {
+            return localStorage.getItem(GARAGE_THEME_STORAGE_KEY) === "dark" ? "dark" : "light";
+        } catch {
+            return "light";
+        }
+    });
+    const [receiptTab, setReceiptTab] = useState("entry");
+
+    useEffect(() => {
+        try {
+            localStorage.setItem(GARAGE_THEME_STORAGE_KEY, garageTheme);
+        } catch {
+            // Ignore storage errors (e.g. private browsing) -- theme just
+            // won't persist across reloads.
+        }
+    }, [garageTheme]);
+
+    function toggleGarageTheme() {
+        setGarageTheme((current) => (current === "dark" ? "light" : "dark"));
+    }
+
     const [cameraViews, setCameraViews] = useState({});
     const cameraStreamsRef = useRef({});
     const cameraNodesRef = useRef({});
@@ -1466,10 +1518,6 @@ function GaragePage() {
     const availableSpaces =
         totalSpaces - occupiedSpaces;
 
-    const garageFull =
-        totalSpaces > 0 &&
-        availableSpaces === 0;
-
     const isTrackingModeGarage =
         adminSettings?.garage_settings?.mode === "tracking";
 
@@ -1592,6 +1640,25 @@ function GaragePage() {
         ...Array.from({ length: entryCameraCount }, (_, index) => ({ id: `entry-${index + 1}`, label: `Entry Camera ${index + 1}`, lane: "Entry" })),
         ...Array.from({ length: exitCameraCount }, (_, index) => ({ id: `exit-${index + 1}`, label: `Exit Camera ${index + 1}`, lane: "Exit" })),
     ];
+
+    // Derived render data ONLY -- the Receipt Center reads directly from
+    // cameraVehicleState (the existing per-camera source of truth) rather
+    // than owning any state of its own, so a camera's process can never be
+    // merged with or overwritten by another camera's.
+    function cameraHasReceiptData(cameraId) {
+        const state = cameraVehicleState[cameraId];
+        return Boolean(state?.plate || state?.exitResult || state?.entryResult);
+    }
+    // Order by detection time (oldest first, newest last) rather than by
+    // camera id, so the Receipt Center reads top-to-bottom in the order
+    // vehicles actually arrived.
+    function byDetectionOrder(slotA, slotB) {
+        const detectedAtA = cameraVehicleState[slotA.id]?.detectedAt || 0;
+        const detectedAtB = cameraVehicleState[slotB.id]?.detectedAt || 0;
+        return detectedAtA - detectedAtB;
+    }
+    const entryReceiptSlots = cameraSlots.filter((slot) => slot.lane === "Entry" && cameraHasReceiptData(slot.id)).sort(byDetectionOrder);
+    const exitReceiptSlots = cameraSlots.filter((slot) => slot.lane === "Exit" && cameraHasReceiptData(slot.id)).sort(byDetectionOrder);
 
     function stopSlotCamera(cameraId) {
         cameraRequestsRef.current[cameraId] = false;
@@ -2077,29 +2144,116 @@ function GaragePage() {
         );
     }
 
+    // Presentational only: the camera card now shows the live feed and a
+    // compact status footer. The interactive entry/exit process for this
+    // camera (VehicleInformation + confirm/payment controls) has moved into
+    // the Receipt Center (see renderCameraReceipt) so it no longer occupies
+    // space next to every camera feed -- the underlying per-camera state
+    // and handlers are unchanged.
     function renderSlotCamera(slot) {
         const view = cameraViews[slot.id] || {};
         const vehicleState = cameraVehicleState[slot.id] || {};
         const assigned = Boolean(cameraAssignments[slot.id]);
         const isActiveLane = true;
-        return <div className="camera-panel" key={slot.id}>
-            <div className="camera-panel-header"><div><span className="camera-kicker">{slot.id}</span><strong>{slot.label}</strong></div></div>
-            <div className="camera-preview">
-                {assigned && <span className={`camera-feed-status camera-status ${isActiveLane && view.active ? "active" : "standby"}`}>{isActiveLane && view.active ? "Live" : "Standby"}</span>}
-                {!assigned ? <div className="camera-standby"><strong>Camera not assigned</strong></div> : !isActiveLane ? <div className="camera-standby"><strong>{slot.lane} cameras are on standby</strong></div> : <><video ref={(node) => { cameraNodesRef.current[slot.id] = node; if (node) void startSlotCamera(slot.id); }} autoPlay playsInline muted />{renderDetectionBox(view.box, { current: cameraNodesRef.current[slot.id] })}</>}
+        const liveStatusLabel = isActiveLane && view.active ? "Live" : "Standby";
+        return (
+            <div className="camera-panel" key={slot.id}>
+                <div className="camera-preview">
+                    {assigned && (
+                        <span className={`camera-feed-status camera-status ${isActiveLane && view.active ? "active" : "standby"}`}>
+                            {liveStatusLabel}
+                        </span>
+                    )}
+                    {!assigned ? (
+                        <div className="camera-standby"><strong>Camera not assigned</strong></div>
+                    ) : !isActiveLane ? (
+                        <div className="camera-standby"><strong>{slot.lane} cameras are on standby</strong></div>
+                    ) : (
+                        <>
+                            <video ref={(node) => { cameraNodesRef.current[slot.id] = node; if (node) void startSlotCamera(slot.id); }} autoPlay playsInline muted />
+                            {renderDetectionBox(view.box, { current: cameraNodesRef.current[slot.id] })}
+                        </>
+                    )}
+                </div>
+                <div className="camera-info">
+                    <div>
+                        <span className="camera-kicker">{slot.label}</span>
+                        <div className="camera-info-plate">{vehicleState.plate || "Waiting"}</div>
+                        <p className="camera-info-status">
+                            {vehicleState.error || (!assigned ? "Camera not assigned" : view.active ? "Detection active" : "Standby")}
+                        </p>
+                    </div>
+                </div>
+                {view.error && <div className="error">{view.error}</div>}
             </div>
-            {view.error && <div className="error">{view.error}</div>}
-            <VehicleInformation
-                exitResult={vehicleState.exitResult}
-                entryResult={vehicleState.entryResult}
-                detectedPlate={vehicleState.plate}
-                vehicleAction={vehicleState.action}
-                selectedSpace={parkingSpaces.find((space) => space.id === vehicleState.selectedSpaceId)}
-                trackingMode={adminSettings?.garage_settings?.mode === "tracking"}
-                onReceiptDone={() => updateCameraVehicleState(slot.id, { exitResult: null })}
-            />
-            {renderCameraVehicleAction(slot.id, vehicleState)}
-        </div>;
+        );
+    }
+
+    // Renders one pending process for the Receipt Center. Reuses the exact
+    // same VehicleInformation component and renderCameraVehicleAction
+    // handlers/markup that used to sit directly under each camera card --
+    // only the container it's placed in has changed.
+    function renderCameraReceipt(slot) {
+        const vehicleState = cameraVehicleState[slot.id] || {};
+        return (
+            <div className="mini-receipt" key={slot.id}>
+                <div className="mini-receipt-source">{slot.label}</div>
+                <VehicleInformation
+                    exitResult={vehicleState.exitResult}
+                    entryResult={vehicleState.entryResult}
+                    detectedPlate={vehicleState.plate}
+                    vehicleAction={vehicleState.action}
+                    selectedSpace={parkingSpaces.find((space) => space.id === vehicleState.selectedSpaceId)}
+                    trackingMode={isTrackingModeGarage}
+                    onReceiptDone={() => updateCameraVehicleState(slot.id, { exitResult: null })}
+                />
+                {renderCameraVehicleAction(slot.id, vehicleState)}
+            </div>
+        );
+    }
+
+    function renderReceiptCenter() {
+        const entryCount = entryReceiptSlots.length;
+        const exitCount = exitReceiptSlots.length;
+        return (
+            <div className="side-card receipt-center">
+                <div className="eyebrow">Receipt center</div>
+                <h3>Live processes.</h3>
+
+                <div className="receipt-tabs">
+                    <button
+                        type="button"
+                        className={`receipt-tab ${receiptTab === "entry" ? "active" : ""} ${entryCount > 0 ? "has-new" : ""}`}
+                        onClick={() => setReceiptTab("entry")}
+                    >
+                        <span>Entry <b className="inline-count">{entryCount}</b></span>
+                    </button>
+                    <button
+                        type="button"
+                        className={`receipt-tab ${receiptTab === "exit" ? "active" : ""} ${exitCount > 0 ? "has-new" : ""}`}
+                        onClick={() => setReceiptTab("exit")}
+                    >
+                        <span>Exit <b className="inline-count">{exitCount}</b></span>
+                    </button>
+                </div>
+
+                <div className={`receipt-panel ${receiptTab === "entry" ? "active" : ""}`}>
+                    {entryReceiptSlots.length > 0 ? (
+                        <div className="receipt-stack">{entryReceiptSlots.map(renderCameraReceipt)}</div>
+                    ) : (
+                        <p className="description">No pending entries.</p>
+                    )}
+                </div>
+
+                <div className={`receipt-panel ${receiptTab === "exit" ? "active" : ""}`}>
+                    {exitReceiptSlots.length > 0 ? (
+                        <div className="receipt-stack">{exitReceiptSlots.map(renderCameraReceipt)}</div>
+                    ) : (
+                        <p className="description">No pending exits.</p>
+                    )}
+                </div>
+            </div>
+        );
     }
 
     function switchActiveLane() {
@@ -2112,7 +2266,7 @@ function GaragePage() {
     }
 
     return (
-        <div className="app">
+        <div className={`app ${garageTheme === "dark" ? "garage-theme-dark" : ""}`}>
             <dialog
                 ref={reloadDialogRef}
                 className="garage-reload-dialog"
@@ -2143,165 +2297,108 @@ function GaragePage() {
                 </button>
             </dialog>
             {garageAuthFailed && <div className="settings-reload-notice" role="alert">Your admin session has expired. <a href="/admin">Sign in again</a></div>}
-            <header className="header">
-                <div>
-                    <h1>
-                        PARKING<span>OS</span>
-                    </h1>
 
-                    <div className="garage-header-controls">
-                        <button
-                            type="button"
-                            className="garage-admin-link"
-                            onClick={() =>
-                                openOrFocusNamedTab("/admin", "parkingos-admin")
-                            }
-                        >
-                            Open Admin
-                        </button>
-                    </div>
-
-                    <p>
-                        Parking
-                        Management System
-                    </p>
+            <header className="garage-top">
+                <div className="garage-logo">PARKING<span>OS</span> / GARAGE</div>
+                <div className="garage-top-actions">
+                    <span className="garage-status-pill"><i className="garage-status-dot" /> SYSTEM ONLINE</span>
+                    <button
+                        type="button"
+                        className="garage-theme-slider"
+                        onClick={toggleGarageTheme}
+                        aria-label="Toggle theme"
+                        aria-pressed={garageTheme === "dark"}
+                    >
+                        <span className="garage-theme-icon sun" aria-hidden="true">☀</span>
+                        <span className="garage-theme-icon moon" aria-hidden="true">☾</span>
+                        <span className="garage-theme-thumb" aria-hidden="true" />
+                    </button>
+                    <button
+                        type="button"
+                        className="garage-admin-link"
+                        onClick={() => openOrFocusNamedTab("/admin", "parkingos-admin")}
+                    >
+                        ADMIN <span>→</span>
+                    </button>
                 </div>
             </header>
 
+            <div className="garage-layout">
+                <main className="garage-main">
+                    <section className="garage-camera-panel">
+                        <h2>Vehicle <span>detection.</span></h2>
+                        <p className="description">The camera automatically detects the vehicle's license plate.</p>
 
-            <main className="container">
-
-                {!isTrackingModeGarage && (
-                <section className="card parking-status">
-                    <h2>
-                        Parking Status
-                    </h2>
-
-                    <p className="description">
-                        Current parking garage occupancy.
-                    </p>
-
-                    {parkingLoading &&
-                        parkingSpaces.length === 0 && (
-                            <div className="status-message">
-                                Loading parking status...
-                            </div>
-                        )}
-
-                    {parkingError && (
-                        <div className="error">
-                            {parkingError}
-                        </div>
-                    )}
-
-                    {parkingSpaces.length > 0 && (
-                        <>
-                            <div className="parking-summary">
-                                <div
-                                    className={
-                                        `space-status ${garageFull
-                                            ? "unavailable"
-                                            : "available"
-                                        }`
-                                    }
-                                >
-                                    <span className="status-indicator">
-                                        ●
-                                    </span>
-
-                                    <div>
-                                        <strong>
-                                            {garageFull
-                                                ? "Parking Full"
-                                                : `${availableSpaces} Spaces Available`}
-                                        </strong>
-
-                                        <p>
-                                            {occupiedSpaces}{" "}
-                                            of{" "}
-                                            {totalSpaces}{" "}
-                                            spaces occupied
-                                        </p>
-                                    </div>
-                                </div>
-                            </div>
-
-
-                            <div className="parking-legend">
-                                <div>
-                                    <span className="legend-box available-box" />
-                                    Available
-                                </div>
-
-                                <div>
-                                    <span className="legend-box occupied-box" />
-                                    Occupied
-                                </div>
-
-                                <div>
-                                    <span className="legend-box selected-box" />
-                                    Selected
-                                </div>
-                            </div>
-
-                            <div className="level-tabs" role="tablist">
-                                {[
-                                    ...new Set(
-                                        parkingSpaces.map(
-                                            (space) => Number(space.level)
-                                        )
-                                    ),
-                                ]
-                                    .sort((a, b) => a - b)
-                                    .map((level) => (
-                                        <button
-                                            key={level}
-                                            type="button"
-                                            className={`level-toggle ${openLevel === level
-                                                ? "active"
-                                                : ""
-                                                }`}
-                                            onClick={() => setOpenLevel(level)}
-                                            role="tab"
-                                            aria-selected={openLevel === level}
-                                        >
-                                            Level {level}
-                                        </button>
-                                    ))}
-                            </div>
-
-                            {openLevel && renderLevel(openLevel)}
-                        </>
-                    )}
-                </section>
-                )}
-
-
-                <section className="vehicle-section">
-
-                    <section className="card entry-card">
-
-                        <h2>
-                            Vehicle Detection
-                        </h2>
-
-                        <p className="description">
-                            The camera automatically detects the
-                            vehicle's license plate.
-                        </p>
-
-
-                        <div className="camera-lane-groups">
-                            <section><p className="camera-kicker">Entry</p><div className="camera-slot-grid">{cameraSlots.filter((slot) => slot.lane === "Entry").map(renderSlotCamera)}</div></section>
-                            <section><p className="camera-kicker">Exit</p><div className="camera-slot-grid">{cameraSlots.filter((slot) => slot.lane === "Exit").map(renderSlotCamera)}</div></section>
-                        </div>
-
+                        <div className={`camera-slot-grid ${cameraSlots.length === 2 ? "camera-slot-grid-pair" : ""}`}>{cameraSlots.map(renderSlotCamera)}</div>
                     </section>
 
+                    {!isTrackingModeGarage && (
+                        <section className="garage-floor-panel">
+                            <div className="floor-panel-head">
+                                <div>
+                                    <p className="eyebrow">Garage occupancy</p>
+                                    <h2>Parking <span>floor.</span></h2>
+                                </div>
 
-                </section>
+                                {parkingSpaces.length > 0 && (
+                                    <div className="level-tabs" role="tablist">
+                                        {[...new Set(parkingSpaces.map((space) => Number(space.level)))]
+                                            .sort((a, b) => a - b)
+                                            .map((level) => {
+                                                const levelSpaces = parkingSpaces.filter((space) => Number(space.level) === level);
+                                                const levelOccupied = levelSpaces.filter((space) => space.is_occupied).length;
+                                                return (
+                                                    <button
+                                                        key={level}
+                                                        type="button"
+                                                        className={`level-toggle ${openLevel === level ? "active" : ""}`}
+                                                        onClick={() => setOpenLevel(level)}
+                                                        role="tab"
+                                                        aria-selected={openLevel === level}
+                                                    >
+                                                        L{level} · {String(levelOccupied).padStart(2, "0")}/{levelSpaces.length}
+                                                    </button>
+                                                );
+                                            })}
+                                    </div>
+                                )}
+                            </div>
 
-            </main>
+                            {parkingLoading && parkingSpaces.length === 0 && (
+                                <div className="status-message">Loading parking status...</div>
+                            )}
+
+                            {parkingError && <div className="error">{parkingError}</div>}
+
+                            {parkingSpaces.length > 0 && (
+                                <>
+                                    {openLevel && renderLevel(openLevel)}
+
+                                    <div className="parking-summary">
+                                        <div className="eyebrow">Parking summary</div>
+                                        <div className="parking-summary-grid">
+                                            <div className="summary-stat"><span>Total spaces</span><b>{totalSpaces}</b></div>
+                                            <div className="summary-stat"><span>Occupied</span><b>{occupiedSpaces}</b></div>
+                                            <div className="summary-stat"><span>Available</span><b>{availableSpaces}</b></div>
+                                            <div className="summary-stat">
+                                                <span>Live processes</span>
+                                                <b className="summary-live-processes">
+                                                    <span>Entry {entryReceiptSlots.length}</span>
+                                                    <span>Exit {exitReceiptSlots.length}</span>
+                                                </b>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </>
+                            )}
+                        </section>
+                    )}
+                </main>
+
+                <aside className="garage-side">
+                    {renderReceiptCenter()}
+                </aside>
+            </div>
         </div>
     );
 }
