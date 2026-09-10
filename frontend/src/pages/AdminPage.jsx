@@ -25,6 +25,7 @@ import {
     verifyRecoveryTotp,
     resetAdminPassword,
     completeAdminOnboarding,
+    registerEntry,
 } from "../services/api";
 
 import {
@@ -44,6 +45,8 @@ const CAMERA_ASSIGNMENTS_KEY = "parking_camera_assignments";
 const GARAGE_SETTINGS_UPDATED_KEY = "parking_garage_settings_updated";
 const PARKING_DATA_UPDATED_KEY = "parking_data_updated";
 const PARKING_DATA_UPDATED_EVENT = "parking-data-updated";
+const PARKING_RECEIPT_UPDATED_KEY = "parking_receipt_updated";
+const PARKING_RECEIPT_UPDATED_EVENT = "parking-receipt-updated";
 const MAX_GARAGE_LEVELS = 25;
 const MAX_TOTAL_PARKING_SPACES = 1000;
 const GARAGE_CAPACITY_ERROR_PREFIX = "Maximum parking capacity is";
@@ -55,6 +58,12 @@ const GARAGE_CAPACITY_ERROR_PREFIX = "Maximum parking capacity is";
 function emitParkingDataUpdated() {
     localStorage.setItem(PARKING_DATA_UPDATED_KEY, String(Date.now()));
     window.dispatchEvent(new CustomEvent(PARKING_DATA_UPDATED_EVENT));
+}
+
+function emitGarageReceipt(type, receipt) {
+    const payload = JSON.stringify({ type, receipt, detectedAt: Date.now() });
+    localStorage.setItem(PARKING_RECEIPT_UPDATED_KEY, payload);
+    window.dispatchEvent(new CustomEvent(PARKING_RECEIPT_UPDATED_EVENT, { detail: JSON.parse(payload) }));
 }
 
 function openOrFocusNamedTab(url, name) {
@@ -343,6 +352,8 @@ function AdminPage() {
     const [analyticsPeriod, setAnalyticsPeriod] = useState("7d");
     const [activeSessionMenuId, setActiveSessionMenuId] = useState(null);
     const [sessionMenuPosition, setSessionMenuPosition] = useState(null);
+    const [activeSpaceMenuId, setActiveSpaceMenuId] = useState(null);
+    const [spaceMenuPosition, setSpaceMenuPosition] = useState(null);
     const activityLoadingRef = useRef(false);
 
     useEffect(() => {
@@ -824,9 +835,11 @@ function AdminPage() {
             if (!event.target.closest(".vehicle-menu, .vehicle-menu-dropdown")) {
                 setActiveSessionMenuId(null);
                 setSessionMenuPosition(null);
+                setActiveSpaceMenuId(null);
+                setSpaceMenuPosition(null);
             }
         };
-        const closeOnEscape = (event) => { if (event.key === "Escape") { setAccountMenuOpen(false); setActiveSessionMenuId(null); setSessionMenuPosition(null); } };
+        const closeOnEscape = (event) => { if (event.key === "Escape") { setAccountMenuOpen(false); setActiveSessionMenuId(null); setSessionMenuPosition(null); setActiveSpaceMenuId(null); setSpaceMenuPosition(null); } };
         document.addEventListener("mousedown", closeMenus);
         document.addEventListener("keydown", closeOnEscape);
         return () => { document.removeEventListener("mousedown", closeMenus); document.removeEventListener("keydown", closeOnEscape); };
@@ -920,8 +933,20 @@ function AdminPage() {
 
     async function removeLiveSession(sessionId) {
         if (!window.confirm("Remove this vehicle from parking and free its space?")) return;
-        try { await removeParkingSession(token, sessionId); emitParkingDataUpdated(); await loadParkingActivity(); }
+        try { const result = await removeParkingSession(token, sessionId); if (result.receipt) emitGarageReceipt("exit", result.receipt); emitParkingDataUpdated(); await loadParkingActivity(); }
         catch (err) { setActivityError(err.message || "Unable to remove parking."); }
+    }
+
+    async function manualEntry(space) {
+        const plate = window.prompt("Number plate");
+        if (!plate?.trim()) return;
+        try {
+            const result = await registerEntry(plate.trim().toUpperCase(), space.id);
+            if (!result.success) throw new Error(result.error || "Vehicle entry failed.");
+            emitGarageReceipt("entry", result.vehicle);
+            emitParkingDataUpdated();
+            await loadParkingActivity();
+        } catch (err) { setActivityError(err.message || "Unable to register vehicle entry."); }
     }
 
     async function editLiveSession(session) {
@@ -950,18 +975,18 @@ function AdminPage() {
         setActiveSessionMenuId(sessionId);
     }
 
-    function renderSessionMenu(session) {
-        if (activeSessionMenuId !== session.session_id || !sessionMenuPosition) return null;
+    function renderSessionMenu(session, openId = activeSessionMenuId, position = sessionMenuPosition, close = () => { setActiveSessionMenuId(null); setSessionMenuPosition(null); }, triggerId = session.session_id) {
+        if (openId !== triggerId || !position) return null;
         return createPortal(
-            <div className="vehicle-menu-dropdown vehicle-menu-popover" style={sessionMenuPosition} role="menu">
-                <button type="button" role="menuitem" className="vehicle-menu-item" onClick={() => { setActiveSessionMenuId(null); setSessionMenuPosition(null); void editLiveSession(session); }}>
+            <div className="vehicle-menu-dropdown vehicle-menu-popover" style={position} role="menu">
+                <button type="button" role="menuitem" className="vehicle-menu-item" onClick={() => { close(); void editLiveSession(session); }}>
                     <EditIcon /> Edit Info
                 </button>
-                <button type="button" role="menuitem" className="vehicle-menu-item" onClick={() => { setActiveSessionMenuId(null); setSessionMenuPosition(null); setPlate(session.plate); setActiveFeature("whitelist"); }}>
+                <button type="button" role="menuitem" className="vehicle-menu-item" onClick={() => { close(); setPlate(session.plate); setActiveFeature("whitelist"); }}>
                     <StarIcon /> Add to Whitelist
                 </button>
                 <div className="vehicle-menu-divider" role="separator" />
-                <button type="button" role="menuitem" className="vehicle-menu-item vehicle-menu-item-danger" onClick={() => { setActiveSessionMenuId(null); setSessionMenuPosition(null); void removeLiveSession(session.session_id); }}>
+                <button type="button" role="menuitem" className="vehicle-menu-item vehicle-menu-item-danger" onClick={() => { close(); void removeLiveSession(session.session_id); }}>
                     <TrashIcon /> Remove Parking
                 </button>
             </div>,
@@ -1279,6 +1304,32 @@ function AdminPage() {
         if (settingsSubmitting) return;
         setConfirmationOpen(false);
         setConfirmationSection(null);
+    }
+
+    function toggleSpaceMenu(spaceId, trigger) {
+        if (activeSpaceMenuId === spaceId) { setActiveSpaceMenuId(null); setSpaceMenuPosition(null); return; }
+        const rect = trigger.getBoundingClientRect();
+        const menuWidth = 184;
+        const menuHeight = 52;
+        const gap = 6;
+        const top = rect.bottom + gap + menuHeight <= window.innerHeight ? rect.bottom + gap : Math.max(8, rect.top - menuHeight - gap);
+        const left = Math.max(8, Math.min(window.innerWidth - menuWidth - 8, rect.right - menuWidth));
+        setSpaceMenuPosition({ top, left });
+        setActiveSpaceMenuId(spaceId);
+    }
+
+    function renderSpaceMenu(space, session) {
+        const menuId = `space-${space.id}`;
+        if (activeSpaceMenuId !== menuId || !spaceMenuPosition) return null;
+        if (space.is_occupied) return session ? renderSessionMenu(session, menuId, spaceMenuPosition, () => { setActiveSpaceMenuId(null); setSpaceMenuPosition(null); }, menuId) : null;
+        return createPortal(
+            <div className="vehicle-menu-dropdown vehicle-menu-popover" style={spaceMenuPosition} role="menu">
+                <button type="button" role="menuitem" className="vehicle-menu-item" onClick={() => { setActiveSpaceMenuId(null); setSpaceMenuPosition(null); void manualEntry(space); }}>
+                    Manual Entry
+                </button>
+            </div>,
+            document.body
+        );
     }
 
     function triggerGarageSettingsAttention() {
@@ -1890,7 +1941,7 @@ function AdminPage() {
                                 {parkingActivity && <>
                                     <p className="admin-message">Capacity: {parkingActivity.space_status.total_active_capacity} · Occupied: {parkingActivity.space_status.occupied} · Available: {parkingActivity.space_status.available}</p>
                                     <div className="whitelist-table-wrap"><table><thead><tr><th>Live plate</th><th>Space</th><th>Entry time</th><th>Duration</th><th>Actions</th></tr></thead><tbody>{parkingActivity.live_sessions.map((session) => <tr key={session.session_id}><td>{session.plate}</td><td>{session.space || "Tracking"}</td><td>{new Date(session.entry_time).toLocaleString()}</td><td>{session.duration_minutes} min</td><td><div className="vehicle-menu"><button type="button" className="vehicle-menu-trigger" aria-label="Vehicle actions" aria-expanded={activeSessionMenuId === session.session_id} onClick={(event) => toggleSessionMenu(session.session_id, event.currentTarget)}>⋮</button>{renderSessionMenu(session)}</div></td></tr>)}</tbody></table></div>
-                                    <div className="whitelist-table-wrap"><table><thead><tr><th>Level</th><th>Space</th><th>Status</th><th>Plate</th></tr></thead><tbody>{parkingActivity.space_status.spaces.map((space) => <tr key={`${space.level}-${space.space}`}><td>{space.level}</td><td>{space.space}</td><td>{space.is_occupied ? "Occupied" : "Available"}</td><td>{space.plate || "-"}</td></tr>)}</tbody></table></div>
+                                    <div className="whitelist-table-wrap"><table><thead><tr><th>Level</th><th>Space</th><th>Status</th><th>Plate</th><th>Actions</th></tr></thead><tbody>{parkingActivity.space_status.spaces.map((space) => { const session = parkingActivity.live_sessions.find((item) => Number(item.level) === Number(space.level) && item.space === space.space); const menuId = `space-${space.id}`; return <tr key={`${space.level}-${space.space}`}><td>{space.level}</td><td>{space.space}</td><td>{space.is_occupied ? "Occupied" : "Available"}</td><td>{space.plate || "-"}</td><td><div className="vehicle-menu"><button type="button" className="vehicle-menu-trigger" aria-label="Space actions" aria-expanded={activeSpaceMenuId === menuId} onClick={(event) => toggleSpaceMenu(menuId, event.currentTarget)}>⋮</button>{renderSpaceMenu(space, session)}</div></td></tr>; })}</tbody></table></div>
                                     <div className="whitelist-table-wrap"><table><thead><tr><th>Plate</th><th>Visits</th><th>Last entry</th><th>Last exit</th><th>Parked</th><th>Whitelist</th></tr></thead><tbody>{parkingActivity.vehicles.map((vehicle) => <tr key={vehicle.plate}><td>{vehicle.plate}</td><td>{vehicle.total_visits}</td><td>{vehicle.last_entry ? new Date(vehicle.last_entry).toLocaleString() : "-"}</td><td>{vehicle.last_exit ? new Date(vehicle.last_exit).toLocaleString() : "-"}</td><td>{vehicle.currently_parked ? "Yes" : "No"}</td><td>{vehicle.whitelisted ? "Yes" : "No"}</td></tr>)}</tbody></table></div>
                                     <div className="whitelist-table-wrap"><table><thead><tr><th>Plate</th><th>Entry</th><th>Exit</th><th>Duration</th><th>Space</th>{parkingActivity.billing_enabled && <><th>Payment</th><th>Amount</th><th>Discount</th></>}</tr></thead><tbody>{parkingActivity.history.map((item, index) => <tr key={`${item.plate}-${index}`}><td>{item.plate}</td><td>{new Date(item.entry_time).toLocaleString()}</td><td>{item.exit_time ? new Date(item.exit_time).toLocaleString() : "-"}</td><td>{item.duration_minutes} min</td><td>{item.space || "-"}</td>{parkingActivity.billing_enabled && <><td>{item.payment_method || "-"}</td><td>{item.amount ?? "-"}</td><td>{item.discount_percent ? `${item.discount_percent}%` : "-"}</td></>}</tr>)}</tbody></table></div>
                                 </>}

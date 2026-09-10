@@ -22,6 +22,8 @@ const VISION_DEBUG = import.meta.env.DEV && import.meta.env.VITE_VISION_DEBUG ==
 const GARAGE_SETTINGS_UPDATED_KEY = "parking_garage_settings_updated";
 const PARKING_DATA_UPDATED_KEY = "parking_data_updated";
 const PARKING_DATA_UPDATED_EVENT = "parking-data-updated";
+const PARKING_RECEIPT_UPDATED_KEY = "parking_receipt_updated";
+const PARKING_RECEIPT_UPDATED_EVENT = "parking-receipt-updated";
 const ADMIN_TOKEN_STORAGE_KEY = "parking_admin_token";
 const MULTI_CAMERA_ORCHESTRATION_TEST = false;
 const PARTIAL_GUARD_EVIDENCE_TTL_MS = 3000;
@@ -472,7 +474,25 @@ function GaragePage() {
         }
     });
     const [receiptTab, setReceiptTab] = useState("entry");
+    const [externalReceipts, setExternalReceipts] = useState([]);
     const adminLoggedIn = Boolean(localStorage.getItem(ADMIN_TOKEN_STORAGE_KEY)) && !garageAuthFailed;
+
+    useEffect(() => {
+        const acceptReceipt = (payload) => {
+            if (!payload?.receipt || (payload.type !== "entry" && payload.type !== "exit")) return;
+            setExternalReceipts((current) => [...current.filter((item) => item.id !== payload.receipt.session_id), { ...payload, id: payload.receipt.session_id }]);
+            setReceiptTab(payload.type);
+        };
+        const handleStorage = (event) => {
+            if (event.key === PARKING_RECEIPT_UPDATED_KEY && event.newValue) {
+                try { acceptReceipt(JSON.parse(event.newValue)); } catch { /* ignore malformed event */ }
+            }
+        };
+        const handleEvent = (event) => acceptReceipt(event.detail);
+        window.addEventListener("storage", handleStorage);
+        window.addEventListener(PARKING_RECEIPT_UPDATED_EVENT, handleEvent);
+        return () => { window.removeEventListener("storage", handleStorage); window.removeEventListener(PARKING_RECEIPT_UPDATED_EVENT, handleEvent); };
+    }, []);
 
     useEffect(() => {
         try {
@@ -1658,8 +1678,9 @@ function GaragePage() {
         const detectedAtB = cameraVehicleState[slotB.id]?.detectedAt || 0;
         return detectedAtA - detectedAtB;
     }
-    const entryReceiptSlots = cameraSlots.filter((slot) => slot.lane === "Entry" && cameraHasReceiptData(slot.id)).sort(byDetectionOrder);
-    const exitReceiptSlots = cameraSlots.filter((slot) => slot.lane === "Exit" && cameraHasReceiptData(slot.id)).sort(byDetectionOrder);
+    const externalReceiptSlots = externalReceipts.map((item) => ({ id: `admin-${item.id}`, label: "Admin", lane: item.type === "exit" ? "Exit" : "Entry", receipt: item.receipt, detectedAt: item.detectedAt }));
+    const entryReceiptSlots = [...cameraSlots.filter((slot) => slot.lane === "Entry" && cameraHasReceiptData(slot.id)), ...externalReceiptSlots.filter((slot) => slot.lane === "Entry")].sort((a, b) => (a.detectedAt || cameraVehicleState[a.id]?.detectedAt || 0) - (b.detectedAt || cameraVehicleState[b.id]?.detectedAt || 0));
+    const exitReceiptSlots = [...cameraSlots.filter((slot) => slot.lane === "Exit" && cameraHasReceiptData(slot.id)), ...externalReceiptSlots.filter((slot) => slot.lane === "Exit")].sort((a, b) => (a.detectedAt || cameraVehicleState[a.id]?.detectedAt || 0) - (b.detectedAt || cameraVehicleState[b.id]?.detectedAt || 0));
 
     function stopSlotCamera(cameraId) {
         cameraRequestsRef.current[cameraId] = false;
@@ -2195,7 +2216,9 @@ function GaragePage() {
     // handlers/markup that used to sit directly under each camera card --
     // only the container it's placed in has changed.
     function renderCameraReceipt(slot) {
-        const vehicleState = cameraVehicleState[slot.id] || {};
+        const vehicleState = slot.receipt
+            ? { ...(slot.lane === "Exit" ? { exitResult: slot.receipt } : { entryResult: slot.receipt }) }
+            : cameraVehicleState[slot.id] || {};
         return (
             <div className={`mini-receipt ${slot.lane === "Entry" ? "entry-receipt" : "exit-receipt"}`} key={slot.id}>
                 <div className="mini-receipt-source">{slot.label}</div>
@@ -2206,7 +2229,9 @@ function GaragePage() {
                     vehicleAction={vehicleState.action}
                     selectedSpace={parkingSpaces.find((space) => space.id === vehicleState.selectedSpaceId)}
                     trackingMode={isTrackingModeGarage}
-                    onReceiptDone={() => updateCameraVehicleState(slot.id, { exitResult: null })}
+                    onReceiptDone={() => slot.receipt
+                        ? setExternalReceipts((current) => current.filter((item) => item.id !== slot.receipt.session_id))
+                        : updateCameraVehicleState(slot.id, { exitResult: null })}
                 />
                 {renderCameraVehicleAction(slot.id, vehicleState)}
             </div>

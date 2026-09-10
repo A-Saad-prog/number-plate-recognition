@@ -17,6 +17,7 @@ from app.services.garage_service import sync_parking_spaces
 from app.models.parking_session import ParkingSession
 from app.models.vehicle import Vehicle
 from app.services.time_service import pakistan_now
+from app.services.exit_service import complete_parking_session
 from fastapi import APIRouter, Depends, HTTPException, status
 from app.models.parking_space import ParkingSpace
 from app.models.daily_parking_analytics import DailyParkingAnalytics
@@ -303,7 +304,7 @@ def parking_activity(db: Session = Depends(get_db), admin=Depends(current_admin)
     whitelist = {entry.license_plate: entry for entry in db.query(WhitelistEntry).filter(WhitelistEntry.tenant_id == tenant_id).all()}
     active_by_space = {session.parking_space_id: session for session in sessions if session.status == "active"}
     live_sessions = [
-        {"session_id": session.id, "plate": vehicles[session.vehicle_id].license_plate, "space": next((space.space_number for space in all_spaces if space.id == session.parking_space_id), None), "entry_time": session.entry_time, "duration_minutes": int((pakistan_now() - session.entry_time).total_seconds() // 60)}
+        {"session_id": session.id, "plate": vehicles[session.vehicle_id].license_plate, "level": next((space.level for space in all_spaces if space.id == session.parking_space_id), None), "space": next((space.space_number for space in all_spaces if space.id == session.parking_space_id), None), "entry_time": session.entry_time, "duration_minutes": int((pakistan_now() - session.entry_time).total_seconds() // 60)}
         for session in sessions if session.status == "active" and session.vehicle_id in vehicles
     ]
     history = [
@@ -316,7 +317,7 @@ def parking_activity(db: Session = Depends(get_db), admin=Depends(current_admin)
         active = next((session for session in vehicle_sessions if session.status == "active"), None)
         completed = [session for session in vehicle_sessions if session.exit_time]
         vehicle_rows.append({"plate": vehicle.license_plate, "total_visits": len(vehicle_sessions), "last_entry": max((session.entry_time for session in vehicle_sessions), default=None), "last_exit": max((session.exit_time for session in completed), default=None), "currently_parked": bool(active), "whitelisted": vehicle.license_plate in whitelist})
-    return {"live_sessions": live_sessions, "history": history, "space_status": {"total_active_capacity": len(spaces), "occupied": sum(space.is_occupied for space in spaces), "available": sum(not space.is_occupied for space in spaces), "spaces": [{"level": space.level, "space": space.space_number, "is_occupied": space.is_occupied, "plate": vehicles.get(active_by_space[space.id].vehicle_id).license_plate if space.id in active_by_space and active_by_space[space.id].vehicle_id in vehicles else None} for space in spaces]}, "vehicles": vehicle_rows, "billing_enabled": bool(settings["billing_config"].get("payments_enabled")), "garage_mode": settings["garage_settings"].get("mode", "parking")}
+    return {"live_sessions": live_sessions, "history": history, "space_status": {"total_active_capacity": len(spaces), "occupied": sum(space.is_occupied for space in spaces), "available": sum(not space.is_occupied for space in spaces), "spaces": [{"id": space.id, "level": space.level, "space": space.space_number, "is_occupied": space.is_occupied, "plate": vehicles.get(active_by_space[space.id].vehicle_id).license_plate if space.id in active_by_space and active_by_space[space.id].vehicle_id in vehicles else None} for space in spaces]}, "vehicles": vehicle_rows, "billing_enabled": bool(settings["billing_config"].get("payments_enabled")), "garage_mode": settings["garage_settings"].get("mode", "parking")}
 
 
 @router.post("/activity/{session_id}/remove")
@@ -354,35 +355,20 @@ def remove_active_parking(
             .first()
         )
 
-    session.exit_time = pakistan_now()
-    session.status = "removed"
-    session.amount = 0
-    session.payment_method = None
-
-    if space:
-        other_active_session = (
-            db.query(ParkingSession.id)
-            .filter(
-                ParkingSession.parking_space_id == space.id,
-                ParkingSession.tenant_id == admin.tenant_id,
-                ParkingSession.status == "active",
-                ParkingSession.id != session.id,
-            )
-            .first()
-        )
-
-        space.is_occupied = (
-            other_active_session is not None
-        )
-
-    try:
-        db.flush()
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
-
-    return {"success": True}
+    settings = settings_response(get_admin_settings(db, admin.tenant_id))
+    billing_config = settings["billing_config"]
+    vehicle = db.query(Vehicle).filter(Vehicle.id == session.vehicle_id).first()
+    receipt = complete_parking_session(
+        db=db,
+        session=session,
+        vehicle=vehicle,
+        payment_method=None,
+        billing_enabled=bool(billing_config.get("payments_enabled")),
+        rate_per_minute=float(billing_config.get("rate_per_minute", 1.67)),
+        rate_unit=billing_config.get("rate_unit", "minute"),
+        tenant_id=admin.tenant_id,
+    )
+    return {"success": True, "receipt": receipt}
 class VehiclePlateUpdateRequest(BaseModel):
     license_plate: str = Field(min_length=1, max_length=20)
 

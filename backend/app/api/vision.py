@@ -463,6 +463,153 @@ def _custom_numeric_candidate(raw_text, raw_confidence):
     return cleaned
 
 
+# LEGACY_TWO_LINE_YEAR_LAYOUT_V1
+def _cluster_row_components(row_mask, gap_ratio=0.08, min_area=4):
+    """Group foreground connected components in a thresholded row mask into
+    horizontal character clusters (e.g. "LER" and "20" are separate clusters
+    when printed with a clear gap between them)."""
+    num_labels, _, stats, _ = cv2.connectedComponentsWithStats(row_mask, connectivity=8)
+
+    boxes = []
+    for i in range(1, num_labels):
+        x, y, w, h, area = stats[i]
+        if area < min_area:
+            continue
+        boxes.append((int(x), int(y), int(w), int(h)))
+
+    if not boxes:
+        return []
+
+    boxes.sort(key=lambda box: box[0])
+    width = row_mask.shape[1]
+    gap_threshold = max(4, int(width * gap_ratio))
+
+    clusters = [[boxes[0]]]
+    for box in boxes[1:]:
+        prev_right = max(b[0] + b[2] for b in clusters[-1])
+        if box[0] - prev_right > gap_threshold:
+            clusters.append([box])
+        else:
+            clusters[-1].append(box)
+
+    merged = []
+    for group in clusters:
+        x1 = min(b[0] for b in group)
+        y1 = min(b[1] for b in group)
+        x2 = max(b[0] + b[2] for b in group)
+        y2 = max(b[1] + b[3] for b in group)
+        merged.append((x1, y1, x2, y2))
+
+    return merged
+
+
+def _exclude_top_row_year(top_line):
+    """Conservatively detect and exclude a small, isolated 2-digit "year"
+    token printed at the far upper-right of a legacy two-line plate's top
+    row (e.g. "LER - 20"), without touching the main alphabetic prefix.
+
+    Only trims when geometry strongly indicates this exact layout: a
+    right-most cluster that is narrow, visibly smaller than the main
+    cluster(s), positioned in the right portion of the row, and clearly
+    separated from the main cluster by a gap. Any less-confident case is
+    left completely untouched.
+    """
+    if top_line is None or top_line.size == 0:
+        return top_line, False, {"reason": "empty_top_row"}
+
+    gray = cv2.cvtColor(top_line, cv2.COLOR_BGR2GRAY)
+    mask = cv2.adaptiveThreshold(
+        gray,
+        255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY_INV,
+        21,
+        9,
+    )
+
+    clusters = _cluster_row_components(mask)
+    if len(clusters) < 2:
+        return top_line, False, {"reason": "single_cluster"}
+
+    width = top_line.shape[1]
+    main_clusters = clusters[:-1]
+    year_x1, year_y1, year_x2, year_y2 = clusters[-1]
+
+    main_right = max(c[2] for c in main_clusters)
+    main_height = max(c[3] - c[1] for c in main_clusters)
+    year_width = year_x2 - year_x1
+    year_height = year_y2 - year_y1
+    gap = year_x1 - main_right
+
+    is_right_aligned = year_x2 >= width * 0.72
+    is_narrow = year_width <= width * 0.34
+    is_smaller = year_height <= main_height * 0.82
+    is_isolated = gap >= max(6, int(width * 0.05))
+
+    if not (is_right_aligned and is_narrow and is_smaller and is_isolated):
+        return top_line, False, {"reason": "not_confident_year_layout"}
+
+    trimmed = top_line[:, : max(main_right + 4, 1)]
+    if trimmed.size == 0 or trimmed.shape[1] < 4:
+        return top_line, False, {"reason": "trim_too_aggressive"}
+
+    return trimmed, True, {
+        "reason": "year_cluster_excluded",
+        "year_box": [int(year_x1), int(year_y1), int(year_x2), int(year_y2)],
+        "gap": int(gap),
+    }
+
+
+def _exclude_decorative_left_panel(crop):
+    """Conservatively detect and remove a decorative green province/emblem
+    panel running down the left edge of the plate (e.g. the Punjab strip).
+
+    Uses a wide HSV green range (robust to lighting/white-balance) and
+    relative widths only (robust to camera distance/resolution) -- no
+    hardcoded pixel widths or exact shades. Only trims when a strong,
+    contiguous green run starts at x=0 and ends with a clear contrast
+    boundary; otherwise the crop is returned unchanged.
+    """
+    if crop is None or crop.size == 0:
+        return crop, False, {"reason": "empty_crop"}
+
+    height, width = crop.shape[:2]
+    max_strip_w = int(width * 0.45)
+    if max_strip_w < 4:
+        return crop, False, {"reason": "too_narrow_to_scan"}
+
+    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+    green_mask = cv2.inRange(hsv, (32, 35, 35), (95, 255, 255))
+    col_green_ratio = np.count_nonzero(green_mask, axis=0) / max(height, 1)
+
+    strip_end = 0
+    for x in range(max_strip_w):
+        if col_green_ratio[x] >= 0.35:
+            strip_end = x + 1
+        else:
+            break
+
+    min_strip_w = max(6, int(width * 0.08))
+    if strip_end < min_strip_w:
+        return crop, False, {"reason": "no_strong_left_green_strip", "strip_end": int(strip_end)}
+
+    boundary_end = min(strip_end + max(4, int(width * 0.05)), width)
+    after_ratio = (
+        float(np.mean(col_green_ratio[strip_end:boundary_end]))
+        if boundary_end > strip_end
+        else 0.0
+    )
+    if after_ratio >= 0.30:
+        return crop, False, {"reason": "no_clear_strip_boundary"}
+
+    margin = max(2, int(width * 0.015))
+    trimmed = crop[:, min(strip_end + margin, width - 1):]
+    if trimmed.shape[1] < width * 0.4:
+        return crop, False, {"reason": "trim_too_aggressive"}
+
+    return trimmed, True, {"reason": "decorative_strip_removed", "strip_width": int(strip_end)}
+
+
 # GENERIC_TWO_LINE_PLATE_V2
 def _prepare_two_line_plate(crop):
     # Format-agnostic.
@@ -488,6 +635,16 @@ def _prepare_two_line_plate(crop):
             "aspect_ratio": round(aspect_ratio, 3),
         }
 
+    # Legacy Punjab-style layout only: exclude a decorative left green
+    # province/emblem strip before row-splitting, if confidently present.
+    # No-op (untouched crop) for every other plate shape.
+    crop, decorative_strip_removed, strip_meta = _exclude_decorative_left_panel(crop)
+    height, width = crop.shape[:2]
+    aspect_ratio = width / max(height, 1)
+
+    if VISION_DEBUG and decorative_strip_removed:
+        logger.info("[Vision layout V2] decorative_strip_removed=true meta=%s", strip_meta)
+
     gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
     gray = cv2.GaussianBlur(gray, (3, 3), 0)
     binary = cv2.adaptiveThreshold(
@@ -508,6 +665,7 @@ def _prepare_two_line_plate(crop):
             "rearranged": False,
             "reason": "invalid_gap_search",
             "aspect_ratio": round(aspect_ratio, 3),
+            "decorative_strip_removed": decorative_strip_removed,
         }
 
     middle = row_ink[search_start:search_end]
@@ -522,6 +680,7 @@ def _prepare_two_line_plate(crop):
             "aspect_ratio": round(aspect_ratio, 3),
             "split_y": int(split_y),
             "gap_strength": round(gap_strength, 3),
+            "decorative_strip_removed": decorative_strip_removed,
         }
 
     margin = max(1, int(height * 0.025))
@@ -534,7 +693,20 @@ def _prepare_two_line_plate(crop):
             "reason": "bad_two_line_split",
             "aspect_ratio": round(aspect_ratio, 3),
             "split_y": int(split_y),
+            "decorative_strip_removed": decorative_strip_removed,
         }
+
+    # Legacy two-line layout only: exclude a small isolated year token at
+    # the far upper-right of the top row, if geometry strongly indicates
+    # it. Conservative -- a normal two-line plate (e.g. "AB-"/"123") has a
+    # single top cluster and is left completely untouched.
+    top, year_region_ignored, year_meta = _exclude_top_row_year(top)
+
+    if VISION_DEBUG and year_region_ignored:
+        logger.info(
+            "[Vision layout V2] two_line_year_layout=true year_region_ignored=true meta=%s",
+            year_meta,
+        )
 
     def _trim_registration_row(line):
         row_gray = cv2.cvtColor(line, cv2.COLOR_BGR2GRAY)
@@ -564,6 +736,8 @@ def _prepare_two_line_plate(crop):
             "rearranged": False,
             "reason": "empty_registration_row",
             "aspect_ratio": round(aspect_ratio, 3),
+            "decorative_strip_removed": decorative_strip_removed,
+            "year_region_ignored": year_region_ignored,
         }
 
     target_h = max(top.shape[0], bottom.shape[0], 24)
@@ -588,6 +762,8 @@ def _prepare_two_line_plate(crop):
             "reason": "combined_not_ocr_line_like",
             "aspect_ratio": round(aspect_ratio, 3),
             "combined_ratio": round(combined_ratio, 3),
+            "decorative_strip_removed": decorative_strip_removed,
+            "year_region_ignored": year_region_ignored,
         }
 
     return combined, {
@@ -598,6 +774,10 @@ def _prepare_two_line_plate(crop):
         "gap_strength": round(gap_strength, 3),
         "input_size": [width, height],
         "output_size": [int(combined.shape[1]), int(combined.shape[0])],
+        "decorative_strip_removed": decorative_strip_removed,
+        "two_line_year_layout": year_region_ignored,
+        "year_region_ignored": year_region_ignored,
+        **({"year_box": year_meta.get("year_box")} if year_region_ignored else {}),
     }
 
 
@@ -751,7 +931,8 @@ def _process_plate_frame(
         ocr_input, line_layout = _prepare_two_line_plate(ocr_crop)
 
         logger.info(
-            "[Vision layout V2] source=%s rearranged=%s reason=%s aspect=%s split=%s gap=%s input=%s output=%s",
+            "[Vision layout V2] source=%s rearranged=%s reason=%s aspect=%s split=%s gap=%s input=%s output=%s "
+            "decorative_strip_removed=%s year_region_ignored=%s",
             request.source or "default",
             line_layout.get("rearranged"),
             line_layout.get("reason"),
@@ -760,6 +941,8 @@ def _process_plate_frame(
             line_layout.get("gap_strength"),
             line_layout.get("input_size"),
             line_layout.get("output_size"),
+            line_layout.get("decorative_strip_removed"),
+            line_layout.get("year_region_ignored"),
         )
 
         raw_text, raw_confidence = _raw_ocr(ocr_input)

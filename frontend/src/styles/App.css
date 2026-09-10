@@ -2728,6 +2728,17 @@ body {
     color: #189dea;
 }
 
+.app.garage-theme-dark .mini-receipt.exit-receipt .exit-info,
+.app.garage-theme-dark .mini-receipt.exit-receipt .exit-info *:not(.receipt-done-button) {
+    color: #edf4ef !important;
+}
+.app.garage-theme-dark .mini-receipt.exit-receipt .mini-receipt-source {
+    color: #edf4ef !important;
+}
+.app.garage-theme-dark .mini-receipt.exit-receipt .vehicle-info-amount {
+    background: var(--garage-secondary);
+}
+
 /* The entry/exit action block and its buttons carry generous spacing
    from their older, larger design -- tighten it here so a receipt
    card doesn't take up more height than it needs to. */
