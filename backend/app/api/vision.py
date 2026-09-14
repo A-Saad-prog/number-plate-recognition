@@ -3,6 +3,8 @@ import logging
 import os
 import re
 import time
+import threading
+import uuid
 from collections import defaultdict, deque
 
 import cv2
@@ -14,17 +16,76 @@ from pydantic import BaseModel
 from app.services.plate_formats import classify_plate
 
 from app.services.plate_recognition import (
-    CONFIDENCE_THRESHOLD,
-    YOLO_DEVICE,
-    YOLO_IMGSZ,
+    detect_yolo_boxes,
     ocr,
     update_fps,
-    yolo,
     _upload_accepted_frame_in_background,
 )
 
 logger = logging.getLogger(__name__)
 VISION_DEBUG = os.getenv("VISION_DEBUG", "").lower() in {"1", "true", "yes"}
+VISION_CONCURRENCY_DEBUG = os.getenv("VISION_CONCURRENCY_DEBUG", "").lower() in {"1", "true", "yes"}
+VISION_SERIALIZE_YOLO = os.getenv("VISION_SERIALIZE_YOLO", "").lower() in {"1", "true", "yes"}
+
+_concurrency_lock = threading.Lock()
+_yolo_single_flight_lock = threading.Lock()
+_active_vision_requests = 0
+_active_yolo = 0
+_active_ocr = 0
+_peak_vision_requests = 0
+_peak_yolo = 0
+_peak_ocr = 0
+
+
+def _vision_concurrency_event(stage, event, request_id, source, duration_ms=None):
+    """Debug-only counter measurement; the lock never covers inference work."""
+    if not VISION_CONCURRENCY_DEBUG:
+        return
+
+    global _active_vision_requests, _active_yolo, _active_ocr
+    global _peak_vision_requests, _peak_yolo, _peak_ocr
+
+    active_names = {
+        "request": "_active_vision_requests",
+        "yolo": "_active_yolo",
+        "ocr": "_active_ocr",
+    }
+    peak_names = {
+        "request": "_peak_vision_requests",
+        "yolo": "_peak_yolo",
+        "ocr": "_peak_ocr",
+    }
+    active_name = active_names[stage]
+    peak_name = peak_names[stage]
+
+    with _concurrency_lock:
+        active_value = globals()[active_name] + (1 if event.endswith("start") else -1)
+        globals()[active_name] = max(0, active_value)
+        if event.endswith("start"):
+            globals()[peak_name] = max(globals()[peak_name], globals()[active_name])
+        active_value = globals()[active_name]
+        peak_value = globals()[peak_name]
+        active_requests = _active_vision_requests
+        peak_requests = _peak_vision_requests
+
+    thread = threading.current_thread()
+    duration = f" duration_ms={duration_ms:.1f}" if duration_ms is not None else ""
+    logger.info(
+        "[Vision concurrency] event=%s request_id=%s source=%s active_%s=%d peak_%s=%d "
+        "active_requests=%d peak_requests=%d thread_id=%s thread_name=%s%s",
+        event,
+        request_id,
+        source,
+        "requests" if stage == "request" else stage,
+        active_value,
+        "requests" if stage == "request" else stage,
+        peak_value,
+        active_requests,
+        peak_requests,
+        thread.ident,
+        thread.name,
+        duration,
+    )
 
 router = APIRouter(
     prefix="/vision",
@@ -52,6 +113,9 @@ class PlateDetectionRequest(BaseModel):
 def detect_license_plate(
     request: PlateDetectionRequest,
 ):
+    request_id = request.request_id or f"generated-{uuid.uuid4().hex[:12]}"
+    source = request.source or "default"
+    _vision_concurrency_event("request", "request_start", request_id, source)
     try:
 
         started_at = time.perf_counter()
@@ -63,7 +127,22 @@ def detect_license_plate(
                 request.source or "default",
             )
 
-        result = _process_plate_frame(request)
+        result = _process_plate_frame(request, request_id)
+        timings = result.get("timings", {})
+        logger.info(
+            "[Vision timing] source=%s detected=%s total=%.1fms decode=%.1fms yolo_wait=%.1fms yolo=%.1fms crop=%.1fms rectify=%.1fms two_line=%.1fms ocr=%.1fms parser=%.1fms",
+            request.source or "default",
+            result.get("detected"),
+            float(timings.get("backend_total_ms", 0.0)),
+            float(timings.get("decode_ms", 0.0)),
+            float(timings.get("yolo_wait_ms", 0.0)),
+            float(timings.get("yolo_ms", 0.0)),
+            float(timings.get("crop_ms", 0.0)),
+            float(timings.get("rectify_ms", 0.0)),
+            float(timings.get("two_line_ms", 0.0)),
+            float(timings.get("ocr_ms", 0.0)),
+            float(timings.get("parser_ms", 0.0)),
+        )
 
         if VISION_DEBUG:
             logger.info(
@@ -93,6 +172,8 @@ def detect_license_plate(
             status_code=500,
             detail="Plate recognition failed.",
         )
+    finally:
+        _vision_concurrency_event("request", "request_end", request_id, source)
 
 
 # ============================================================
@@ -121,52 +202,46 @@ def _decode_image(image_data):
     return frame
 
 
-def _best_box(frame):
-    options = {
-        "source": frame,
-        "conf": CONFIDENCE_THRESHOLD,
-        "verbose": False,
-        "imgsz": YOLO_IMGSZ,
-    }
+def _best_box(frame, request_id="n/a", source="default", include_timing=False):
+    yolo_wait_ms = 0.0
+    yolo_started_at = None
 
-    if YOLO_DEVICE:
-        options["device"] = YOLO_DEVICE
-
-    results = yolo.predict(**options)
+    if VISION_SERIALIZE_YOLO:
+        wait_started_at = time.perf_counter()
+        with _yolo_single_flight_lock:
+            yolo_wait_ms = (time.perf_counter() - wait_started_at) * 1000
+            yolo_started_at = time.perf_counter()
+            _vision_concurrency_event("yolo", "yolo_start", request_id, source)
+            try:
+                detections = detect_yolo_boxes(frame, request_id=request_id, source=source)
+            finally:
+                yolo_duration_ms = (time.perf_counter() - yolo_started_at) * 1000
+                _vision_concurrency_event("yolo", "yolo_end", request_id, source, yolo_duration_ms)
+    else:
+        yolo_started_at = time.perf_counter()
+        _vision_concurrency_event("yolo", "yolo_start", request_id, source)
+        try:
+            detections = detect_yolo_boxes(frame, request_id=request_id, source=source)
+        finally:
+            yolo_duration_ms = (time.perf_counter() - yolo_started_at) * 1000
+            _vision_concurrency_event("yolo", "yolo_end", request_id, source, yolo_duration_ms)
 
     best_box = None
     best_confidence = -1.0
 
-    for result in results:
-
-        if result.boxes is None:
+    for box, confidence in detections:
+        if confidence <= best_confidence:
             continue
 
-        for box in result.boxes:
+        x1, y1, x2, y2 = map(int, box)
+        best_box = (x1, y1, x2, y2)
+        best_confidence = confidence
 
-            confidence = float(box.conf[0])
-
-            if confidence <= best_confidence:
-                continue
-
-            x1, y1, x2, y2 = map(
-                int,
-                box.xyxy[0].tolist(),
-            )
-
-            best_box = (
-                x1,
-                y1,
-                x2,
-                y2,
-            )
-
-            best_confidence = confidence
-
-    return (
+    result = (
         best_box,
         best_confidence,
     )
+    return (*result, yolo_wait_ms, yolo_duration_ms) if include_timing else result
 
 
 def _exact_crop(
@@ -867,15 +942,26 @@ def _reset_box_history(source):
 
 def _process_plate_frame(
     request: PlateDetectionRequest,
+    trace_request_id=None,
 ):
     started_at = time.perf_counter()
+    timings = {}
 
     try:
 
+        stage_started_at = time.perf_counter()
         frame = _decode_image(request.image)
+        timings["decode_ms"] = (time.perf_counter() - stage_started_at) * 1000
         fps = update_fps()
 
-        box, yolo_confidence = _best_box(frame)
+        box, yolo_confidence, yolo_wait_ms, yolo_duration_ms = _best_box(
+            frame,
+            trace_request_id or request.request_id or "n/a",
+            request.source or "default",
+            include_timing=True,
+        )
+        timings["yolo_wait_ms"] = yolo_wait_ms
+        timings["yolo_ms"] = yolo_duration_ms
 
         if box is None:
             _reset_box_history(request.source)
@@ -887,6 +973,7 @@ def _process_plate_frame(
                 (time.perf_counter() - started_at) * 1000,
             )
 
+            timings["backend_total_ms"] = (time.perf_counter() - started_at) * 1000
             return {
                 "detected": False,
                 "license_plate": None,
@@ -897,6 +984,7 @@ def _process_plate_frame(
                 "raw_ocr_confidence": 0.0,
                 "box": None,
                 "fps": fps,
+                "timings": timings,
             }
 
         stabilized_box = _stabilize_box(
@@ -904,10 +992,12 @@ def _process_plate_frame(
             request.source,
         )
 
+        stage_started_at = time.perf_counter()
         crop, response_box = _exact_crop(
             frame,
             stabilized_box,
         )
+        timings["crop_ms"] = (time.perf_counter() - stage_started_at) * 1000
 
         if crop.size == 0:
             raise ValueError("Detected plate crop is empty.")
@@ -916,7 +1006,9 @@ def _process_plate_frame(
         # ONE OCR PASS ONLY
         # ============================================
 
+        stage_started_at = time.perf_counter()
         ocr_crop, rectification = _rectify_plate(crop)
+        timings["rectify_ms"] = (time.perf_counter() - stage_started_at) * 1000
 
         logger.info(
             "[Vision rectify V3] source=%s rectified=%s reason=%s area_ratio=%s input=%s output=%s",
@@ -928,7 +1020,9 @@ def _process_plate_frame(
             rectification.get("output_size"),
         )
 
+        stage_started_at = time.perf_counter()
         ocr_input, line_layout = _prepare_two_line_plate(ocr_crop)
+        timings["two_line_ms"] = (time.perf_counter() - stage_started_at) * 1000
 
         logger.info(
             "[Vision layout V2] source=%s rearranged=%s reason=%s aspect=%s split=%s gap=%s input=%s output=%s "
@@ -945,10 +1039,46 @@ def _process_plate_frame(
             line_layout.get("year_region_ignored"),
         )
 
-        raw_text, raw_confidence = _raw_ocr(ocr_input)
+        if ocr_input is not None and ocr_input.shape[1] > 1024:
+            original_height, original_width = ocr_input.shape[:2]
+            resized_height = max(1, int(round(original_height * 1024 / original_width)))
+            ocr_input = cv2.resize(
+                ocr_input,
+                (1024, resized_height),
+                interpolation=cv2.INTER_AREA,
+            )
+            if VISION_DEBUG:
+                logger.info(
+                    "[Vision OCR input resize] %dx%d -> %dx%d",
+                    original_width,
+                    original_height,
+                    ocr_input.shape[1],
+                    ocr_input.shape[0],
+                )
+
+        stage_started_at = time.perf_counter()
+        _vision_concurrency_event(
+            "ocr",
+            "ocr_start",
+            trace_request_id or request.request_id or "n/a",
+            request.source or "default",
+        )
+        try:
+            raw_text, raw_confidence = _raw_ocr(ocr_input)
+        finally:
+            ocr_duration_ms = (time.perf_counter() - stage_started_at) * 1000
+            _vision_concurrency_event(
+                "ocr",
+                "ocr_end",
+                trace_request_id or request.request_id or "n/a",
+                request.source or "default",
+                ocr_duration_ms,
+            )
+        timings["ocr_ms"] = ocr_duration_ms
 
         # Parser works directly on the OCR result.
         # We DO NOT call read_plate() again.
+        stage_started_at = time.perf_counter()
         parsed = (
             classify_plate(
                 raw_text,
@@ -985,6 +1115,7 @@ def _process_plate_frame(
                 plate,
             )
             plate = None
+        timings["parser_ms"] = (time.perf_counter() - stage_started_at) * 1000
 
         plate_metadata = parsed if plate and parsed else None
         if plate and plate_metadata is None:
@@ -1015,6 +1146,7 @@ def _process_plate_frame(
             (time.perf_counter() - started_at) * 1000,
         )
 
+        timings["backend_total_ms"] = (time.perf_counter() - started_at) * 1000
         return {
             "detected": True,
             "license_plate": plate,
@@ -1026,6 +1158,7 @@ def _process_plate_frame(
             "yolo_confidence": yolo_confidence,
             "box": response_box,
             "fps": fps,
+            "timings": timings,
         }
 
     except ValueError as error:

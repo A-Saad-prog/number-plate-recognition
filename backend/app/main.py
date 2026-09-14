@@ -30,10 +30,7 @@ from app.services.parking_service import (
 from app.services.settings_service import get_admin_settings, settings_response
 from app.services.plate_recognition import (
     ocr,
-    yolo,
-    CONFIDENCE_THRESHOLD,
-    YOLO_IMGSZ,
-    YOLO_DEVICE,
+    warm_up_yolo_detector,
 )
 
 from app.schemas.parking import (
@@ -77,20 +74,7 @@ def warm_up_vision_models():
 
     yolo_started_at = time.perf_counter()
     try:
-        yolo_warmup_image = np.zeros(
-            (YOLO_IMGSZ, YOLO_IMGSZ, 3),
-            dtype=np.uint8,
-        )
-        inference_options = {
-            "source": yolo_warmup_image,
-            "conf": CONFIDENCE_THRESHOLD,
-            "verbose": False,
-            "imgsz": YOLO_IMGSZ,
-        }
-        if YOLO_DEVICE:
-            inference_options["device"] = YOLO_DEVICE
-        yolo.predict(**inference_options)
-        yolo.predict(**inference_options)
+        warm_up_yolo_detector()
         logging.getLogger(__name__).info(
             "YOLO warm-up completed in %.1fms",
             (time.perf_counter() - yolo_started_at) * 1000,

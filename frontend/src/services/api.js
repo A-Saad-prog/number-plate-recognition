@@ -1,7 +1,6 @@
 const API_BASE_URL =
     import.meta.env.VITE_API_BASE_URL ||
     "http://127.0.0.1:8000";
-const VISION_DEBUG = import.meta.env.DEV && import.meta.env.VITE_VISION_DEBUG === "true";
 
 function garageAuthHeaders() {
     const token = localStorage.getItem("parking_admin_token");
@@ -120,16 +119,11 @@ export async function detectPlateFromFrame(imageDataUrl, source, requestId) {
         }
     );
 
-    const parseStartedAt = performance.now();
+    const responseReceivedAt = performance.now();
+    const parseStartedAt = responseReceivedAt;
     const data = await response.json().catch(() => ({}));
     const parseMs = performance.now() - parseStartedAt;
     const apiTotalMs = performance.now() - requestStartedAt;
-
-    if (VISION_DEBUG) {
-        console.debug(
-            `[Vision FE API] id=${requestId || "n/a"} source=${source || "default"} api=${apiTotalMs.toFixed(1)}ms parse=${parseMs.toFixed(1)}ms`
-        );
-    }
 
     if (!response.ok) {
 
@@ -138,6 +132,17 @@ export async function detectPlateFromFrame(imageDataUrl, source, requestId) {
         );
 
     }
+
+    // Keep timing metadata local to the frontend; it is non-enumerable so
+    // existing response-field consumers continue to see the same payload.
+    Object.defineProperty(data, "_visionFrontendTimings", {
+        value: {
+            networkMs: responseReceivedAt - requestStartedAt,
+            jsonParseMs: parseMs,
+            apiTotalMs,
+        },
+        enumerable: false,
+    });
 
     return data;
 }

@@ -17,7 +17,6 @@ import { createMultiCameraVisionTestScheduler } from "../services/multiCameraVis
 import "../styles/App.css";
 
 const MAX_INFERENCE_FRAME_WIDTH = 960;
-const VISION_REQUEST_INTERVAL_MS = 300;
 const VISION_DEBUG = import.meta.env.DEV && import.meta.env.VITE_VISION_DEBUG === "true";
 const GARAGE_SETTINGS_UPDATED_KEY = "parking_garage_settings_updated";
 const PARKING_DATA_UPDATED_KEY = "parking_data_updated";
@@ -109,6 +108,7 @@ function GaragePage() {
 
     // PARTIAL_PLATE_LOCK_GUARD_V2
     const plateCandidateFirstSeenRef = useRef({});
+    const candidateAgeTimersRef = useRef({});
     const confirmedPlateLockRef = useRef({});
     const confirmedPlateLastDetectedAtRef = useRef({});
     const confirmedLockImageRef = useRef({});
@@ -135,7 +135,217 @@ function GaragePage() {
     const [exitPaymentRequired] = useState(false);
     const [exitRatePerMinute, setExitRatePerMinute] = useState(null);
 
+    function clearCandidateAgeTimer(cameraId) {
+        const pending = candidateAgeTimersRef.current[cameraId];
+        if (!pending) return;
+        window.clearTimeout(pending.timer);
+        delete candidateAgeTimersRef.current[cameraId];
+    }
+
+    function getCurrentCandidateConfirmation(cameraId, expectedPlate) {
+        const voteState = plateVoteHistoryRef.current[cameraId];
+        if (!voteState?.reads?.length) return null;
+
+        const voteCounts = {};
+        for (const read of voteState.reads) {
+            voteCounts[read.plate] = (voteCounts[read.plate] || 0) + 1;
+        }
+        const bestVote = Object.entries(voteCounts).sort((a, b) => b[1] - a[1])[0];
+        const bestPlate = bestVote?.[0];
+        if (!bestPlate || bestPlate !== expectedPlate) return null;
+
+        const bestCount = bestVote[1];
+        const bestPlateReads = voteState.reads.filter((read) => read.plate === bestPlate);
+        const veryHighConfidenceMatches = bestPlateReads.filter(
+            (read) => read.confidence >= VERY_HIGH_OCR_CONFIDENCE
+        ).length;
+        const mediumConfidenceMatches = bestPlateReads.filter(
+            (read) => read.confidence >= MEDIUM_OCR_CONFIDENCE
+        ).length;
+        const normalizedBest = bestPlate.replace(/[^A-Z0-9]/gi, "").toUpperCase();
+        const isCustomShortCandidate = /^\d{1,4}$/.test(normalizedBest);
+        let requiredVotesForCandidate = 4;
+        let adaptiveReason = "fallback-4";
+
+        if (!isCustomShortCandidate && veryHighConfidenceMatches >= 2) {
+            requiredVotesForCandidate = 2;
+            adaptiveReason = "very-high-2";
+        } else if (!isCustomShortCandidate && mediumConfidenceMatches >= 3) {
+            requiredVotesForCandidate = 3;
+            adaptiveReason = "medium-3";
+        }
+
+        const compatibleLongerGroups = {};
+        for (const read of partialPlateEvidenceRef.current[cameraId] || []) {
+            if (!read?.plate || Date.now() - read.seenAt > PARTIAL_GUARD_EVIDENCE_TTL_MS) continue;
+            const normalizedCandidate = read.plate.replace(/[^A-Z0-9]/gi, "").toUpperCase();
+            if (normalizedCandidate.length <= normalizedBest.length) continue;
+            const directExtension =
+                normalizedCandidate.startsWith(normalizedBest) ||
+                normalizedCandidate.endsWith(normalizedBest);
+            let shortIndex = 0;
+            for (const ch of normalizedCandidate) {
+                if (shortIndex < normalizedBest.length && ch === normalizedBest[shortIndex]) {
+                    shortIndex += 1;
+                }
+            }
+            if (!directExtension && shortIndex !== normalizedBest.length) continue;
+            const key = normalizedCandidate;
+            if (!compatibleLongerGroups[key]) {
+                compatibleLongerGroups[key] = { plate: read.plate, count: 0, maxConfidence: 0 };
+            }
+            compatibleLongerGroups[key].count += 1;
+            compatibleLongerGroups[key].maxConfidence = Math.max(
+                compatibleLongerGroups[key].maxConfidence,
+                Number(read.confidence || 0)
+            );
+        }
+        const longerCompatiblePlate = Object.values(compatibleLongerGroups)
+            .sort((a, b) => b.count - a.count || b.maxConfidence - a.maxConfidence)
+            .find(
+                (candidate) =>
+                    candidate.count >= 2 ||
+                    candidate.maxConfidence >= PARTIAL_GUARD_STRONG_CONFIDENCE
+            )?.plate || null;
+
+        const candidateKey = `${cameraId}:${bestPlate}`;
+        const firstSeenAt = plateCandidateFirstSeenRef.current[candidateKey];
+        if (!firstSeenAt) return null;
+        const candidateAgeMs = Date.now() - firstSeenAt;
+        const requiredAgeMsForCandidate = isCustomShortCandidate
+            ? 1200
+            : adaptiveReason === "very-high-2"
+                ? 250
+                : adaptiveReason === "medium-3"
+                    ? 500
+                    : 700;
+
+        return {
+            candidateKey,
+            bestPlate,
+            bestCount,
+            requiredVotesForCandidate,
+            adaptiveReason,
+            isCustomShortCandidate,
+            candidateAgeMs,
+            requiredAgeMsForCandidate,
+            matureEnough: candidateAgeMs >= requiredAgeMsForCandidate,
+            longerCompatiblePlate,
+        };
+    }
+
+    function acceptConfirmedPlateCandidate(cameraId, candidate, image) {
+        const {
+            bestPlate,
+            bestCount,
+            requiredVotesForCandidate,
+            adaptiveReason,
+            isCustomShortCandidate,
+            requiredAgeMsForCandidate,
+            candidateAgeMs,
+        } = candidate;
+        const alreadyLockedPlate = confirmedPlateLockRef.current[cameraId];
+        if (alreadyLockedPlate === bestPlate) return;
+
+        clearCandidateAgeTimer(cameraId);
+        if (lastCompletedPlateRef.current[cameraId] !== bestPlate) {
+            delete lastCompletedPlateRef.current[cameraId];
+        }
+        confirmedPlateLockRef.current[cameraId] = bestPlate;
+        confirmedPlateLastDetectedAtRef.current[cameraId] = Date.now();
+        detectedPlateRef.current[cameraId] = bestPlate;
+        // Locking stops inference for this camera immediately. An active
+        // request is allowed to complete, but its response is rejected below.
+        clearPendingSlotVision(cameraId);
+        updateCameraVehicleState(cameraId, {
+            plate: bestPlate,
+            action: null,
+            loading: true,
+            error: "",
+            alreadyParked: false,
+            selectedSpaceId: null,
+            entryResult: null,
+            exitResult: null,
+            paymentRequired: false,
+            paymentMethod: null,
+            ratePerMinute: null,
+        });
+        confirmedLockImageRef.current[cameraId] = image;
+        console.log("[Vision confirmed lock]", {
+            source: cameraId,
+            plate: bestPlate,
+            bestCount,
+            requiredVotes: requiredVotesForCandidate,
+            windowSize: 5,
+            partialGuard: true,
+            customShortCandidate: isCustomShortCandidate,
+            requiredAgeMs: requiredAgeMsForCandidate,
+            candidateAgeMs,
+        });
+        void resolveConfirmedCameraPlate(cameraId, bestPlate, image);
+    }
+
+    function scheduleCandidateAgeConfirmation({
+        cameraId,
+        candidate,
+        sessionGeneration,
+        stream,
+        laneGeneration,
+        image,
+    }) {
+        const existing = candidateAgeTimersRef.current[cameraId];
+        if (existing?.candidateKey === candidate.candidateKey) {
+            existing.image = image;
+            return;
+        }
+        clearCandidateAgeTimer(cameraId);
+        const pending = {
+            candidateKey: candidate.candidateKey,
+            image,
+            timer: window.setTimeout(() => {
+                const currentPending = candidateAgeTimersRef.current[cameraId];
+                if (currentPending !== pending) return;
+                delete candidateAgeTimersRef.current[cameraId];
+                if (
+                    !isCurrentCameraSession(cameraId, sessionGeneration, stream) ||
+                    cameraLaneGenerationRef.current !== laneGeneration ||
+                    confirmedPlateLockRef.current[cameraId]
+                ) return;
+
+                const current = getCurrentCandidateConfirmation(cameraId, candidate.bestPlate);
+                if (
+                    current &&
+                    current.candidateKey === candidate.candidateKey &&
+                    current.bestCount >= current.requiredVotesForCandidate &&
+                    !current.matureEnough &&
+                    !current.longerCompatiblePlate
+                ) {
+                    scheduleCandidateAgeConfirmation({
+                        cameraId,
+                        candidate: current,
+                        sessionGeneration,
+                        stream,
+                        laneGeneration,
+                        image: currentPending.image,
+                    });
+                    return;
+                }
+                if (
+                    !current ||
+                    current.candidateKey !== candidate.candidateKey ||
+                    current.bestCount < current.requiredVotesForCandidate ||
+                    !current.matureEnough ||
+                    current.longerCompatiblePlate
+                ) return;
+
+                acceptConfirmedPlateCandidate(cameraId, current, currentPending.image);
+            }, Math.max(0, Math.ceil(candidate.requiredAgeMsForCandidate - candidate.candidateAgeMs))),
+        };
+        candidateAgeTimersRef.current[cameraId] = pending;
+    }
+
     function clearPlateCandidates(source) {
+        clearCandidateAgeTimer(source);
         for (const key of Object.keys(plateCandidateFirstSeenRef.current)) {
             if (key.startsWith(`${source}:`)) {
                 delete plateCandidateFirstSeenRef.current[key];
@@ -511,15 +721,18 @@ function GaragePage() {
     const cameraStreamsRef = useRef({});
     const cameraNodesRef = useRef({});
     const cameraCanvasesRef = useRef({});
-    const cameraRequestsRef = useRef({});
-    const cameraTimersRef = useRef({});
+    const cameraCaptureFramesRef = useRef({});
+    const cameraSessionGenerationRef = useRef({});
+    const cameraFrameDirtyRef = useRef({});
+    const cameraSchedulerJobRef = useRef({});
     const cameraStartingRefBySlot = useRef({});
     const cameraLaneGenerationRef = useRef(0);
     const multiCameraTestSchedulerRef = useRef(null);
 
     if (!multiCameraTestSchedulerRef.current) {
         multiCameraTestSchedulerRef.current = createMultiCameraVisionTestScheduler({
-            maxConcurrent: 2,
+            maxConcurrent: 1,
+            debug: VISION_DEBUG,
         });
     }
 
@@ -555,7 +768,9 @@ function GaragePage() {
 
     function clearVehicleDetectionState() {
         Object.values(terminalClearTimersRef.current).forEach((timer) => window.clearTimeout(timer));
+        Object.values(candidateAgeTimersRef.current).forEach(({ timer }) => window.clearTimeout(timer));
         terminalClearTimersRef.current = {};
+        candidateAgeTimersRef.current = {};
         detectedPlateRef.current = {};
         lastCompletedPlateRef.current = {};
         automaticExitAttemptRef.current = {};
@@ -946,6 +1161,8 @@ function GaragePage() {
     useEffect(() => () => {
         Object.keys(cameraStreamsRef.current).forEach(stopSlotCamera);
         Object.values(terminalClearTimersRef.current).forEach((timer) => window.clearTimeout(timer));
+        Object.values(candidateAgeTimersRef.current).forEach(({ timer }) => window.clearTimeout(timer));
+        candidateAgeTimersRef.current = {};
     }, []);
 
 
@@ -1192,7 +1409,6 @@ function GaragePage() {
 
         entrySubmittingRef.current[sourceOverride] = true;
         parkingMutationVersionRef.current += 1;
-        const automaticEntryStartedAt = performance.now();
         updateCameraVehicleState(sourceOverride, {
             action: "entry",
             loading: true,
@@ -1305,14 +1521,6 @@ function GaragePage() {
                 setParkingSpaces(nextSpaces);
             }
 
-            if (automatic) {
-                const elapsed = performance.now() - automaticEntryStartedAt;
-                const remaining = Math.max(0, 1000 - elapsed);
-                if (remaining > 0) {
-                    await new Promise((resolve) => setTimeout(resolve, remaining));
-                }
-            }
-
             entryCompleted = true;
             clearCompletedCameraPlate(sourceOverride);
             clearCameraVehicleState(sourceOverride);
@@ -1409,7 +1617,6 @@ function GaragePage() {
             loading: true,
             error: "",
         });
-        const exitStartedAt = performance.now();
 
         let exitCompleted = false;
         try {
@@ -1467,14 +1674,6 @@ function GaragePage() {
                 setParkingSpaces(nextSpaces);
             }
 
-            if (!trackingMode) {
-                const elapsed = performance.now() - exitStartedAt;
-                const remaining = Math.max(0, 1000 - elapsed);
-                if (remaining > 0) {
-                    await new Promise((resolve) => setTimeout(resolve, remaining));
-                }
-            }
-
             exitCompleted = true;
             updateCameraVehicleState(sourceOverride, {
                 plate: null,
@@ -1526,7 +1725,6 @@ function GaragePage() {
             setExitLoading(false);
         }
     }
-
 
     const totalSpaces =
         parkingSpaces.length;
@@ -1682,12 +1880,57 @@ function GaragePage() {
     const entryReceiptSlots = [...cameraSlots.filter((slot) => slot.lane === "Entry" && cameraHasReceiptData(slot.id)), ...externalReceiptSlots.filter((slot) => slot.lane === "Entry")].sort((a, b) => (a.detectedAt || cameraVehicleState[a.id]?.detectedAt || 0) - (b.detectedAt || cameraVehicleState[b.id]?.detectedAt || 0));
     const exitReceiptSlots = [...cameraSlots.filter((slot) => slot.lane === "Exit" && cameraHasReceiptData(slot.id)), ...externalReceiptSlots.filter((slot) => slot.lane === "Exit")].sort((a, b) => (a.detectedAt || cameraVehicleState[a.id]?.detectedAt || 0) - (b.detectedAt || cameraVehicleState[b.id]?.detectedAt || 0));
 
+    function isCurrentCameraSession(cameraId, sessionGeneration, stream) {
+        return (
+            cameraSessionGenerationRef.current[cameraId] === sessionGeneration &&
+            cameraStreamsRef.current[cameraId] === stream
+        );
+    }
+
+    function queueLatestSlotDetection(cameraId, sessionGeneration, stream) {
+        if (
+            !cameraFrameDirtyRef.current[cameraId] ||
+            confirmedPlateLockRef.current[cameraId] ||
+            !isCurrentCameraSession(cameraId, sessionGeneration, stream)
+        ) return;
+        const job = cameraSchedulerJobRef.current[cameraId];
+        if (job?.queued && job.sessionGeneration === sessionGeneration) return;
+
+        cameraSchedulerJobRef.current[cameraId] = {
+            sessionGeneration,
+            queued: true,
+        };
+        void runSlotDetection(cameraId, sessionGeneration, stream);
+    }
+
+    function markSlotCameraFrameFresh(cameraId, sessionGeneration, stream) {
+        if (
+            confirmedPlateLockRef.current[cameraId] ||
+            !isCurrentCameraSession(cameraId, sessionGeneration, stream)
+        ) return;
+        cameraFrameDirtyRef.current[cameraId] = true;
+        queueLatestSlotDetection(cameraId, sessionGeneration, stream);
+    }
+
+    function clearPendingSlotVision(cameraId) {
+        delete cameraFrameDirtyRef.current[cameraId];
+        delete cameraSchedulerJobRef.current[cameraId];
+        multiCameraTestSchedulerRef.current?.cancel(cameraId);
+    }
+
     function stopSlotCamera(cameraId) {
-        cameraRequestsRef.current[cameraId] = false;
-        window.clearTimeout(cameraTimersRef.current[cameraId]);
-        delete cameraTimersRef.current[cameraId];
+        cameraSessionGenerationRef.current[cameraId] =
+            (cameraSessionGenerationRef.current[cameraId] || 0) + 1;
+        clearCandidateAgeTimer(cameraId);
+        window.cancelAnimationFrame(cameraCaptureFramesRef.current[cameraId]);
+        delete cameraCaptureFramesRef.current[cameraId];
+        delete cameraFrameDirtyRef.current[cameraId];
+        delete cameraSchedulerJobRef.current[cameraId];
+        multiCameraTestSchedulerRef.current?.cancel(cameraId);
         cameraStreamsRef.current[cameraId]?.getTracks().forEach((track) => track.stop());
         delete cameraStreamsRef.current[cameraId];
+        const video = cameraNodesRef.current[cameraId];
+        if (video) video.srcObject = null;
     }
 
     async function startSlotCamera(cameraId) {
@@ -1696,15 +1939,36 @@ function GaragePage() {
         const video = cameraNodesRef.current[cameraId];
         if (!deviceId || !video || cameraStreamsRef.current[cameraId] || cameraStartingRefBySlot.current[cameraId]) return;
         cameraStartingRefBySlot.current[cameraId] = true;
+        const sessionGeneration = (cameraSessionGenerationRef.current[cameraId] || 0) + 1;
+        cameraSessionGenerationRef.current[cameraId] = sessionGeneration;
+        cameraFrameDirtyRef.current[cameraId] = false;
+        delete cameraSchedulerJobRef.current[cameraId];
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: deviceId } }, audio: false });
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: {
+                    deviceId: { exact: deviceId },
+                    frameRate: { ideal: 60, min: 30 },
+                },
+                audio: false,
+            });
+
+            if (cameraSessionGenerationRef.current[cameraId] !== sessionGeneration) {
+                stream.getTracks().forEach((track) => track.stop());
+                return;
+            }
 
 
             cameraStreamsRef.current[cameraId] = stream;
             video.srcObject = stream;
             await video.play();
+            if (!isCurrentCameraSession(cameraId, sessionGeneration, stream)) return;
             setCameraViews((current) => ({ ...current, [cameraId]: { active: true, error: "", box: null } }));
-            runSlotDetection(cameraId);
+            const capture = () => {
+                if (!isCurrentCameraSession(cameraId, sessionGeneration, stream)) return;
+                markSlotCameraFrameFresh(cameraId, sessionGeneration, stream);
+                cameraCaptureFramesRef.current[cameraId] = window.requestAnimationFrame(capture);
+            };
+            cameraCaptureFramesRef.current[cameraId] = window.requestAnimationFrame(capture);
         } catch (error) {
             setCameraViews((current) => ({ ...current, [cameraId]: { active: false, error: error.message || "Could not access camera." } }));
         } finally {
@@ -1712,57 +1976,80 @@ function GaragePage() {
         }
     }
 
-    async function runSlotDetection(cameraId) {
+    async function runSlotDetection(cameraId, sessionGeneration, stream) {
 
         const laneGeneration = cameraLaneGenerationRef.current;
         const video = cameraNodesRef.current[cameraId];
-        if (!cameraStreamsRef.current[cameraId] || !video || cameraRequestsRef.current[cameraId]) return;
-        cameraRequestsRef.current[cameraId] = true;
-        const canvas = cameraCanvasesRef.current[cameraId] || document.createElement("canvas");
-        cameraCanvasesRef.current[cameraId] = canvas;
+        if (!isCurrentCameraSession(cameraId, sessionGeneration, stream) || !video) return;
+        let visionTiming = null;
+        let visionResult = null;
+        let resultHandlingStartedAt = null;
         try {
-            if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
-                const result = await multiCameraTestSchedulerRef.current.schedule(
-                    cameraId,
-                    async () => {
-                        if (
-                            !cameraStreamsRef.current[cameraId] ||
-                            video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
-                            !video.videoWidth ||
-                            !video.videoHeight
-                        ) {
-                            return { detected: false, license_plate: null, box: null };
-                        }
-
-                        const scale = Math.min(1, MAX_INFERENCE_FRAME_WIDTH / video.videoWidth);
-                        canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
-                        canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
-                        canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
-
-                        const image = canvas.toDataURL("image/jpeg", 0.82);
-                        return detectPlateFromFrame(
-                            image,
-                            cameraId,
-                            `mc-test-${cameraId}-${Date.now()}`
-                        );
+            const completed = await multiCameraTestSchedulerRef.current.schedule(
+                cameraId,
+                async () => {
+                    // Read the ref at worker execution time: a frame can sit
+                    // pending while another response confirms this camera.
+                    if (confirmedPlateLockRef.current[cameraId]) {
+                        return { discarded: true };
                     }
-                );
-                if (cameraStreamsRef.current[cameraId]) {
+                    const job = cameraSchedulerJobRef.current[cameraId];
+                    if (job?.sessionGeneration === sessionGeneration) {
+                        // This job has consumed the latest-frame signal.
+                        // A subsequent RAF may now queue one fresh successor
+                        // while this request is in flight.
+                        job.queued = false;
+                        cameraFrameDirtyRef.current[cameraId] = false;
+                    }
+                    if (
+                        !isCurrentCameraSession(cameraId, sessionGeneration, stream) ||
+                        video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
+                        !video.videoWidth ||
+                        !video.videoHeight
+                    ) {
+                        return { discarded: true };
+                    }
+
+                    // Capture only when this latest job actually receives a
+                    // scheduler worker, never for every display frame.
+                    const timing = { taskStartedAt: performance.now() };
+                    const canvas = cameraCanvasesRef.current[cameraId] || document.createElement("canvas");
+                    cameraCanvasesRef.current[cameraId] = canvas;
+                    const scale = Math.min(1, MAX_INFERENCE_FRAME_WIDTH / video.videoWidth);
+                    canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+                    canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+                    const drawStartedAt = performance.now();
+                    canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+                    timing.canvasDrawMs = performance.now() - drawStartedAt;
+                    const jpegStartedAt = performance.now();
+                    const image = canvas.toDataURL("image/jpeg", 0.82);
+                    timing.jpegEncodeMs = performance.now() - jpegStartedAt;
+                    const result = await detectPlateFromFrame(
+                        image,
+                        cameraId,
+                        `mc-test-${cameraId}-${Date.now()}`
+                    );
+                    timing.api = result._visionFrontendTimings;
+                    return { result, image, timing };
+                }
+            );
+            const { result, image, timing } = completed;
+            visionTiming = timing;
+            visionResult = result;
+            resultHandlingStartedAt = performance.now();
+            if (
+                completed?.discarded ||
+                !isCurrentCameraSession(cameraId, sessionGeneration, stream) ||
+                cameraLaneGenerationRef.current !== laneGeneration ||
+                confirmedPlateLockRef.current[cameraId]
+            ) return;
+            if (cameraStreamsRef.current[cameraId]) {
                     setCameraViews((current) => {
                         const currentView = current[cameraId] || {};
                         if (currentView.active && boxesEqual(currentView.box, result.box)) return current;
                         return { ...current, [cameraId]: { ...currentView, active: true, box: result.box || null } };
                     });
                     const plate = result.license_plate?.trim().toUpperCase();
-                    const lockedPlate = confirmedPlateLockRef.current[cameraId];
-
-                    if (lockedPlate && plate === lockedPlate) {
-                        detectedPlateRef.current[cameraId] = lockedPlate;
-
-
-                        return;
-                    }
-
                     // Per-camera temporal confirmation and lock.
                     {
                         const now = Date.now();
@@ -1988,62 +2275,41 @@ function GaragePage() {
                                             : 700;
                             const matureEnough =
                                 candidateAgeMs >= requiredAgeMsForCandidate;
+                            const candidate = {
+                                candidateKey,
+                                bestPlate,
+                                bestCount,
+                                requiredVotesForCandidate,
+                                adaptiveReason,
+                                isCustomShortCandidate,
+                                candidateAgeMs,
+                                requiredAgeMsForCandidate,
+                                matureEnough,
+                                longerCompatiblePlate,
+                            };
 
                             if (
                                 bestCount >= requiredVotesForCandidate &&
                                 matureEnough &&
                                 !longerCompatiblePlate
                             ) {
-                                const alreadyLockedPlate =
-                                    confirmedPlateLockRef.current[cameraId];
-
-                                if (alreadyLockedPlate === bestPlate) {
-                                    return;
-                                }
-                                if (lastCompletedPlateRef.current[cameraId] !== bestPlate) {
-                                    delete lastCompletedPlateRef.current[cameraId];
-                                }
-                                confirmedPlateLockRef.current[cameraId] = bestPlate;
-                                confirmedPlateLastDetectedAtRef.current[cameraId] = now;
-                                detectedPlateRef.current[cameraId] = bestPlate;
-
-                                updateCameraVehicleState(cameraId, {
-                                    plate: bestPlate,
-                                    action: null,
-                                    loading: true,
-                                    error: "",
-                                    alreadyParked: false,
-                                    selectedSpaceId: null,
-                                    entryResult: null,
-                                    exitResult: null,
-                                    paymentRequired: false,
-                                    paymentMethod: null,
-                                    ratePerMinute: null,
-                                });
-
-                                confirmedLockImageRef.current[cameraId] = canvas.toDataURL("image/jpeg", 0.82);
-                                console.log("[Vision confirmed lock]", {
-                                    source: cameraId,
-                                    plate: bestPlate,
-                                    bestCount,
-                                    requiredVotes: requiredVotesForCandidate,
-                                    windowSize: 5,
-                                    partialGuard: true,
-                                    customShortCandidate: isCustomShortCandidate,
-                                    requiredAgeMs: requiredAgeMsForCandidate,
-                                    candidateAgeMs,
-                                });
-
-                                void resolveConfirmedCameraPlate(
-                                    cameraId,
-                                    bestPlate,
-                                    canvas.toDataURL("image/jpeg", 0.82)
-                                );
-
+                                acceptConfirmedPlateCandidate(cameraId, candidate, image);
                             } else if (
                                 bestCount >= requiredVotesForCandidate &&
                                 (!matureEnough || longerCompatiblePlate)
                             ) {
+                                if (!matureEnough && !longerCompatiblePlate) {
+                                    scheduleCandidateAgeConfirmation({
+                                        cameraId,
+                                        candidate,
+                                        sessionGeneration,
+                                        stream,
+                                        laneGeneration,
+                                        image,
+                                    });
+                                } else {
+                                    clearCandidateAgeTimer(cameraId);
+                                }
                                 console.log("[Vision partial guard]", {
                                     source: cameraId,
                                     plate: bestPlate,
@@ -2055,20 +2321,39 @@ function GaragePage() {
                                     matureEnough,
                                     longerCompatiblePlate: longerCompatiblePlate || null,
                                 });
+                            } else {
+                                clearCandidateAgeTimer(cameraId);
                             }
                         }
                     }
-                }
             }
         } catch (error) {
             if (VISION_DEBUG) console.debug("Vision processing error:", error);
         } finally {
-            cameraRequestsRef.current[cameraId] = false;
-            if (cameraStreamsRef.current[cameraId]) {
-                cameraTimersRef.current[cameraId] = window.setTimeout(
-                    () => runSlotDetection(cameraId),
-                    VISION_REQUEST_INTERVAL_MS
-                );
+            if (VISION_DEBUG && visionTiming) {
+                const resultHandlingMs = performance.now() - resultHandlingStartedAt;
+                const backendTimings = visionResult?.timings || {};
+                console.debug(`[Vision timing] ${cameraId}`, {
+                    canvasDrawMs: visionTiming.canvasDrawMs.toFixed(1),
+                    jpegEncodeMs: visionTiming.jpegEncodeMs.toFixed(1),
+                    networkApiMs: visionTiming.api?.networkMs?.toFixed(1),
+                    jsonParseMs: visionTiming.api?.jsonParseMs?.toFixed(1),
+                    backendTotalMs: backendTimings.backend_total_ms?.toFixed(1),
+                    decodeMs: backendTimings.decode_ms?.toFixed(1),
+                    yoloMs: backendTimings.yolo_ms?.toFixed(1),
+                    cropMs: backendTimings.crop_ms?.toFixed(1),
+                    rectifyMs: backendTimings.rectify_ms?.toFixed(1),
+                    twoLineMs: backendTimings.two_line_ms?.toFixed(1),
+                    ocrMs: backendTimings.ocr_ms?.toFixed(1),
+                    parserMs: backendTimings.parser_ms?.toFixed(1),
+                    resultHandlingMs: resultHandlingMs.toFixed(1),
+                    requestToResultMs: (performance.now() - visionTiming.taskStartedAt).toFixed(1),
+                });
+            }
+            // If a new video frame arrived while this job was executing and
+            // RAF did not already enqueue its one successor, enqueue it now.
+            if (!confirmedPlateLockRef.current[cameraId]) {
+                queueLatestSlotDetection(cameraId, sessionGeneration, stream);
             }
         }
     }
