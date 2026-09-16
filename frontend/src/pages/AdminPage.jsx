@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import {
@@ -142,18 +142,71 @@ const ANALYTICS_METRIC_TITLES = {
     traffic: "Vehicle traffic (vehicles)",
 };
 
+const ACTIVITY_TABLES = [
+    { id: "live_sessions", label: "Currently Parked" },
+    { id: "space_status", label: "Parking Spaces" },
+    { id: "vehicles", label: "Vehicle Summary" },
+    { id: "history", label: "Parking History" },
+];
+
+const EMPTY_ACTIVITY_FILTERS = {
+    plate: "", dateRange: "all", from: "", to: "", eventTypes: [], statuses: [], paymentMethods: [], spaceOrLevel: "",
+};
+
+function activityDateMatches(value, filters) {
+    if (!filters.dateRange || filters.dateRange === "all") return true;
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return false;
+    const now = new Date();
+    if (filters.dateRange === "today") return date.toDateString() === now.toDateString();
+    if (filters.dateRange === "24h") return date >= new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    if (filters.dateRange === "7d") return date >= new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    if (filters.dateRange === "30d") return date >= new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const from = filters.from ? new Date(filters.from) : null;
+    const to = filters.to ? new Date(filters.to) : null;
+    return (!from || date >= from) && (!to || date <= to);
+}
+
 function getAnalyticsBarPoints(analytics, metric) {
     const rows = metric === "rush" ? analytics.hourly_activity : analytics.trend;
-    return rows.map((point, index) => ({
-        key: point.date || `hour-${point.hour ?? index}`,
-        label: point.date ? point.date.slice(5) : `${point.hour}:00`,
-        value:
+    return rows.map((point, index) => {
+        const rawValue =
             metric === "earnings"
                 ? point.earnings
                 : metric === "traffic" || metric === "rush"
                     ? point.vehicles
-                    : (point.average_duration_seconds || 0) / 60,
-    }));
+                    : (point.average_duration_seconds || 0) / 60;
+        const value = Number(rawValue);
+        return {
+            key: point.date || `hour-${point.hour ?? index}`,
+            label: point.date ? point.date.slice(5) : `${point.hour}:00`,
+            value: Number.isFinite(value) ? Math.max(0, value) : 0,
+        };
+    });
+}
+
+function getNiceYAxisScale(values, integer = false) {
+    const maximum = Math.max(0, ...values.map((value) => Number.isFinite(Number(value)) ? Number(value) : 0));
+    const targetIntervals = 4;
+    const rawStep = maximum > 0 ? maximum / targetIntervals : 1;
+    const magnitude = 10 ** Math.floor(Math.log10(rawStep));
+    const candidates = [1, 2, 2.5, 5, 10].map((factor) => factor * magnitude)
+        .filter((step) => !integer || Number.isInteger(step));
+    const step = candidates.find((candidate) => {
+        const intervals = Math.ceil(maximum / candidate);
+        return intervals >= 3 && intervals <= 5;
+    }) || candidates[0] || 1;
+    const roundedMaximum = Math.ceil(maximum / step) * step;
+    const axisMaximum = roundedMaximum < step * 3 ? step * targetIntervals : roundedMaximum;
+    const intervals = Math.max(1, Math.round(axisMaximum / step));
+    const ticks = Array.from({ length: intervals + 1 }, (_, index) => Number((index * step).toPrecision(12)));
+    return { maximum: axisMaximum, step, ticks };
+}
+
+function formatAnalyticsAxisValue(value, metric, step) {
+    if (metric === "traffic" || metric === "rush") return Math.round(value).toLocaleString("en-PK");
+    const precision = step < 1 ? Math.min(4, Math.max(0, Math.ceil(-Math.log10(step)))) : 0;
+    return Number(value.toFixed(precision)).toLocaleString("en-PK", { maximumFractionDigits: precision });
 }
 
 function formatAnalyticsDuration(minutes) {
@@ -205,6 +258,16 @@ function StarIcon() {
     return (
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <path d="M12 2.5l2.9 6.1 6.6.7-4.9 4.6 1.3 6.6L12 17.6l-5.9 3.1 1.3-6.6-4.9-4.6 6.6-.7Z" />
+        </svg>
+    );
+}
+
+function FilterIcon() {
+    return (
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M4 6h16" />
+            <path d="M7 12h10" />
+            <path d="M10 18h4" />
         </svg>
     );
 }
@@ -379,9 +442,46 @@ function AdminPage() {
     });
     const [activityExportError, setActivityExportError] = useState("");
     const [activityExportOpen, setActivityExportOpen] = useState(false);
+    const [activityFiltersOpen, setActivityFiltersOpen] = useState(false);
+    const [activityFilterDraft, setActivityFilterDraft] = useState(EMPTY_ACTIVITY_FILTERS);
+    const [activityFilters, setActivityFilters] = useState(EMPTY_ACTIVITY_FILTERS);
+    const [visibleActivityTables, setVisibleActivityTables] = useState(() => {
+        try { return JSON.parse(sessionStorage.getItem("parking_activity_visible_tables")) || ACTIVITY_TABLES.map((table) => table.id); }
+        catch { return ACTIVITY_TABLES.map((table) => table.id); }
+    });
     const [analytics, setAnalytics] = useState(null);
     const [analyticsMetric, setAnalyticsMetric] = useState("earnings");
     const [analyticsPeriod, setAnalyticsPeriod] = useState("7d");
+    const analyticsPoints = analytics ? getAnalyticsBarPoints(analytics, analyticsMetric) : [];
+    const analyticsScale = getNiceYAxisScale(analyticsPoints.map((point) => point.value), analyticsMetric === "traffic" || analyticsMetric === "rush");
+    const filteredParkingActivity = useMemo(() => {
+        if (!parkingActivity) return null;
+        const statusByPlate = new Map(parkingActivity.vehicles.map((vehicle) => [vehicle.plate, vehicle.blacklisted ? "blacklisted" : vehicle.whitelisted ? "whitelisted" : "normal"]));
+        const matches = (item, timestamp, eventType, status = statusByPlate.get(item.plate) || "normal") => {
+            const plate = (item.plate || "").toLowerCase();
+            const space = `${item.level ?? ""} ${item.space ?? ""}`.toLowerCase();
+            return (!activityFilters.plate || plate.includes(activityFilters.plate.trim().toLowerCase()))
+                && (!activityFilters.spaceOrLevel || space.includes(activityFilters.spaceOrLevel.trim().toLowerCase()))
+                && activityDateMatches(timestamp, activityFilters)
+                && (!activityFilters.eventTypes.length || activityFilters.eventTypes.includes(eventType))
+                && (!activityFilters.statuses.length || activityFilters.statuses.includes(status));
+        };
+        return {
+            ...parkingActivity,
+            live_sessions: parkingActivity.live_sessions.filter((item) => matches(item, item.entry_time, "entry", item.blacklisted ? "blacklisted" : item.whitelisted ? "whitelisted" : "normal")),
+            history: parkingActivity.history.filter((item) => matches(item, item.exit_time || item.entry_time, "exit") && (!activityFilters.paymentMethods.length || activityFilters.paymentMethods.includes(item.payment_method || "unspecified"))),
+            vehicles: parkingActivity.vehicles.filter((item) => matches(item, item.last_entry, item.currently_parked ? "entry" : "exit", item.blacklisted ? "blacklisted" : item.whitelisted ? "whitelisted" : "normal")),
+            space_status: { ...parkingActivity.space_status, spaces: parkingActivity.space_status.spaces.filter((item) => {
+                const status = statusByPlate.get(item.plate) || "normal";
+                const plate = (item.plate || "").toLowerCase();
+                const space = `${item.level ?? ""} ${item.space ?? ""}`.toLowerCase();
+                return (!activityFilters.plate || plate.includes(activityFilters.plate.trim().toLowerCase()))
+                    && (!activityFilters.spaceOrLevel || space.includes(activityFilters.spaceOrLevel.trim().toLowerCase()))
+                    && (!activityFilters.statuses.length || activityFilters.statuses.includes(status));
+            }) },
+        };
+    }, [parkingActivity, activityFilters]);
+    const activityFilterCount = [activityFilters.plate, activityFilters.dateRange !== "all", activityFilters.dateRange === "custom" && activityFilters.from, activityFilters.dateRange === "custom" && activityFilters.to, activityFilters.eventTypes.length, activityFilters.statuses.length, activityFilters.paymentMethods.length, activityFilters.spaceOrLevel].filter(Boolean).length;
     const [activeSessionMenuId, setActiveSessionMenuId] = useState(null);
     const [sessionMenuPosition, setSessionMenuPosition] = useState(null);
     const [activeVehicleMenuPlate, setActiveVehicleMenuPlate] = useState(null);
@@ -834,6 +934,33 @@ function AdminPage() {
         setActivityExportError("");
     }
 
+    function toggleActivityFilterValue(field, value) {
+        setActivityFilterDraft((current) => ({
+            ...current,
+            [field]: current[field].includes(value) ? current[field].filter((item) => item !== value) : [...current[field], value],
+        }));
+    }
+
+    function toggleVisibleActivityTable(tableId) {
+        setVisibleActivityTables((current) => {
+            const next = current.includes(tableId) ? current.filter((item) => item !== tableId) : [...current, tableId];
+            sessionStorage.setItem("parking_activity_visible_tables", JSON.stringify(next));
+            return next;
+        });
+    }
+
+    function applyActivityFilters() {
+        setActivityFilters({ ...activityFilterDraft });
+        setActivityFiltersOpen(false);
+    }
+
+    function clearActivityFilters() {
+        setActivityFilterDraft(EMPTY_ACTIVITY_FILTERS);
+        setActivityFilters(EMPTY_ACTIVITY_FILTERS);
+        setVisibleActivityTables(ACTIVITY_TABLES.map((table) => table.id));
+        sessionStorage.setItem("parking_activity_visible_tables", JSON.stringify(ACTIVITY_TABLES.map((table) => table.id)));
+    }
+
     async function handleParkingActivityExport() {
         setActivityExportError("");
 
@@ -1263,10 +1390,8 @@ function AdminPage() {
     }
 
     function renderAnalyticsBars() {
-        const points = getAnalyticsBarPoints(analytics, analyticsMetric);
-        const max = Math.max(...points.map((point) => point.value), 0);
-        return points.map((point) => {
-            const height = max > 0 ? Math.max(4, (point.value / max) * 100) : 0;
+        return analyticsPoints.map((point) => {
+            const height = analyticsScale.maximum > 0 ? Math.max(4, (point.value / analyticsScale.maximum) * 100) : 0;
             const displayValue =
                 analyticsMetric === "earnings"
                     ? `Rs ${Number(point.value).toLocaleString("en-PK", { minimumFractionDigits: 2 })}`
@@ -1274,8 +1399,8 @@ function AdminPage() {
                         ? `${Math.round(point.value)} min`
                         : `${point.value} vehicles`;
             return (
-                <div key={point.key} title={displayValue}>
-                    <i style={{ height: `${height}%` }} />
+                <div className="analytics-bar" key={point.key} title={displayValue}>
+                    <div className="analytics-bar-plot"><i style={{ height: `${height}%` }} /></div>
                     <small>{point.label}</small>
                 </div>
             );
@@ -2100,6 +2225,21 @@ function AdminPage() {
                                 <p className="admin-message">Live parking, recent visits, and active space status.</p>
                                 <button type="button" className="activity-refresh" onClick={loadParkingActivity} disabled={activityLoading} aria-label="Refresh activity"><span className={activityLoading ? "spinning" : ""}>↻</span></button>
 
+                                <div className="activity-filter-control">
+                                    <button type="button" className="activity-filter-button" onClick={() => setActivityFiltersOpen((open) => !open)} aria-expanded={activityFiltersOpen}><FilterIcon /> Filters{activityFilterCount > 0 && <span>{activityFilterCount}</span>}</button>
+                                    {activityFiltersOpen && <div className="activity-filter-panel">
+                                        <label><span>Number plate</span><input value={activityFilterDraft.plate} onChange={(event) => setActivityFilterDraft((current) => ({ ...current, plate: event.target.value }))} placeholder="Search plate" /></label>
+                                        <label><span>Date / time</span><select value={activityFilterDraft.dateRange} onChange={(event) => setActivityFilterDraft((current) => ({ ...current, dateRange: event.target.value }))}><option value="all">All time</option><option value="today">Today</option><option value="24h">Last 24 hours</option><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option><option value="custom">Custom range</option></select></label>
+                                        {activityFilterDraft.dateRange === "custom" && <><label><span>From</span><input type="datetime-local" value={activityFilterDraft.from} onChange={(event) => setActivityFilterDraft((current) => ({ ...current, from: event.target.value }))} /></label><label><span>To</span><input type="datetime-local" value={activityFilterDraft.to} onChange={(event) => setActivityFilterDraft((current) => ({ ...current, to: event.target.value }))} /></label></>}
+                                        <label><span>Space / level</span><input value={activityFilterDraft.spaceOrLevel} onChange={(event) => setActivityFilterDraft((current) => ({ ...current, spaceOrLevel: event.target.value }))} placeholder="e.g. 1 or A-01" /></label>
+                                        <fieldset><legend>Activity type</legend>{["entry", "exit"].map((type) => <label key={type}><input type="checkbox" checked={activityFilterDraft.eventTypes.includes(type)} onChange={() => toggleActivityFilterValue("eventTypes", type)} /> {type === "entry" ? "Entry" : "Exit"}</label>)}</fieldset>
+                                        <fieldset><legend>Vehicle status</legend>{["whitelisted", "blacklisted", "normal"].map((status) => <label key={status}><input type="checkbox" checked={activityFilterDraft.statuses.includes(status)} onChange={() => toggleActivityFilterValue("statuses", status)} /> {status[0].toUpperCase() + status.slice(1)}</label>)}</fieldset>
+                                        {parkingActivity?.billing_enabled && <fieldset><legend>Payment method</legend>{Array.from(new Set(parkingActivity.history.map((item) => item.payment_method || "unspecified"))).map((method) => <label key={method}><input type="checkbox" checked={activityFilterDraft.paymentMethods.includes(method)} onChange={() => toggleActivityFilterValue("paymentMethods", method)} /> {method === "unspecified" ? "Unspecified" : method.charAt(0).toUpperCase() + method.slice(1)}</label>)}</fieldset>}
+                                        <fieldset><legend>Show tables/categories</legend>{ACTIVITY_TABLES.map((table) => <label key={table.id}><input type="checkbox" checked={visibleActivityTables.includes(table.id)} onChange={() => toggleVisibleActivityTable(table.id)} /> {table.label}</label>)}</fieldset>
+                                        <div className="activity-filter-actions"><button type="button" onClick={clearActivityFilters}>Clear All</button><button type="button" onClick={applyActivityFilters}>Apply Filters</button></div>
+                                    </div>}
+                                </div>
+
                                 <div className="level-config-block">
                                     <button
                                         type="button"
@@ -2219,12 +2359,12 @@ function AdminPage() {
                                 </div>
 
                                 {activityError && <p className="admin-error whitelist-feedback">{activityError}</p>}
-                                {parkingActivity && <>
+                                {filteredParkingActivity && <>
                                     <p className="admin-message">Capacity: {parkingActivity.space_status.total_active_capacity} · Occupied: {parkingActivity.space_status.occupied} · Available: {parkingActivity.space_status.available}</p>
-                                    <section className="activity-table-section"><h2>Currently Parked Vehicles</h2><p>Vehicles with an active parking session.</p><div className="whitelist-table-wrap"><table><thead><tr><th>Live plate</th><th>Space</th><th>Entry time</th><th>Duration</th><th>Actions</th></tr></thead><tbody>{parkingActivity.live_sessions.map((session) => <tr key={session.session_id}><td>{session.plate}</td><td>{session.space || "Tracking"}</td><td>{new Date(session.entry_time).toLocaleString()}</td><td>{session.duration_minutes} min</td><td><div className="vehicle-menu"><button type="button" className="vehicle-menu-trigger" aria-label="Vehicle actions" aria-expanded={activeSessionMenuId === session.session_id} onClick={(event) => toggleSessionMenu(session.session_id, event.currentTarget)}>⋮</button>{renderSessionMenu(session)}</div></td></tr>)}</tbody></table></div></section>
-                                    <section className="activity-table-section"><h2>Parking Space Status</h2><p>Live availability and occupancy for each parking space.</p><div className="whitelist-table-wrap"><table><thead><tr><th>Level</th><th>Space</th><th>Status</th><th>Plate</th><th>Actions</th></tr></thead><tbody>{parkingActivity.space_status.spaces.map((space) => { const session = parkingActivity.live_sessions.find((item) => Number(item.level) === Number(space.level) && item.space === space.space); const menuId = `space-${space.id}`; return <tr key={`${space.level}-${space.space}`}><td>{space.level}</td><td>{space.space}</td><td>{space.is_occupied ? "Occupied" : "Available"}</td><td>{space.plate || "-"}</td><td><div className="vehicle-menu"><button type="button" className="vehicle-menu-trigger" aria-label="Space actions" aria-expanded={activeSpaceMenuId === menuId} onClick={(event) => toggleSpaceMenu(menuId, event.currentTarget)}>⋮</button>{renderSpaceMenu(space, session)}</div></td></tr>; })}</tbody></table></div></section>
-                                    <section className="activity-table-section"><h2>Vehicle Visit Summary</h2><p>Last recorded entry and exit for each license plate.</p><div className="whitelist-table-wrap"><table><thead><tr><th>Plate</th><th>Visits</th><th>Last entry</th><th>Last exit</th><th>Parked</th><th>Whitelist</th><th>Blacklist</th><th>Actions</th></tr></thead><tbody>{parkingActivity.vehicles.map((vehicle) => <tr key={vehicle.plate}><td>{vehicle.plate}</td><td>{vehicle.total_visits}</td><td>{vehicle.last_entry ? new Date(vehicle.last_entry).toLocaleString() : "-"}</td><td>{vehicle.last_exit ? new Date(vehicle.last_exit).toLocaleString() : "-"}</td><td>{vehicle.currently_parked ? "Yes" : "No"}</td><td>{vehicle.whitelisted ? "Yes" : "No"}</td><td>{vehicle.blacklisted ? "Yes" : "No"}</td><td><div className="vehicle-menu"><button type="button" className="vehicle-menu-trigger" aria-label="Vehicle list actions" aria-expanded={activeVehicleMenuPlate === vehicle.plate} onClick={(event) => toggleVehicleMenu(vehicle.plate, event.currentTarget)}>⋮</button>{renderVehicleMenu(vehicle)}</div></td></tr>)}</tbody></table></div></section>
-                                    <section className="activity-table-section"><h2>Parking History</h2><p>Completed parking sessions and payment information.</p><div className="whitelist-table-wrap"><table><thead><tr><th>Plate</th><th>Entry</th><th>Exit</th><th>Duration</th><th>Space</th>{parkingActivity.billing_enabled && <><th>Payment</th><th>Amount</th><th>Discount</th></>}</tr></thead><tbody>{parkingActivity.history.map((item, index) => <tr key={`${item.plate}-${index}`}><td>{item.plate}</td><td>{new Date(item.entry_time).toLocaleString()}</td><td>{item.exit_time ? new Date(item.exit_time).toLocaleString() : "-"}</td><td>{item.duration_minutes} min</td><td>{item.space || "-"}</td>{parkingActivity.billing_enabled && <><td>{item.payment_method || "-"}</td><td>{item.amount ?? "-"}</td><td>{item.discount_percent ? `${item.discount_percent}%` : "-"}</td></>}</tr>)}</tbody></table></div></section>
+                                    {visibleActivityTables.includes("live_sessions") && <section className="activity-table-section"><h2>Currently Parked Vehicles</h2><p>Vehicles with an active parking session.</p><div className="whitelist-table-wrap"><table><thead><tr><th>Live plate</th><th>Space</th><th>Entry time</th><th>Duration</th><th>Actions</th></tr></thead><tbody>{filteredParkingActivity.live_sessions.length ? filteredParkingActivity.live_sessions.map((session) => <tr key={session.session_id}><td>{session.plate}</td><td>{session.space || "Tracking"}</td><td>{new Date(session.entry_time).toLocaleString()}</td><td>{session.duration_minutes} min</td><td><div className="vehicle-menu"><button type="button" className="vehicle-menu-trigger" aria-label="Vehicle actions" aria-expanded={activeSessionMenuId === session.session_id} onClick={(event) => toggleSessionMenu(session.session_id, event.currentTarget)}>⋮</button>{renderSessionMenu(session)}</div></td></tr>) : <tr><td colSpan="5" className="activity-empty">No records match the current filters.</td></tr>}</tbody></table></div></section>}
+                                    {visibleActivityTables.includes("space_status") && <section className="activity-table-section"><h2>Parking Space Status</h2><p>Live availability and occupancy for each parking space.</p><div className="whitelist-table-wrap"><table><thead><tr><th>Level</th><th>Space</th><th>Status</th><th>Plate</th><th>Actions</th></tr></thead><tbody>{filteredParkingActivity.space_status.spaces.length ? filteredParkingActivity.space_status.spaces.map((space) => { const session = filteredParkingActivity.live_sessions.find((item) => Number(item.level) === Number(space.level) && item.space === space.space); const menuId = `space-${space.id}`; return <tr key={`${space.level}-${space.space}`}><td>{space.level}</td><td>{space.space}</td><td>{space.is_occupied ? "Occupied" : "Available"}</td><td>{space.plate || "-"}</td><td><div className="vehicle-menu"><button type="button" className="vehicle-menu-trigger" aria-label="Space actions" aria-expanded={activeSpaceMenuId === menuId} onClick={(event) => toggleSpaceMenu(menuId, event.currentTarget)}>⋮</button>{renderSpaceMenu(space, session)}</div></td></tr>; }) : <tr><td colSpan="5" className="activity-empty">No records match the current filters.</td></tr>}</tbody></table></div></section>}
+                                    {visibleActivityTables.includes("vehicles") && <section className="activity-table-section"><h2>Vehicle Visit Summary</h2><p>Last recorded entry and exit for each license plate.</p><div className="whitelist-table-wrap"><table><thead><tr><th>Plate</th><th>Visits</th><th>Last entry</th><th>Last exit</th><th>Parked</th><th>Whitelist</th><th>Blacklist</th><th>Actions</th></tr></thead><tbody>{filteredParkingActivity.vehicles.length ? filteredParkingActivity.vehicles.map((vehicle) => <tr key={vehicle.plate}><td>{vehicle.plate}</td><td>{vehicle.total_visits}</td><td>{vehicle.last_entry ? new Date(vehicle.last_entry).toLocaleString() : "-"}</td><td>{vehicle.last_exit ? new Date(vehicle.last_exit).toLocaleString() : "-"}</td><td>{vehicle.currently_parked ? "Yes" : "No"}</td><td>{vehicle.whitelisted ? "Yes" : "No"}</td><td>{vehicle.blacklisted ? "Yes" : "No"}</td><td><div className="vehicle-menu"><button type="button" className="vehicle-menu-trigger" aria-label="Vehicle list actions" aria-expanded={activeVehicleMenuPlate === vehicle.plate} onClick={(event) => toggleVehicleMenu(vehicle.plate, event.currentTarget)}>⋮</button>{renderVehicleMenu(vehicle)}</div></td></tr>) : <tr><td colSpan="8" className="activity-empty">No records match the current filters.</td></tr>}</tbody></table></div></section>}
+                                    {visibleActivityTables.includes("history") && <section className="activity-table-section"><h2>Parking History</h2><p>Completed parking sessions and payment information.</p><div className="whitelist-table-wrap"><table><thead><tr><th>Plate</th><th>Entry</th><th>Exit</th><th>Duration</th><th>Space</th>{parkingActivity.billing_enabled && <><th>Payment</th><th>Amount</th><th>Discount</th></>}</tr></thead><tbody>{filteredParkingActivity.history.length ? filteredParkingActivity.history.map((item, index) => <tr key={`${item.plate}-${index}`}><td>{item.plate}</td><td>{new Date(item.entry_time).toLocaleString()}</td><td>{item.exit_time ? new Date(item.exit_time).toLocaleString() : "-"}</td><td>{item.duration_minutes} min</td><td>{item.space || "-"}</td>{parkingActivity.billing_enabled && <><td>{item.payment_method || "-"}</td><td>{item.amount ?? "-"}</td><td>{item.discount_percent ? `${item.discount_percent}%` : "-"}</td></>}</tr>) : <tr><td colSpan={parkingActivity.billing_enabled ? 8 : 5} className="activity-empty">No records match the current filters.</td></tr>}</tbody></table></div></section>}
                                 </>}
                             </div>
                         ) : activeFeature === "analytics" ? (
@@ -2263,7 +2403,12 @@ function AdminPage() {
                                                 ))}
                                             </div>
                                             <h3>{ANALYTICS_METRIC_TITLES[analyticsMetric]}</h3>
-                                            <div className="analytics-bars">{renderAnalyticsBars()}</div>
+                                            <div className="analytics-chart">
+                                                <div className="analytics-y-axis" aria-hidden="true">
+                                                    {analyticsScale.ticks.slice().reverse().map((tick) => <span key={tick}>{formatAnalyticsAxisValue(tick, analyticsMetric, analyticsScale.step)}</span>)}
+                                                </div>
+                                                <div className="analytics-bars"><div className="analytics-gridlines" aria-hidden="true">{analyticsScale.ticks.map((tick) => <i key={tick} style={{ bottom: `${(tick / analyticsScale.maximum) * 100}%` }} />)}</div>{renderAnalyticsBars()}</div>
+                                            </div>
                                         </section>
                                     </>
                                 ) : (

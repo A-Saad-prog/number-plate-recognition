@@ -1554,6 +1554,123 @@ It can make small UI text appear soft/blurry in Chromium.
     animation: refresh-spin .7s linear infinite;
 }
 
+.activity-filter-control {
+    margin-top: 16px;
+    position: relative;
+}
+
+.activity-filter-button,
+.activity-filter-actions button {
+    background: #10231c;
+    border: 0;
+    border-radius: 7px;
+    color: #fff;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font: 700 12px 'Manrope', sans-serif;
+    padding: 9px 12px;
+}
+
+.activity-filter-button span {
+    background: #e05b35;
+    border-radius: 999px;
+    display: inline-grid;
+    margin-left: 7px;
+    min-width: 18px;
+    place-items: center;
+}
+
+.activity-filter-panel {
+    background: #f8faf7;
+    border: 1px solid #d3ded4;
+    border-radius: 8px;
+    display: grid;
+    gap: 14px;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    margin-top: 10px;
+    padding: 16px;
+    box-shadow: 0 10px 24px rgba(16, 35, 28, .07);
+}
+
+.activity-filter-panel > label,
+.activity-filter-panel fieldset {
+    background: rgba(255, 255, 255, .65);
+    border: 1px solid #dbe4dc;
+    border-radius: 7px;
+    display: grid;
+    gap: 8px;
+    margin: 0;
+    min-width: 0;
+    padding: 10px;
+}
+
+.activity-filter-panel > label {
+    padding-top: 16px;
+    position: relative;
+}
+
+.activity-filter-panel span,
+.activity-filter-panel legend {
+    color: #587066;
+    font: 700 10px 'DM Mono', monospace;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+}
+
+.activity-filter-panel > label > span,
+.activity-filter-panel legend {
+    background: inherit;
+    padding: 0 4px;
+}
+
+.activity-filter-panel > label > span {
+    left: 8px;
+    position: absolute;
+    top: -7px;
+}
+
+.activity-filter-panel input:not([type="checkbox"]),
+.activity-filter-panel select {
+    background: #fff;
+    border: 1px solid #bdcbc0;
+    border-radius: 6px;
+    color: #10231c;
+    min-width: 0;
+    min-height: 32px;
+    padding: 5px 8px;
+}
+
+.activity-filter-panel fieldset label {
+    align-items: center;
+    color: #31483d;
+    display: flex;
+    gap: 7px;
+    font-size: 12px;
+}
+
+.activity-filter-actions {
+    align-items: end;
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    grid-column: 1 / -1;
+    padding-top: 2px;
+}
+
+.activity-filter-actions button:first-child {
+    background: transparent;
+    border: 1px solid #bdcbc0;
+    color: #31483d;
+}
+
+.activity-empty {
+    color: #587066;
+    padding: 22px !important;
+    text-align: center;
+}
+
 .activity-table-section {
     margin-top: 30px;
 }
@@ -1722,33 +1839,78 @@ It can make small UI text appear soft/blurry in Chromium.
     margin-top: 8px;
 }
 
+.analytics-chart {
+    display: flex;
+    gap: 8px;
+}
+
+.analytics-y-axis {
+    box-sizing: border-box;
+    color: #587066;
+    display: flex;
+    flex: 0 0 auto;
+    flex-direction: column;
+    font: 600 10px 'DM Mono', monospace;
+    height: 170px;
+    justify-content: space-between;
+    padding: 10px 0 28px;
+    text-align: right;
+}
+
 .analytics-bars {
     align-items: end;
     border-bottom: 1px solid #d3ded4;
-    display: flex;
-    gap: 10px;
-    height: 170px;
-    padding: 10px;
-}
-
-.analytics-bars div {
-    align-items: center;
+    box-sizing: border-box;
     display: flex;
     flex: 1;
-    flex-direction: column;
-    height: 100%;
-    justify-content: end;
+    gap: 10px;
+    height: 170px;
+    padding: 0;
+    position: relative;
 }
 
-.analytics-bars i {
+.analytics-bars .analytics-bar {
+    align-items: center;
+    display: grid;
+    flex: 1;
+    grid-template-rows: 1fr 28px;
+    height: 100%;
+    position: relative;
+    z-index: 1;
+}
+
+.analytics-bar-plot {
+    align-items: end;
+    display: flex;
+    height: 100%;
+    width: 100%;
+}
+
+.analytics-bars .analytics-bar i {
     background: #e05b35;
     border-radius: 4px 4px 0 0;
-    min-height: 4px;
+    flex: 0 0 auto;
     transition: opacity .15s ease;
     width: 100%;
 }
 
-.analytics-bars div:hover i {
+.analytics-gridlines {
+    bottom: 28px;
+    left: 0;
+    pointer-events: none;
+    position: absolute;
+    right: 0;
+    top: 0;
+}
+
+.analytics-gridlines i {
+    border-top: 1px solid rgba(88, 112, 102, .18);
+    left: 0;
+    position: absolute;
+    right: 0;
+}
+
+.analytics-bars .analytics-bar:hover i {
     opacity: .8;
 }
 
@@ -1756,6 +1918,7 @@ It can make small UI text appear soft/blurry in Chromium.
     color: #587066;
     font-size: 11px;
     margin-top: 6px;
+    text-align: center;
 }
 
 .analytics-panel {
@@ -2289,8 +2452,47 @@ It can make small UI text appear soft/blurry in Chromium.
     border-color: rgba(145, 199, 174, .25);
 }
 
+.admin-theme-dark .analytics-gridlines i {
+    border-color: rgba(145, 199, 174, .18);
+}
+
 .admin-theme-dark .analytics-bars small {
     color: #afc1b5;
+}
+
+.admin-theme-dark .analytics-y-axis {
+    color: #afc1b5;
+}
+
+.admin-theme-dark .activity-filter-panel {
+    background: rgba(20, 43, 35, .88);
+    border-color: rgba(145, 199, 174, .25);
+    box-shadow: 0 10px 24px rgba(0, 0, 0, .2);
+}
+
+.admin-theme-dark .activity-filter-panel > label,
+.admin-theme-dark .activity-filter-panel fieldset {
+    background: rgba(16, 35, 28, .6);
+    border-color: rgba(145, 199, 174, .2);
+}
+
+.admin-theme-dark .activity-filter-panel span,
+.admin-theme-dark .activity-filter-panel legend {
+    color: #fff;
+}
+
+
+.admin-theme-dark .activity-filter-panel input:not([type="checkbox"]),
+.admin-theme-dark .activity-filter-panel select {
+    background: #10231c;
+    border-color: rgba(145, 199, 174, .35);
+    color: #edf2ee;
+}
+
+.admin-theme-dark .activity-filter-panel fieldset label,
+.admin-theme-dark .activity-filter-actions button:first-child,
+.admin-theme-dark .activity-empty {
+    color: #edf2ee;
 }
 
 .admin-theme-dark .garage-mode-options label:hover {
