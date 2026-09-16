@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 
 import {
     addWhitelistEntry,
+    addBlacklistEntry,
     getAdminSession,
     getAdminSettings,
     getParkingActivity,
@@ -10,6 +11,14 @@ import {
     getWhitelist,
     loginAdmin,
     removeWhitelistEntry,
+    getBlacklist,
+    updateWhitelistEntry,
+    removeWhitelistEntries,
+    updateWhitelistEntries,
+    updateBlacklistEntry,
+    removeBlacklistEntryBySearch,
+    removeBlacklistEntries,
+    updateBlacklistEntries,
     saveBillingConfig,
     saveCameraConfig,
     saveGarageSettings,
@@ -87,7 +96,7 @@ function openOrFocusNamedTab(url, name) {
 const TRANSLATIONS = {
     en: {
         language: "اردو", theme: "Dark mode", lightTheme: "Light mode", signOut: "Sign out",
-        controlCenter: "Control center", whitelist: "Whitelist", garageSettings: "Garage Setup", cameraSetup: "Camera Setup", billing: "Billing",
+        controlCenter: "Control center", whitelist: "Whitelist / Blacklist", garageSettings: "Garage Setup", cameraSetup: "Camera Setup", billing: "Billing",
         vehicleTitle: "Vehicle", whitelistTitle: "whitelist.", vehicleIntro: "Give trusted vehicles a custom discount at checkout.",
         addVehicle: "Add vehicle", numberPlate: "Number plate", name: "Name", discountPercentage: "Discount percentage", addToWhitelist: "Add to whitelist",
         removeVehicle: "Remove vehicle", nameOrPlate: "Name or number plate", searchList: "Search the list", removeHint: "Enter either the assigned name or the exact number plate.", removeFromList: "Remove from list",
@@ -200,6 +209,14 @@ function StarIcon() {
     );
 }
 
+function BlackStarIcon() {
+    return (
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M12 2.5l2.9 6.1 6.6.7-4.9 4.6 1.3 6.6L12 17.6l-5.9 3.1 1.3-6.6-4.9-4.6 6.6-.7Z" />
+        </svg>
+    );
+}
+
 function TrashIcon() {
     return (
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -293,6 +310,21 @@ function AdminPage() {
     const whitelistFetchInFlightRef = useRef(false);
     const [whitelistError, setWhitelistError] = useState("");
     const [whitelistMessage, setWhitelistMessage] = useState("");
+    const [listTab, setListTab] = useState("whitelist");
+    const [blacklist, setBlacklist] = useState([]);
+    const [blacklistVisible, setBlacklistVisible] = useState(false);
+    const [blacklistLoaded, setBlacklistLoaded] = useState(false);
+    const blacklistFetchInFlightRef = useRef(false);
+    const [selectedWhitelist, setSelectedWhitelist] = useState([]);
+    const [selectedBlacklist, setSelectedBlacklist] = useState([]);
+    const [blacklistPlate, setBlacklistPlate] = useState("");
+    const [blacklistName, setBlacklistName] = useState("");
+    const [blacklistReason, setBlacklistReason] = useState("");
+    const [blacklistRemoveSearch, setBlacklistRemoveSearch] = useState("");
+    const [listMenu, setListMenu] = useState({ id: null, kind: null, position: null });
+    const [listEditor, setListEditor] = useState(null);
+    const [listEditorSaving, setListEditorSaving] = useState(false);
+    const [pendingListRemoval, setPendingListRemoval] = useState(null);
     const [garageSettings, setGarageSettings] = useState({ mode: "parking", level_count: "", levels: [], spaces_per_level: "" });
     const [localImageFolder, setLocalImageFolder] = useState("");
     const [pendingLocalImageFolder, setPendingLocalImageFolder] = useState(null);
@@ -352,6 +384,8 @@ function AdminPage() {
     const [analyticsPeriod, setAnalyticsPeriod] = useState("7d");
     const [activeSessionMenuId, setActiveSessionMenuId] = useState(null);
     const [sessionMenuPosition, setSessionMenuPosition] = useState(null);
+    const [activeVehicleMenuPlate, setActiveVehicleMenuPlate] = useState(null);
+    const [vehicleMenuPosition, setVehicleMenuPosition] = useState(null);
     const [activeSpaceMenuId, setActiveSpaceMenuId] = useState(null);
     const [spaceMenuPosition, setSpaceMenuPosition] = useState(null);
     const activityLoadingRef = useRef(false);
@@ -832,18 +866,40 @@ function AdminPage() {
     useEffect(() => {
         const closeMenus = (event) => {
             if (!event.target.closest(".account-menu")) setAccountMenuOpen(false);
+            const listWrap = event.target.closest(".whitelist-table-wrap");
+            const listTrigger = listWrap?.querySelector(".bulk-toolbar")
+                ? event.target.closest(".vehicle-menu-trigger")
+                : null;
+            if (listTrigger) {
+                event.preventDefault();
+                const row = listTrigger.closest("tr");
+                const rowIndex = row ? Array.from(row.parentElement.children).indexOf(row) : -1;
+                const items = listTab === "whitelist" ? whitelist : blacklist;
+                if (rowIndex >= 0 && items[rowIndex]) toggleListMenu(listTab, items[rowIndex], listTrigger);
+            }
             if (!event.target.closest(".vehicle-menu, .vehicle-menu-dropdown")) {
                 setActiveSessionMenuId(null);
                 setSessionMenuPosition(null);
+                setActiveVehicleMenuPlate(null);
+                setVehicleMenuPosition(null);
                 setActiveSpaceMenuId(null);
                 setSpaceMenuPosition(null);
+                setListMenu({ id: null, kind: null, position: null });
             }
         };
-        const closeOnEscape = (event) => { if (event.key === "Escape") { setAccountMenuOpen(false); setActiveSessionMenuId(null); setSessionMenuPosition(null); setActiveSpaceMenuId(null); setSpaceMenuPosition(null); } };
+        const closeOnEscape = (event) => { if (event.key === "Escape") { setAccountMenuOpen(false); setActiveSessionMenuId(null); setSessionMenuPosition(null); setActiveVehicleMenuPlate(null); setVehicleMenuPosition(null); setActiveSpaceMenuId(null); setSpaceMenuPosition(null); setListMenu({ id: null, kind: null, position: null }); setListEditor(null); } };
+        const suppressLegacyListPrompt = (event) => {
+            const listWrap = event.target.closest(".whitelist-table-wrap");
+            if (listWrap?.querySelector(".bulk-toolbar") && event.target.closest(".vehicle-menu-trigger")) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+        };
         document.addEventListener("mousedown", closeMenus);
         document.addEventListener("keydown", closeOnEscape);
-        return () => { document.removeEventListener("mousedown", closeMenus); document.removeEventListener("keydown", closeOnEscape); };
-    }, []);
+        document.addEventListener("click", suppressLegacyListPrompt, true);
+        return () => { document.removeEventListener("mousedown", closeMenus); document.removeEventListener("keydown", closeOnEscape); document.removeEventListener("click", suppressLegacyListPrompt, true); };
+    }, [listTab, whitelist, blacklist, listMenu]);
 
     async function submitWhitelist(event) {
         event.preventDefault();
@@ -937,6 +993,159 @@ function AdminPage() {
         catch (err) { setActivityError(err.message || "Unable to remove parking."); }
     }
 
+    async function loadBlacklist() {
+        if (blacklistLoaded || blacklistFetchInFlightRef.current) return;
+        blacklistFetchInFlightRef.current = true;
+        try { const result = await getBlacklist(token); setBlacklist(result.entries || []); setBlacklistLoaded(true); }
+        catch { setWhitelistError(t.requestFailed); }
+        finally { blacklistFetchInFlightRef.current = false; }
+    }
+
+    async function submitBlacklist(event) {
+        event.preventDefault(); setWhitelistLoading(true); setWhitelistError("");
+        try {
+            const result = await addBlacklistEntry(token, { license_plate: blacklistPlate, vehicle_name: blacklistName || null, description: blacklistReason || null });
+            setBlacklist((items) => [result.entry, ...items]); setBlacklistVisible(true); setBlacklistLoaded(true);
+            setBlacklistPlate(""); setBlacklistName(""); setBlacklistReason(""); setWhitelistMessage("Vehicle added to the blacklist.");
+        } catch (error) { setWhitelistError(error.message || t.requestFailed); } finally { setWhitelistLoading(false); }
+    }
+
+    async function submitBlacklistRemove(event) {
+        event.preventDefault(); setWhitelistLoading(true); setWhitelistError("");
+        try {
+            await removeBlacklistEntryBySearch(token, blacklistRemoveSearch);
+            const normalized = blacklistRemoveSearch.trim().toLowerCase();
+            setBlacklist((items) => items.filter((item) => item.license_plate.toLowerCase() !== normalized && (item.vehicle_name || "").toLowerCase() !== normalized));
+            setBlacklistRemoveSearch(""); setWhitelistMessage("Vehicle removed from the blacklist.");
+        } catch (error) { setWhitelistError(error.message || t.requestFailed); } finally { setWhitelistLoading(false); }
+    }
+
+    async function editListEntry(kind, entry) {
+        openListEditor(kind, [entry]);
+    }
+
+    function toggleListMenu(kind, entry, trigger) {
+        if (listMenu.id === entry.id && listMenu.kind === kind) {
+            setListMenu({ id: null, kind: null, position: null });
+            return;
+        }
+        const rect = trigger.getBoundingClientRect();
+        const menuWidth = 220;
+        const menuHeight = 95;
+        const gap = 6;
+        const top = rect.bottom + gap + menuHeight <= window.innerHeight ? rect.bottom + gap : Math.max(8, rect.top - menuHeight - gap);
+        const left = Math.max(8, Math.min(window.innerWidth - menuWidth - 8, rect.right - menuWidth));
+        setListMenu({ id: entry.id, kind, position: { top, left } });
+    }
+
+    function openListEditor(kind, entries, clearSelectionOnSave = false) {
+        setListMenu({ id: null, kind: null, position: null });
+        setListEditor({ kind, entries: entries.map((entry) => ({ ...entry })), clearSelectionOnSave });
+    }
+
+    async function saveListEditor() {
+        if (!listEditor?.entries?.length) return;
+        setListEditorSaving(true);
+        try {
+            for (const entry of listEditor.entries) {
+                const fields = listEditor.kind === "whitelist"
+                    ? { license_plate: entry.license_plate, vehicle_name: entry.vehicle_name, discount_percent: Number(entry.discount_percent) }
+                    : { license_plate: entry.license_plate, vehicle_name: entry.vehicle_name || null, description: entry.description || null };
+                const result = listEditor.kind === "whitelist"
+                    ? await updateWhitelistEntry(token, entry.id, fields)
+                    : await updateBlacklistEntry(token, entry.id, fields);
+                if (listEditor.kind === "whitelist") setWhitelist((items) => items.map((item) => item.id === entry.id ? result.entry : item));
+                else setBlacklist((items) => items.map((item) => item.id === entry.id ? result.entry : item));
+            }
+            if (listEditor.clearSelectionOnSave) {
+                if (listEditor.kind === "whitelist") setSelectedWhitelist([]);
+                else setSelectedBlacklist([]);
+            }
+            setListEditor(null);
+        } catch (error) { setWhitelistError(error.message || t.requestFailed); }
+        finally { setListEditorSaving(false); }
+    }
+
+    function renderListMenu() {
+        if (!listMenu.position) return null;
+        const items = listMenu.kind === "whitelist" ? whitelist : blacklist;
+        const entry = items.find((item) => item.id === listMenu.id);
+        if (!entry) return null;
+        return createPortal(
+            <div className="vehicle-menu-dropdown vehicle-menu-popover" style={listMenu.position} role="menu">
+                <button type="button" role="menuitem" className="vehicle-menu-item" onClick={() => openListEditor(listMenu.kind, [entry])}><EditIcon /> Edit Vehicle Information</button>
+                <button type="button" role="menuitem" className="vehicle-menu-item vehicle-menu-item-danger" onClick={() => void removeListEntry(listMenu.kind, entry)}><TrashIcon /> Remove Vehicle</button>
+            </div>,
+            document.body,
+        );
+    }
+
+    function renderListEditor() {
+        if (!listEditor) return null;
+        const isWhite = listEditor.kind === "whitelist";
+        return createPortal(
+            <div className="confirmation-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setListEditor(null); }}>
+                <section className="confirmation-dialog list-editor-dialog" role="dialog" aria-modal="true" aria-labelledby="list-editor-title">
+                    <h3 id="list-editor-title">Edit Vehicle Information</h3>
+                    <p>Update the selected {listEditor.kind} vehicle information.</p>
+                    <div className="list-editor-rows">{listEditor.entries.map((entry, index) => <div className="list-editor-row" key={entry.id}><strong>Vehicle {index + 1}</strong><label>License plate<input value={entry.license_plate || ""} onChange={(event) => setListEditor((current) => ({ ...current, entries: current.entries.map((item) => item.id === entry.id ? { ...item, license_plate: event.target.value } : item) }))} /></label><label>Vehicle name<input value={entry.vehicle_name || ""} onChange={(event) => setListEditor((current) => ({ ...current, entries: current.entries.map((item) => item.id === entry.id ? { ...item, vehicle_name: event.target.value } : item) }))} /></label>{isWhite ? <label>Discount percentage<input type="number" min="0" max="100" value={entry.discount_percent ?? 0} onChange={(event) => setListEditor((current) => ({ ...current, entries: current.entries.map((item) => item.id === entry.id ? { ...item, discount_percent: event.target.value } : item) }))} /></label> : <label>Description / reason<textarea value={entry.description || ""} onChange={(event) => setListEditor((current) => ({ ...current, entries: current.entries.map((item) => item.id === entry.id ? { ...item, description: event.target.value } : item) }))} /></label>}</div>)}</div>
+                    <div className="confirmation-actions"><button type="button" className="confirmation-cancel" onClick={() => setListEditor(null)}>Cancel</button><button type="button" className="settings-save-button" onClick={() => void saveListEditor()} disabled={listEditorSaving}>{listEditorSaving ? "Saving..." : "Save changes"}</button></div>
+                </section>
+            </div>,
+            document.body,
+        );
+    }
+
+    function renderListRemovalConfirmation() {
+        if (!pendingListRemoval) return null;
+        const count = pendingListRemoval.ids.length;
+        return createPortal(
+            <div className="confirmation-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPendingListRemoval(null); }}>
+                <section className="confirmation-dialog list-removal-dialog" role="dialog" aria-modal="true" aria-labelledby="remove-list-title">
+                    <h3 id="remove-list-title">Remove Vehicle{count > 1 ? "s" : ""}</h3>
+                    <p>Are you sure you want to remove {count > 1 ? `${count} selected vehicles` : "this vehicle"} from the {pendingListRemoval.kind}?</p>
+                    <div className="confirmation-actions"><button type="button" className="confirmation-cancel" onClick={() => setPendingListRemoval(null)}>Cancel</button><button type="button" className="settings-save-button confirmation-danger" onClick={() => void confirmListRemoval()}>Remove</button></div>
+                </section>
+            </div>,
+            document.body,
+        );
+    }
+
+    async function removeListEntry(kind, entry) {
+        setListMenu({ id: null, kind: null, position: null });
+        setPendingListRemoval({ kind, ids: [entry.id] });
+    }
+
+    async function bulkRemove(kind) {
+        const ids = kind === "whitelist" ? selectedWhitelist : selectedBlacklist;
+        if (ids.length) setPendingListRemoval({ kind, ids });
+    }
+
+    async function confirmListRemoval() {
+        if (!pendingListRemoval) return;
+        const { kind, ids } = pendingListRemoval;
+        try {
+            if (kind === "whitelist") {
+                await removeWhitelistEntries(token, ids);
+                setWhitelist((items) => items.filter((item) => !ids.includes(item.id)));
+                setSelectedWhitelist((selected) => selected.filter((id) => !ids.includes(id)));
+            } else {
+                await removeBlacklistEntries(token, ids);
+                setBlacklist((items) => items.filter((item) => !ids.includes(item.id)));
+                setSelectedBlacklist((selected) => selected.filter((id) => !ids.includes(id)));
+            }
+            setPendingListRemoval(null);
+        } catch (error) { setWhitelistError(error.message || t.requestFailed); }
+    }
+
+    async function bulkEdit(kind) {
+        const ids = kind === "whitelist" ? selectedWhitelist : selectedBlacklist;
+        const items = kind === "whitelist" ? whitelist : blacklist;
+        if (ids.length) openListEditor(kind, items.filter((item) => ids.includes(item.id)), true);
+    }
+
+    async function refreshWhitelist() { setWhitelistLoaded(false); whitelistFetchInFlightRef.current = false; const result = await getWhitelist(token); setWhitelist(result.entries || []); setWhitelistLoaded(true); }
+
     async function manualEntry(space) {
         const plate = window.prompt("Number plate");
         if (!plate?.trim()) return;
@@ -954,6 +1163,26 @@ function AdminPage() {
         if (!nextPlate || nextPlate.trim().toUpperCase() === session.plate) return;
         try { await updateParkingVehicle(token, session.session_id, nextPlate.trim().toUpperCase()); emitParkingDataUpdated(); await loadParkingActivity(); }
         catch (err) { setActivityError(err.message || "Unable to update vehicle."); }
+    }
+
+    function openActivityListAdd(kind, plate) {
+        setActiveSessionMenuId(null); setSessionMenuPosition(null); setActiveVehicleMenuPlate(null); setVehicleMenuPosition(null);
+        setActiveFeature("whitelist"); setListTab(kind);
+        if (kind === "whitelist") setPlate(plate);
+        else setBlacklistPlate(plate);
+    }
+
+    async function removeActivityListEntry(kind, plate) {
+        try {
+            if (kind === "whitelist") {
+                await removeWhitelistEntry(token, plate);
+                setWhitelist((items) => items.filter((item) => item.license_plate !== plate));
+            } else {
+                await removeBlacklistEntryBySearch(token, plate);
+                setBlacklist((items) => items.filter((item) => item.license_plate !== plate));
+            }
+            await loadParkingActivity();
+        } catch (error) { setActivityError(error.message || "Unable to update the vehicle list."); }
     }
 
     function toggleSessionMenu(sessionId, trigger) {
@@ -975,6 +1204,15 @@ function AdminPage() {
         setActiveSessionMenuId(sessionId);
     }
 
+    function toggleVehicleMenu(plate, trigger) {
+        if (activeVehicleMenuPlate === plate) { setActiveVehicleMenuPlate(null); setVehicleMenuPosition(null); return; }
+        const rect = trigger.getBoundingClientRect();
+        const menuWidth = 220; const menuHeight = 110; const gap = 6;
+        const top = rect.bottom + gap + menuHeight <= window.innerHeight ? rect.bottom + gap : Math.max(8, rect.top - menuHeight - gap);
+        const left = Math.max(8, Math.min(window.innerWidth - menuWidth - 8, rect.right - menuWidth));
+        setVehicleMenuPosition({ top, left }); setActiveVehicleMenuPlate(plate);
+    }
+
     function renderSessionMenu(session, openId = activeSessionMenuId, position = sessionMenuPosition, close = () => { setActiveSessionMenuId(null); setSessionMenuPosition(null); }, triggerId = session.session_id) {
         if (openId !== triggerId || !position) return null;
         return createPortal(
@@ -982,8 +1220,11 @@ function AdminPage() {
                 <button type="button" role="menuitem" className="vehicle-menu-item" onClick={() => { close(); void editLiveSession(session); }}>
                     <EditIcon /> Edit Info
                 </button>
-                <button type="button" role="menuitem" className="vehicle-menu-item" onClick={() => { close(); setPlate(session.plate); setActiveFeature("whitelist"); }}>
-                    <StarIcon /> Add to Whitelist
+                <button type="button" role="menuitem" className="vehicle-menu-item" onClick={() => { close(); session.whitelisted ? void removeActivityListEntry("whitelist", session.plate) : openActivityListAdd("whitelist", session.plate); }}>
+                    <StarIcon /> {session.whitelisted ? "Remove from Whitelist" : "Add to Whitelist"}
+                </button>
+                <button type="button" role="menuitem" className="vehicle-menu-item" onClick={() => { close(); session.blacklisted ? void removeActivityListEntry("blacklist", session.plate) : openActivityListAdd("blacklist", session.plate); }}>
+                    <BlackStarIcon /> {session.blacklisted ? "Remove from Blacklist" : "Add to Blacklist"}
                 </button>
                 <div className="vehicle-menu-divider" role="separator" />
                 <button type="button" role="menuitem" className="vehicle-menu-item vehicle-menu-item-danger" onClick={() => { close(); void removeLiveSession(session.session_id); }}>
@@ -991,6 +1232,18 @@ function AdminPage() {
                 </button>
             </div>,
             document.body
+        );
+    }
+
+    function renderVehicleMenu(vehicle) {
+        if (activeVehicleMenuPlate !== vehicle.plate || !vehicleMenuPosition) return null;
+        const close = () => { setActiveVehicleMenuPlate(null); setVehicleMenuPosition(null); };
+        return createPortal(
+            <div className="vehicle-menu-dropdown vehicle-menu-popover" style={vehicleMenuPosition} role="menu">
+                <button type="button" role="menuitem" className="vehicle-menu-item" onClick={() => { close(); vehicle.whitelisted ? void removeActivityListEntry("whitelist", vehicle.plate) : openActivityListAdd("whitelist", vehicle.plate); }}><StarIcon /> {vehicle.whitelisted ? "Remove from Whitelist" : "Add to Whitelist"}</button>
+                <button type="button" role="menuitem" className="vehicle-menu-item" onClick={() => { close(); vehicle.blacklisted ? void removeActivityListEntry("blacklist", vehicle.plate) : openActivityListAdd("blacklist", vehicle.plate); }}><BlackStarIcon /> {vehicle.blacklisted ? "Remove from Blacklist" : "Add to Blacklist"}</button>
+            </div>,
+            document.body,
         );
     }
 
@@ -1020,6 +1273,12 @@ function AdminPage() {
     }
 
     function showWhitelist() {
+        if (listTab === "blacklist") {
+            setBlacklistVisible((visible) => !visible);
+            setWhitelistVisible((visible) => !visible);
+            if (!blacklistLoaded) void loadBlacklist();
+            return;
+        }
         if (whitelistVisible) {
             setWhitelistVisible(false);
             return;
@@ -1940,10 +2199,10 @@ function AdminPage() {
                                 {activityError && <p className="admin-error whitelist-feedback">{activityError}</p>}
                                 {parkingActivity && <>
                                     <p className="admin-message">Capacity: {parkingActivity.space_status.total_active_capacity} · Occupied: {parkingActivity.space_status.occupied} · Available: {parkingActivity.space_status.available}</p>
-                                    <div className="whitelist-table-wrap"><table><thead><tr><th>Live plate</th><th>Space</th><th>Entry time</th><th>Duration</th><th>Actions</th></tr></thead><tbody>{parkingActivity.live_sessions.map((session) => <tr key={session.session_id}><td>{session.plate}</td><td>{session.space || "Tracking"}</td><td>{new Date(session.entry_time).toLocaleString()}</td><td>{session.duration_minutes} min</td><td><div className="vehicle-menu"><button type="button" className="vehicle-menu-trigger" aria-label="Vehicle actions" aria-expanded={activeSessionMenuId === session.session_id} onClick={(event) => toggleSessionMenu(session.session_id, event.currentTarget)}>⋮</button>{renderSessionMenu(session)}</div></td></tr>)}</tbody></table></div>
-                                    <div className="whitelist-table-wrap"><table><thead><tr><th>Level</th><th>Space</th><th>Status</th><th>Plate</th><th>Actions</th></tr></thead><tbody>{parkingActivity.space_status.spaces.map((space) => { const session = parkingActivity.live_sessions.find((item) => Number(item.level) === Number(space.level) && item.space === space.space); const menuId = `space-${space.id}`; return <tr key={`${space.level}-${space.space}`}><td>{space.level}</td><td>{space.space}</td><td>{space.is_occupied ? "Occupied" : "Available"}</td><td>{space.plate || "-"}</td><td><div className="vehicle-menu"><button type="button" className="vehicle-menu-trigger" aria-label="Space actions" aria-expanded={activeSpaceMenuId === menuId} onClick={(event) => toggleSpaceMenu(menuId, event.currentTarget)}>⋮</button>{renderSpaceMenu(space, session)}</div></td></tr>; })}</tbody></table></div>
-                                    <div className="whitelist-table-wrap"><table><thead><tr><th>Plate</th><th>Visits</th><th>Last entry</th><th>Last exit</th><th>Parked</th><th>Whitelist</th></tr></thead><tbody>{parkingActivity.vehicles.map((vehicle) => <tr key={vehicle.plate}><td>{vehicle.plate}</td><td>{vehicle.total_visits}</td><td>{vehicle.last_entry ? new Date(vehicle.last_entry).toLocaleString() : "-"}</td><td>{vehicle.last_exit ? new Date(vehicle.last_exit).toLocaleString() : "-"}</td><td>{vehicle.currently_parked ? "Yes" : "No"}</td><td>{vehicle.whitelisted ? "Yes" : "No"}</td></tr>)}</tbody></table></div>
-                                    <div className="whitelist-table-wrap"><table><thead><tr><th>Plate</th><th>Entry</th><th>Exit</th><th>Duration</th><th>Space</th>{parkingActivity.billing_enabled && <><th>Payment</th><th>Amount</th><th>Discount</th></>}</tr></thead><tbody>{parkingActivity.history.map((item, index) => <tr key={`${item.plate}-${index}`}><td>{item.plate}</td><td>{new Date(item.entry_time).toLocaleString()}</td><td>{item.exit_time ? new Date(item.exit_time).toLocaleString() : "-"}</td><td>{item.duration_minutes} min</td><td>{item.space || "-"}</td>{parkingActivity.billing_enabled && <><td>{item.payment_method || "-"}</td><td>{item.amount ?? "-"}</td><td>{item.discount_percent ? `${item.discount_percent}%` : "-"}</td></>}</tr>)}</tbody></table></div>
+                                    <section className="activity-table-section"><h2>Currently Parked Vehicles</h2><p>Vehicles with an active parking session.</p><div className="whitelist-table-wrap"><table><thead><tr><th>Live plate</th><th>Space</th><th>Entry time</th><th>Duration</th><th>Actions</th></tr></thead><tbody>{parkingActivity.live_sessions.map((session) => <tr key={session.session_id}><td>{session.plate}</td><td>{session.space || "Tracking"}</td><td>{new Date(session.entry_time).toLocaleString()}</td><td>{session.duration_minutes} min</td><td><div className="vehicle-menu"><button type="button" className="vehicle-menu-trigger" aria-label="Vehicle actions" aria-expanded={activeSessionMenuId === session.session_id} onClick={(event) => toggleSessionMenu(session.session_id, event.currentTarget)}>⋮</button>{renderSessionMenu(session)}</div></td></tr>)}</tbody></table></div></section>
+                                    <section className="activity-table-section"><h2>Parking Space Status</h2><p>Live availability and occupancy for each parking space.</p><div className="whitelist-table-wrap"><table><thead><tr><th>Level</th><th>Space</th><th>Status</th><th>Plate</th><th>Actions</th></tr></thead><tbody>{parkingActivity.space_status.spaces.map((space) => { const session = parkingActivity.live_sessions.find((item) => Number(item.level) === Number(space.level) && item.space === space.space); const menuId = `space-${space.id}`; return <tr key={`${space.level}-${space.space}`}><td>{space.level}</td><td>{space.space}</td><td>{space.is_occupied ? "Occupied" : "Available"}</td><td>{space.plate || "-"}</td><td><div className="vehicle-menu"><button type="button" className="vehicle-menu-trigger" aria-label="Space actions" aria-expanded={activeSpaceMenuId === menuId} onClick={(event) => toggleSpaceMenu(menuId, event.currentTarget)}>⋮</button>{renderSpaceMenu(space, session)}</div></td></tr>; })}</tbody></table></div></section>
+                                    <section className="activity-table-section"><h2>Vehicle Visit Summary</h2><p>Last recorded entry and exit for each license plate.</p><div className="whitelist-table-wrap"><table><thead><tr><th>Plate</th><th>Visits</th><th>Last entry</th><th>Last exit</th><th>Parked</th><th>Whitelist</th><th>Blacklist</th><th>Actions</th></tr></thead><tbody>{parkingActivity.vehicles.map((vehicle) => <tr key={vehicle.plate}><td>{vehicle.plate}</td><td>{vehicle.total_visits}</td><td>{vehicle.last_entry ? new Date(vehicle.last_entry).toLocaleString() : "-"}</td><td>{vehicle.last_exit ? new Date(vehicle.last_exit).toLocaleString() : "-"}</td><td>{vehicle.currently_parked ? "Yes" : "No"}</td><td>{vehicle.whitelisted ? "Yes" : "No"}</td><td>{vehicle.blacklisted ? "Yes" : "No"}</td><td><div className="vehicle-menu"><button type="button" className="vehicle-menu-trigger" aria-label="Vehicle list actions" aria-expanded={activeVehicleMenuPlate === vehicle.plate} onClick={(event) => toggleVehicleMenu(vehicle.plate, event.currentTarget)}>⋮</button>{renderVehicleMenu(vehicle)}</div></td></tr>)}</tbody></table></div></section>
+                                    <section className="activity-table-section"><h2>Parking History</h2><p>Completed parking sessions and payment information.</p><div className="whitelist-table-wrap"><table><thead><tr><th>Plate</th><th>Entry</th><th>Exit</th><th>Duration</th><th>Space</th>{parkingActivity.billing_enabled && <><th>Payment</th><th>Amount</th><th>Discount</th></>}</tr></thead><tbody>{parkingActivity.history.map((item, index) => <tr key={`${item.plate}-${index}`}><td>{item.plate}</td><td>{new Date(item.entry_time).toLocaleString()}</td><td>{item.exit_time ? new Date(item.exit_time).toLocaleString() : "-"}</td><td>{item.duration_minutes} min</td><td>{item.space || "-"}</td>{parkingActivity.billing_enabled && <><td>{item.payment_method || "-"}</td><td>{item.amount ?? "-"}</td><td>{item.discount_percent ? `${item.discount_percent}%` : "-"}</td></>}</tr>)}</tbody></table></div></section>
                                 </>}
                             </div>
                         ) : activeFeature === "analytics" ? (
@@ -1990,16 +2249,23 @@ function AdminPage() {
                             </div>
                         ) : activeFeature === "whitelist" ? (
                             <div className="feature-view" data-tour="whitelist-panel">
-                                <h1>{t.vehicleTitle}<br /><span>{t.whitelistTitle}</span></h1>
-                                <p className="admin-message">{t.vehicleIntro}</p>
-                                <div className="whitelist-actions">
+                                <h1>{t.vehicleTitle}<br /><span>whitelist / blacklist.</span></h1>
+                                <p className="admin-message">{listTab === "whitelist" ? t.vehicleIntro : "Banned vehicles cannot be admitted to the parking garage."}</p>
+                                <div className="list-tabs"><button type="button" className={listTab === "whitelist" ? "active" : ""} onClick={() => { setListTab("whitelist"); if (!whitelistLoaded) void loadWhitelist(); }}>Whitelist</button><button type="button" className={listTab === "blacklist" ? "active" : ""} onClick={() => { setListTab("blacklist"); if (!blacklistLoaded) void loadBlacklist(); }}>Blacklist</button></div>
+                                {listTab === "whitelist" && <div className="whitelist-actions">
                                     <form className="whitelist-card" onSubmit={submitWhitelist}><div className="card-heading"><span>01</span><h2>{t.addVehicle}</h2></div><label htmlFor="plate">{t.numberPlate}</label><input id="plate" value={plate} onChange={(event) => setPlate(event.target.value)} placeholder={t.examplePlate} required /><label htmlFor="vehicle-name">{t.name}</label><input id="vehicle-name" value={vehicleName} onChange={(event) => setVehicleName(event.target.value)} placeholder={t.exampleManager} required /><label htmlFor="discount">{t.discountPercentage}</label><input id="discount" type="number" min="0" max="100" step="1" value={discount} onChange={(event) => setDiscount(event.target.value)} placeholder="0 - 100" required /><button type="submit" disabled={whitelistLoading}>{t.addToWhitelist} <span>→</span></button></form>
                                     <form className="whitelist-card remove-card" onSubmit={submitRemove}><div className="card-heading"><span>02</span><h2>{t.removeVehicle}</h2></div><label htmlFor="remove-search">{t.nameOrPlate}</label><input id="remove-search" value={removeSearch} onChange={(event) => setRemoveSearch(event.target.value)} placeholder={t.searchList} required /><p className="form-hint">{t.removeHint}</p><button type="submit" disabled={whitelistLoading}>{t.removeFromList} <span>→</span></button></form>
-                                </div>
+                                </div>}
+                                {listTab === "blacklist" && <form className="whitelist-card blacklist-form" onSubmit={submitBlacklist}><div className="card-heading"><span>01</span><h2>Add to blacklist</h2></div><label htmlFor="blacklist-plate">{t.numberPlate}</label><input id="blacklist-plate" value={blacklistPlate} onChange={(event) => setBlacklistPlate(event.target.value)} placeholder={t.examplePlate} required /><label htmlFor="blacklist-name">Name / vehicle name</label><input id="blacklist-name" value={blacklistName} onChange={(event) => setBlacklistName(event.target.value)} /><label htmlFor="blacklist-reason">Description / reason</label><textarea id="blacklist-reason" value={blacklistReason} onChange={(event) => setBlacklistReason(event.target.value)} /><button type="submit" disabled={whitelistLoading}>Add to blacklist <span>→</span></button></form>}
+                                {listTab === "blacklist" && <form className="whitelist-card remove-card blacklist-form" onSubmit={submitBlacklistRemove}><div className="card-heading"><span>02</span><h2>Remove vehicle</h2></div><label htmlFor="blacklist-remove-search">Name or number plate</label><input id="blacklist-remove-search" value={blacklistRemoveSearch} onChange={(event) => setBlacklistRemoveSearch(event.target.value)} placeholder="Search the list" required /><p className="form-hint">Enter either the assigned name or the exact number plate.</p><button type="submit" disabled={whitelistLoading}>Remove from blacklist <span>→</span></button></form>}
                                 {whitelistError && <p className="admin-error whitelist-feedback">{whitelistError}</p>}
                                 {whitelistMessage && <p className="whitelist-success">{whitelistMessage}</p>}
                                 <button type="button" className="show-list-button" onClick={showWhitelist}>{whitelistVisible ? t.hideList : t.showList} <span>{whitelistListLoading ? "..." : whitelistVisible ? "↑" : "↓"}</span></button>
-                                {whitelistVisible && <div className={`whitelist-table-wrap${whitelistListLoading || whitelist.length === 0 ? " admin-loading" : ""}`}>{whitelistListLoading ? "Loading list..." : whitelist.length > 0 ? <table><thead><tr><th>{t.name}</th><th>{t.numberPlate}</th><th>{t.discount}</th><th>{t.added}</th></tr></thead><tbody>{whitelist.map((entry) => <tr key={entry.id}><td>{entry.vehicle_name}</td><td>{entry.license_plate}</td><td>{entry.discount_percent}%</td><td>{entry.created_at ? new Date(entry.created_at).toLocaleDateString(language === "ur" ? "ur-PK" : "en-PK", { timeZone: "Asia/Karachi" }) : "-"}</td></tr>)}</tbody></table> : "No whitelist entries."}</div>}
+                                {whitelistVisible && listTab === "whitelist" && <div className="whitelist-table-wrap"><div className="bulk-toolbar"><label><input type="checkbox" checked={whitelist.length > 0 && selectedWhitelist.length === whitelist.length} onChange={(event) => setSelectedWhitelist(event.target.checked ? whitelist.map((item) => item.id) : [])} /> Select All</label>{selectedWhitelist.length > 0 && <><button type="button" onClick={() => void bulkEdit("whitelist")}>Bulk edit</button><button type="button" onClick={() => void bulkRemove("whitelist")}>Bulk remove</button></>}</div>{whitelistListLoading ? "Loading list..." : whitelist.length > 0 ? <table><thead><tr><th></th><th>{t.name}</th><th>{t.numberPlate}</th><th>{t.discount}</th><th>{t.added}</th><th>Actions</th></tr></thead><tbody>{whitelist.map((entry) => { const selected = selectedWhitelist.includes(entry.id); return <tr key={entry.id}><td><input type="checkbox" checked={selected} onChange={() => setSelectedWhitelist((ids) => selected ? ids.filter((id) => id !== entry.id) : [...ids, entry.id])} /></td><td>{entry.vehicle_name}</td><td>{entry.license_plate}</td><td>{entry.discount_percent}%</td><td>{entry.created_at ? new Date(entry.created_at).toLocaleDateString(language === "ur" ? "ur-PK" : "en-PK", { timeZone: "Asia/Karachi" }) : "-"}</td><td><div className="vehicle-menu"><button type="button" className="vehicle-menu-trigger" aria-label="Vehicle actions" onClick={() => { const action = window.prompt("Type edit or remove"); if (action === "edit") void editListEntry("whitelist", entry); if (action === "remove") void removeListEntry("whitelist", entry); }}>⋮</button></div></td></tr>; })}</tbody></table> : "No whitelist entries."}</div>}
+                                {blacklistVisible && listTab === "blacklist" && <div className="whitelist-table-wrap"><div className="bulk-toolbar"><label><input type="checkbox" checked={blacklist.length > 0 && selectedBlacklist.length === blacklist.length} onChange={(event) => setSelectedBlacklist(event.target.checked ? blacklist.map((item) => item.id) : [])} /> Select All</label>{selectedBlacklist.length > 0 && <><button type="button" onClick={() => void bulkEdit("blacklist")}>Bulk edit</button><button type="button" onClick={() => void bulkRemove("blacklist")}>Bulk remove</button></>}</div>{blacklist.length > 0 ? <table><thead><tr><th></th><th>{t.name}</th><th>{t.numberPlate}</th><th>Reason</th><th>{t.added}</th><th>Actions</th></tr></thead><tbody>{blacklist.map((entry) => { const selected = selectedBlacklist.includes(entry.id); return <tr key={entry.id}><td><input type="checkbox" checked={selected} onChange={() => setSelectedBlacklist((ids) => selected ? ids.filter((id) => id !== entry.id) : [...ids, entry.id])} /></td><td>{entry.vehicle_name || "-"}</td><td>{entry.license_plate}</td><td>{entry.description || "-"}</td><td>{entry.created_at ? new Date(entry.created_at).toLocaleDateString(language === "ur" ? "ur-PK" : "en-PK", { timeZone: "Asia/Karachi" }) : "-"}</td><td><div className="vehicle-menu"><button type="button" className="vehicle-menu-trigger" aria-label="Vehicle actions" onClick={() => { const action = window.prompt("Type edit or remove"); if (action === "edit") void editListEntry("blacklist", entry); if (action === "remove") void removeListEntry("blacklist", entry); }}>⋮</button></div></td></tr>; })}</tbody></table> : "No blacklist entries."}</div>}
+                                {renderListMenu()}
+                                {renderListEditor()}
+                                {renderListRemovalConfirmation()}
                             </div>
                         ) : activeFeature === "garage-settings" ? (
                             <div className="feature-view" data-tour="garage-settings-panel">

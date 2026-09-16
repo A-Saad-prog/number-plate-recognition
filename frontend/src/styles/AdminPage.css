@@ -442,8 +442,13 @@
 }
 
 .admin-sidebar {
+    align-self: start;
     border-right: 1px solid rgba(16, 35, 28, .14);
+    height: calc(100vh - 72px);
+    overflow-y: auto;
     padding: 55px 28px;
+    position: sticky;
+    top: 72px;
 }
 
 .sidebar-feature,
@@ -559,6 +564,13 @@
 
 .whitelist-card input:focus {
     border-color: #e05b35;
+}
+
+.blacklist-form textarea:focus,
+.list-editor-row input:focus,
+.list-editor-row textarea:focus {
+    border-color: #e05b35;
+    outline: 0;
 }
 
 /* Discount is a plain percentage field -- hide the native number-input
@@ -1507,6 +1519,25 @@ It can make small UI text appear soft/blurry in Chromium.
     animation: refresh-spin .7s linear infinite;
 }
 
+.activity-table-section {
+    margin-top: 30px;
+}
+
+.activity-table-section h2 {
+    font-size: 18px;
+    margin: 0;
+}
+
+.activity-table-section p {
+    color: #587066;
+    font-size: 12px;
+    margin: 5px 0 0;
+}
+
+.activity-table-section .whitelist-table-wrap {
+    margin-top: 12px;
+}
+
 .vehicle-menu {
     display: inline-block;
     position: relative;
@@ -1738,9 +1769,20 @@ It can make small UI text appear soft/blurry in Chromium.
 .whitelist-table-wrap {
     background: #f8faf7;
     border: 1px solid #d3ded4;
+    box-sizing: border-box;
     margin-top: 28px;
-    max-width: 900px;
     overflow-x: auto;
+    width: 100%;
+}
+
+.whitelist-table-wrap:not(:has(table)) {
+    color: #10231c;
+    padding: 18px;
+    text-align: center;
+}
+
+.whitelist-table-wrap:not(:has(table)) .bulk-toolbar {
+    display: none;
 }
 
 .whitelist-table-wrap table {
@@ -1769,6 +1811,204 @@ It can make small UI text appear soft/blurry in Chromium.
 
 .whitelist-table-wrap tr:last-child td {
     border-bottom: 0;
+}
+
+.list-tabs {
+    display: flex;
+    gap: 6px;
+    margin-top: 22px;
+}
+
+.list-tabs button,
+.bulk-toolbar button {
+    background: transparent;
+    border: 1px solid #bdcbc0;
+    border-radius: 999px;
+    color: #10231c;
+    cursor: pointer;
+    padding: 7px 12px;
+}
+
+.list-tabs button.active {
+    background: #10231c;
+    color: #fff;
+}
+
+.blacklist-form textarea {
+    background: white;
+    color: #10231c;
+    border: 1px solid #bdcbc0;
+    border-radius: 5px;
+    font: 14px 'Manrope', sans-serif;
+    margin-bottom: 22px;
+    min-height: 80px;
+    outline: 0;
+    padding: 10px;
+    resize: vertical;
+}
+
+.blacklist-form + .blacklist-form {
+    display: inline-flex;
+    height: 445px;
+    margin-left: 18px;
+    margin-top: 52px;
+    vertical-align: top;
+    width: calc(50% - 9px);
+}
+
+.list-tabs + .blacklist-form {
+    display: inline-flex;
+    height: 445px;
+    margin-top: 52px;
+    vertical-align: top;
+    width: calc(50% - 9px);
+}
+
+.list-editor-dialog {
+    max-height: 85vh;
+    max-width: 760px;
+    overflow-y: auto;
+    width: min(760px, calc(100vw - 32px));
+}
+
+.list-editor-rows {
+    display: grid;
+    gap: 16px;
+    margin: 20px 0;
+}
+
+.list-editor-row {
+    border: 1px solid #d3ded4;
+    color: #10231c;
+    display: grid;
+    gap: 10px;
+    padding: 16px;
+}
+
+.list-editor-row label {
+    display: grid;
+    font: 700 10px 'DM Mono', monospace;
+    gap: 6px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+}
+
+.list-editor-row input,
+.list-editor-row textarea {
+    background: white;
+    border: 1px solid #bdcbc0;
+    border-radius: 6px;
+    color: #10231c;
+    font: 14px 'Manrope', sans-serif;
+    padding: 10px 12px;
+}
+
+.list-editor-row textarea {
+    min-height: 65px;
+    resize: vertical;
+}
+
+.confirmation-danger {
+    background: #b43f28;
+}
+
+.confirmation-danger:hover {
+    background: #8f2f20;
+}
+
+.list-editor-dialog .confirmation-actions,
+.list-removal-dialog .confirmation-actions {
+    justify-content: center;
+}
+
+.list-editor-dialog .confirmation-actions button,
+.list-removal-dialog .confirmation-actions button {
+    box-sizing: border-box;
+    min-width: 124px;
+    padding: 11px 16px;
+    text-align: center;
+    width: 124px;
+}
+
+.list-editor-dialog .settings-save-button,
+.list-removal-dialog .settings-save-button {
+    width: 124px;
+}
+
+.bulk-toolbar {
+    align-items: center;
+    display: flex;
+    gap: 10px;
+    padding: 12px 18px;
+}
+
+.bulk-toolbar label {
+    align-items: center;
+    color: #10231c;
+    display: inline-flex;
+    gap: 8px;
+    margin-right: auto;
+}
+
+.bulk-toolbar input[type="checkbox"],
+.whitelist-table-wrap td input[type="checkbox"] {
+    accent-color: #e05b35;
+}
+
+.admin-theme-dark .list-tabs button,
+.admin-theme-dark .bulk-toolbar button,
+.admin-theme-dark .blacklist-form textarea {
+    border-color: rgba(145, 199, 174, .35);
+    color: #edf7f2;
+}
+
+.admin-theme-dark .whitelist-table-wrap:not(:has(table)),
+.admin-theme-dark .bulk-toolbar label {
+    color: #edf7f2;
+}
+
+.admin-theme-dark .bulk-toolbar input[type="checkbox"],
+.admin-theme-dark .whitelist-table-wrap td input[type="checkbox"] {
+    accent-color: #8fc7ae;
+}
+
+.admin-theme-dark .blacklist-form textarea {
+    background: rgba(5, 17, 13, .52);
+}
+
+.admin-theme-dark .blacklist-form textarea:focus {
+    border-color: #8fc7ae;
+    outline: 0;
+}
+
+.admin-theme-dark .whitelist-card input:focus,
+.admin-theme-dark .list-editor-row input:focus,
+.admin-theme-dark .list-editor-row textarea:focus {
+    border-color: #8fc7ae;
+    outline: 0;
+}
+
+.admin-theme-dark .list-editor-row {
+    border-color: rgba(145, 199, 174, .18);
+}
+
+.admin-theme-dark .list-editor-row input,
+.admin-theme-dark .list-editor-row textarea {
+    background: rgba(5, 17, 13, .52);
+    border-color: rgba(145, 199, 174, .3);
+    color: #edf7f2;
+}
+
+.admin-theme-dark .list-editor-dialog,
+.admin-theme-dark .list-editor-row,
+.admin-theme-dark .list-editor-row label,
+.admin-theme-dark .list-editor-row strong {
+    color: #edf7f2;
+}
+
+.admin-theme-dark .list-tabs button.active {
+    background: #e05b35;
+    border-color: #e05b35;
 }
 
 
@@ -2074,6 +2314,10 @@ It can make small UI text appear soft/blurry in Chromium.
     color: #afc1b5;
 }
 
+.admin-theme-dark .activity-table-section p {
+    color: #afc1b5;
+}
+
 .admin-theme-dark .garage-mode-options > p,
 .admin-theme-dark .garage-mode-options strong,
 .admin-theme-dark .automatic-entry-toggle span,
@@ -2215,7 +2459,10 @@ It can make small UI text appear soft/blurry in Chromium.
     .admin-sidebar {
         border-bottom: 1px solid rgba(16, 35, 28, .14);
         border-right: 0;
+        height: auto;
+        overflow-y: visible;
         padding: 25px 28px;
+        position: static;
     }
 
     .sidebar-muted {
@@ -2225,6 +2472,15 @@ It can make small UI text appear soft/blurry in Chromium.
     .whitelist-actions {
         grid-template-columns: 1fr;
         margin-top: 38px;
+    }
+
+    .list-tabs + .blacklist-form,
+    .blacklist-form + .blacklist-form {
+        display: flex;
+        height: auto;
+        margin-left: 0;
+        margin-top: 38px;
+        width: 100%;
     }
 }
 

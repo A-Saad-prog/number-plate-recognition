@@ -352,6 +352,28 @@ export async function removeWhitelistEntry(token, search) {
     return data;
 }
 
+async function adminListRequest(token, path, method = "GET", body) {
+    const response = await fetch(`${API_BASE_URL}/admin/${path}`, {
+        method,
+        headers: { Authorization: `Bearer ${token}`, ...(body ? { "Content-Type": "application/json" } : {}) },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.detail || `Request failed: ${response.status}`);
+    return data;
+}
+
+export const getBlacklist = (token) => adminListRequest(token, "blacklist");
+export const addBlacklistEntry = (token, entry) => adminListRequest(token, "blacklist", "POST", entry);
+export const removeBlacklistEntryBySearch = (token, search) => adminListRequest(token, "blacklist", "DELETE", { search });
+export const updateWhitelistEntry = (token, id, entry) => adminListRequest(token, `whitelist/${id}`, "PUT", entry);
+export const removeWhitelistEntries = (token, ids) => adminListRequest(token, "whitelist/bulk", "DELETE", { ids });
+export const updateWhitelistEntries = (token, ids, fields) => adminListRequest(token, "whitelist/bulk", "PATCH", { ids, ...fields });
+export const updateBlacklistEntry = (token, id, entry) => adminListRequest(token, `blacklist/${id}`, "PUT", entry);
+export const removeBlacklistEntry = (token, id) => adminListRequest(token, `blacklist/${id}`, "DELETE");
+export const removeBlacklistEntries = (token, ids) => adminListRequest(token, "blacklist/bulk", "DELETE", { ids });
+export const updateBlacklistEntries = (token, ids, fields) => adminListRequest(token, "blacklist/bulk", "PATCH", { ids, ...fields });
+
 async function adminSettingsRequest(token, path, method = "GET", body) {
     const response = await fetch(`${API_BASE_URL}/admin/settings${path}`, {
         method,

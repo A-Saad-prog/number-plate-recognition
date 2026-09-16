@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.models.parking_session import ParkingSession
 from app.models.parking_space import ParkingSpace
 from app.models.vehicle import Vehicle
+from app.models.blacklist_entry import BlacklistEntry
 from app.services.parking_service import (
     validate_available_space,
 )
@@ -76,6 +77,12 @@ def create_vehicle_entry(
         raise ValueError(
             "License plate was not recognized"
         )
+
+    if db.query(BlacklistEntry.id).filter(
+        BlacklistEntry.tenant_id == tenant_id,
+        BlacklistEntry.license_plate == license_plate,
+    ).first() is not None:
+        raise ValueError("This vehicle is blacklisted and cannot enter the parking garage")
 
     try:
         # ========================================================

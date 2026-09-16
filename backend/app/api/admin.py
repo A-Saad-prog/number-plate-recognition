@@ -7,6 +7,7 @@ from datetime import timedelta
 
 from app.database.database import get_db
 from app.models.whitelist_entry import WhitelistEntry
+from app.models.blacklist_entry import BlacklistEntry
 from app.services.auth_service import (
     authenticate_admin,
     create_access_token,
@@ -43,6 +44,38 @@ class WhitelistCreateRequest(BaseModel):
 
 class WhitelistRemoveRequest(BaseModel):
     search: str = Field(min_length=1, max_length=100)
+
+
+class WhitelistUpdateRequest(BaseModel):
+    license_plate: str = Field(min_length=1, max_length=20)
+    vehicle_name: str = Field(min_length=1, max_length=100)
+    discount_percent: float = Field(ge=0, le=100)
+
+
+class BulkEntryRequest(BaseModel):
+    ids: list[int] = Field(min_length=1)
+
+
+class WhitelistBulkUpdateRequest(BaseModel):
+    ids: list[int] = Field(min_length=1)
+    vehicle_name: str | None = Field(default=None, min_length=1, max_length=100)
+    discount_percent: float | None = Field(default=None, ge=0, le=100)
+
+
+class BlacklistCreateRequest(BaseModel):
+    license_plate: str = Field(min_length=1, max_length=20)
+    vehicle_name: str | None = Field(default=None, max_length=100)
+    description: str | None = Field(default=None, max_length=500)
+
+
+class BlacklistUpdateRequest(BlacklistCreateRequest):
+    pass
+
+
+class BlacklistBulkUpdateRequest(BaseModel):
+    ids: list[int] = Field(min_length=1)
+    vehicle_name: str | None = Field(default=None, max_length=100)
+    description: str | None = Field(default=None, max_length=500)
 
 
 class GarageLevelRequest(BaseModel):
@@ -293,6 +326,109 @@ def remove_whitelist_entry(
     return {"success": True, "removed": search}
 
 
+@router.put("/whitelist/{entry_id:int}")
+def update_whitelist_entry(entry_id: int, request: WhitelistUpdateRequest, db: Session = Depends(get_db), admin=Depends(current_admin)):
+    entry = db.query(WhitelistEntry).filter(WhitelistEntry.id == entry_id, WhitelistEntry.tenant_id == admin.tenant_id).first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Whitelisted vehicle not found.")
+    plate = request.license_plate.strip().upper()
+    conflict = db.query(WhitelistEntry).filter(WhitelistEntry.tenant_id == admin.tenant_id, WhitelistEntry.license_plate == plate, WhitelistEntry.id != entry_id).first()
+    if conflict:
+        raise HTTPException(status_code=409, detail="This number plate is already whitelisted.")
+    entry.license_plate, entry.vehicle_name, entry.discount_percent = plate, request.vehicle_name.strip(), request.discount_percent
+    db.commit(); db.refresh(entry)
+    return {"success": True, "entry": entry}
+
+
+@router.delete("/whitelist/bulk")
+def remove_whitelist_entries(request: BulkEntryRequest, db: Session = Depends(get_db), admin=Depends(current_admin)):
+    entries = db.query(WhitelistEntry).filter(WhitelistEntry.tenant_id == admin.tenant_id, WhitelistEntry.id.in_(request.ids)).all()
+    for entry in entries: db.delete(entry)
+    db.commit()
+    return {"success": True, "removed": len(entries)}
+
+
+@router.patch("/whitelist/bulk")
+def update_whitelist_entries(request: WhitelistBulkUpdateRequest, db: Session = Depends(get_db), admin=Depends(current_admin)):
+    entries = db.query(WhitelistEntry).filter(WhitelistEntry.tenant_id == admin.tenant_id, WhitelistEntry.id.in_(request.ids)).all()
+    for entry in entries:
+        if request.vehicle_name is not None: entry.vehicle_name = request.vehicle_name.strip()
+        if request.discount_percent is not None: entry.discount_percent = request.discount_percent
+    db.commit()
+    return {"success": True, "updated": len(entries)}
+
+
+def _blacklist_response(entry):
+    return {"id": entry.id, "license_plate": entry.license_plate, "vehicle_name": entry.vehicle_name, "description": entry.description, "created_at": entry.created_at}
+
+
+@router.get("/blacklist")
+def get_blacklist(db: Session = Depends(get_db), admin=Depends(current_admin)):
+    entries = db.query(BlacklistEntry).filter(BlacklistEntry.tenant_id == admin.tenant_id).order_by(BlacklistEntry.created_at.desc()).all()
+    return {"entries": [_blacklist_response(entry) for entry in entries]}
+
+
+@router.delete("/blacklist")
+def remove_blacklist_by_search(request: WhitelistRemoveRequest, db: Session = Depends(get_db), admin=Depends(current_admin)):
+    search = request.search.strip()
+    entry = db.query(BlacklistEntry).filter(
+        BlacklistEntry.tenant_id == admin.tenant_id,
+        (BlacklistEntry.license_plate == search.upper()) | (BlacklistEntry.vehicle_name.ilike(search)),
+    ).first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="No blacklisted vehicle matched that name or plate.")
+    db.delete(entry); db.commit()
+    return {"success": True, "removed": search}
+
+
+@router.post("/blacklist", status_code=status.HTTP_201_CREATED)
+def add_blacklist_entry(request: BlacklistCreateRequest, db: Session = Depends(get_db), admin=Depends(current_admin)):
+    plate = request.license_plate.strip().upper()
+    if db.query(BlacklistEntry).filter(BlacklistEntry.tenant_id == admin.tenant_id, BlacklistEntry.license_plate == plate).first():
+        raise HTTPException(status_code=409, detail="This number plate is already blacklisted.")
+    entry = BlacklistEntry(tenant_id=admin.tenant_id, license_plate=plate, vehicle_name=(request.vehicle_name or "").strip() or None, description=(request.description or "").strip() or None)
+    db.add(entry); db.commit(); db.refresh(entry)
+    return {"success": True, "entry": _blacklist_response(entry)}
+
+
+@router.put("/blacklist/{entry_id:int}")
+def update_blacklist_entry(entry_id: int, request: BlacklistUpdateRequest, db: Session = Depends(get_db), admin=Depends(current_admin)):
+    entry = db.query(BlacklistEntry).filter(BlacklistEntry.id == entry_id, BlacklistEntry.tenant_id == admin.tenant_id).first()
+    if not entry: raise HTTPException(status_code=404, detail="Blacklisted vehicle not found.")
+    plate = request.license_plate.strip().upper()
+    if db.query(BlacklistEntry).filter(BlacklistEntry.tenant_id == admin.tenant_id, BlacklistEntry.license_plate == plate, BlacklistEntry.id != entry_id).first():
+        raise HTTPException(status_code=409, detail="This number plate is already blacklisted.")
+    entry.license_plate, entry.vehicle_name, entry.description = plate, (request.vehicle_name or "").strip() or None, (request.description or "").strip() or None
+    db.commit(); db.refresh(entry)
+    return {"success": True, "entry": _blacklist_response(entry)}
+
+
+@router.delete("/blacklist/{entry_id:int}")
+def remove_blacklist_entry(entry_id: int, db: Session = Depends(get_db), admin=Depends(current_admin)):
+    entry = db.query(BlacklistEntry).filter(BlacklistEntry.id == entry_id, BlacklistEntry.tenant_id == admin.tenant_id).first()
+    if not entry: raise HTTPException(status_code=404, detail="Blacklisted vehicle not found.")
+    db.delete(entry); db.commit()
+    return {"success": True, "removed": entry_id}
+
+
+@router.delete("/blacklist/bulk")
+def remove_blacklist_entries(request: BulkEntryRequest, db: Session = Depends(get_db), admin=Depends(current_admin)):
+    entries = db.query(BlacklistEntry).filter(BlacklistEntry.tenant_id == admin.tenant_id, BlacklistEntry.id.in_(request.ids)).all()
+    for entry in entries: db.delete(entry)
+    db.commit()
+    return {"success": True, "removed": len(entries)}
+
+
+@router.patch("/blacklist/bulk")
+def update_blacklist_entries(request: BlacklistBulkUpdateRequest, db: Session = Depends(get_db), admin=Depends(current_admin)):
+    entries = db.query(BlacklistEntry).filter(BlacklistEntry.tenant_id == admin.tenant_id, BlacklistEntry.id.in_(request.ids)).all()
+    for entry in entries:
+        if request.vehicle_name is not None: entry.vehicle_name = request.vehicle_name.strip() or None
+        if request.description is not None: entry.description = request.description.strip() or None
+    db.commit()
+    return {"success": True, "updated": len(entries)}
+
+
 @router.get("/activity")
 def parking_activity(db: Session = Depends(get_db), admin=Depends(current_admin)):
     tenant_id = admin.tenant_id
@@ -302,9 +438,10 @@ def parking_activity(db: Session = Depends(get_db), admin=Depends(current_admin)
     sessions = db.query(ParkingSession).filter(ParkingSession.tenant_id == tenant_id).order_by(ParkingSession.entry_time.desc()).all()
     vehicles = {vehicle.id: vehicle for vehicle in db.query(Vehicle).filter(Vehicle.tenant_id == tenant_id).all()}
     whitelist = {entry.license_plate: entry for entry in db.query(WhitelistEntry).filter(WhitelistEntry.tenant_id == tenant_id).all()}
+    blacklist = {entry.license_plate: entry for entry in db.query(BlacklistEntry).filter(BlacklistEntry.tenant_id == tenant_id).all()}
     active_by_space = {session.parking_space_id: session for session in sessions if session.status == "active"}
     live_sessions = [
-        {"session_id": session.id, "plate": vehicles[session.vehicle_id].license_plate, "level": next((space.level for space in all_spaces if space.id == session.parking_space_id), None), "space": next((space.space_number for space in all_spaces if space.id == session.parking_space_id), None), "entry_time": session.entry_time, "duration_minutes": int((pakistan_now() - session.entry_time).total_seconds() // 60)}
+        {"session_id": session.id, "plate": vehicles[session.vehicle_id].license_plate, "level": next((space.level for space in all_spaces if space.id == session.parking_space_id), None), "space": next((space.space_number for space in all_spaces if space.id == session.parking_space_id), None), "entry_time": session.entry_time, "duration_minutes": int((pakistan_now() - session.entry_time).total_seconds() // 60), "whitelisted": vehicles[session.vehicle_id].license_plate in whitelist, "blacklisted": vehicles[session.vehicle_id].license_plate in blacklist}
         for session in sessions if session.status == "active" and session.vehicle_id in vehicles
     ]
     history = [
@@ -316,7 +453,7 @@ def parking_activity(db: Session = Depends(get_db), admin=Depends(current_admin)
         vehicle_sessions = [session for session in sessions if session.vehicle_id == vehicle.id]
         active = next((session for session in vehicle_sessions if session.status == "active"), None)
         completed = [session for session in vehicle_sessions if session.exit_time]
-        vehicle_rows.append({"plate": vehicle.license_plate, "total_visits": len(vehicle_sessions), "last_entry": max((session.entry_time for session in vehicle_sessions), default=None), "last_exit": max((session.exit_time for session in completed), default=None), "currently_parked": bool(active), "whitelisted": vehicle.license_plate in whitelist})
+        vehicle_rows.append({"plate": vehicle.license_plate, "total_visits": len(vehicle_sessions), "last_entry": max((session.entry_time for session in vehicle_sessions), default=None), "last_exit": max((session.exit_time for session in completed), default=None), "currently_parked": bool(active), "whitelisted": vehicle.license_plate in whitelist, "blacklisted": vehicle.license_plate in blacklist})
     return {"live_sessions": live_sessions, "history": history, "space_status": {"total_active_capacity": len(spaces), "occupied": sum(space.is_occupied for space in spaces), "available": sum(not space.is_occupied for space in spaces), "spaces": [{"id": space.id, "level": space.level, "space": space.space_number, "is_occupied": space.is_occupied, "plate": vehicles.get(active_by_space[space.id].vehicle_id).license_plate if space.id in active_by_space and active_by_space[space.id].vehicle_id in vehicles else None} for space in spaces]}, "vehicles": vehicle_rows, "billing_enabled": bool(settings["billing_config"].get("payments_enabled")), "garage_mode": settings["garage_settings"].get("mode", "parking")}
 
 
