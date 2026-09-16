@@ -272,6 +272,16 @@ function FilterIcon() {
     );
 }
 
+function SheetIcon() {
+    return (
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
+            <path d="M14 2v6h6" />
+            <path d="M8 13h8M8 17h8" />
+        </svg>
+    );
+}
+
 function BlackStarIcon() {
     return (
         <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -2225,8 +2235,9 @@ function AdminPage() {
                                 <p className="admin-message">Live parking, recent visits, and active space status.</p>
                                 <button type="button" className="activity-refresh" onClick={loadParkingActivity} disabled={activityLoading} aria-label="Refresh activity"><span className={activityLoading ? "spinning" : ""}>↻</span></button>
 
-                                <div className="activity-filter-control">
-                                    <button type="button" className="activity-filter-button" onClick={() => setActivityFiltersOpen((open) => !open)} aria-expanded={activityFiltersOpen}><FilterIcon /> Filters{activityFilterCount > 0 && <span>{activityFilterCount}</span>}</button>
+                                <div className="activity-toolbar">
+                                    <div className="activity-filter-control">
+                                    <button type="button" className="activity-filter-button" onClick={() => setActivityFiltersOpen((open) => { const next = !open; if (next) setActivityExportOpen(false); return next; })} aria-expanded={activityFiltersOpen}><FilterIcon /> Filters{activityFilterCount > 0 && <span>{activityFilterCount}</span>}</button>
                                     {activityFiltersOpen && <div className="activity-filter-panel">
                                         <label><span>Number plate</span><input value={activityFilterDraft.plate} onChange={(event) => setActivityFilterDraft((current) => ({ ...current, plate: event.target.value }))} placeholder="Search plate" /></label>
                                         <label><span>Date / time</span><select value={activityFilterDraft.dateRange} onChange={(event) => setActivityFilterDraft((current) => ({ ...current, dateRange: event.target.value }))}><option value="all">All time</option><option value="today">Today</option><option value="24h">Last 24 hours</option><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option><option value="custom">Custom range</option></select></label>
@@ -2238,35 +2249,23 @@ function AdminPage() {
                                         <fieldset><legend>Show tables/categories</legend>{ACTIVITY_TABLES.map((table) => <label key={table.id}><input type="checkbox" checked={visibleActivityTables.includes(table.id)} onChange={() => toggleVisibleActivityTable(table.id)} /> {table.label}</label>)}</fieldset>
                                         <div className="activity-filter-actions"><button type="button" onClick={clearActivityFilters}>Clear All</button><button type="button" onClick={applyActivityFilters}>Apply Filters</button></div>
                                     </div>}
-                                </div>
+                                    </div>
 
-                                <div className="level-config-block">
+                                <div className="activity-export-control">
                                     <button
                                         type="button"
-                                        onClick={() => setActivityExportOpen((open) => !open)}
+                                        className="activity-filter-button"
+                                        onClick={() => setActivityExportOpen((open) => { const next = !open; if (next) setActivityFiltersOpen(false); return next; })}
                                         aria-expanded={activityExportOpen}
-                                        style={{
-                                            width: "100%",
-                                            display: "flex",
-                                            alignItems: "center",
-                                            justifyContent: "space-between",
-                                            gap: "12px",
-                                            padding: "12px 14px",
-                                            border: "0",
-                                            background: "transparent",
-                                            cursor: "pointer",
-                                            textAlign: "left",
-                                            font: "inherit",
-                                            color: "inherit",
-                                        }}
                                     >
-                                        <strong>Export parking history</strong>
+                                        <SheetIcon /> Export parking history
                                         <span aria-hidden="true">
                                             {activityExportOpen ? "−" : "+"}
                                         </span>
                                     </button>
 
                                     {activityExportOpen && (
+                                        <div className="activity-filter-panel activity-export-panel">
                                         <>
                                             <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "16px", marginTop: "18px", marginBottom: "32px" }}>
                                                 <label className="level-count-field camera-field-group" style={{ alignItems: "flex-start" }}>
@@ -2355,7 +2354,9 @@ function AdminPage() {
                                                 </button>
                                             </div>
                                         </>
+                                        </div>
                                     )}
+                                </div>
                                 </div>
 
                                 {activityError && <p className="admin-error whitelist-feedback">{activityError}</p>}

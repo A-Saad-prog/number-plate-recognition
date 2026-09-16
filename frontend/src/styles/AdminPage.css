@@ -1554,9 +1554,17 @@ It can make small UI text appear soft/blurry in Chromium.
     animation: refresh-spin .7s linear infinite;
 }
 
-.activity-filter-control {
+.activity-toolbar {
+    align-items: flex-start;
+    display: grid;
+    gap: 8px;
+    grid-template-columns: max-content max-content minmax(0, 1fr);
     margin-top: 16px;
-    position: relative;
+}
+
+.activity-filter-control,
+.activity-export-control {
+    display: contents;
 }
 
 .activity-filter-button,
@@ -1571,6 +1579,10 @@ It can make small UI text appear soft/blurry in Chromium.
     gap: 7px;
     font: 700 12px 'Manrope', sans-serif;
     padding: 9px 12px;
+}
+
+.activity-toolbar .activity-filter-button {
+    grid-row: 1;
 }
 
 .activity-filter-button span {
@@ -1589,9 +1601,13 @@ It can make small UI text appear soft/blurry in Chromium.
     display: grid;
     gap: 14px;
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    grid-column: 1 / -1;
+    grid-row: 2;
     margin-top: 10px;
+    min-width: 0;
     padding: 16px;
     box-shadow: 0 10px 24px rgba(16, 35, 28, .07);
+    width: 100%;
 }
 
 .activity-filter-panel > label,
@@ -1657,6 +1673,67 @@ It can make small UI text appear soft/blurry in Chromium.
     justify-content: flex-end;
     grid-column: 1 / -1;
     padding-top: 2px;
+}
+
+.activity-export-control .activity-filter-button > span {
+    display: none;
+}
+
+.activity-export-panel {
+    align-items: start;
+    grid-template-columns: minmax(180px, 220px) minmax(270px, 340px) minmax(220px, 1fr);
+    min-width: 0;
+}
+
+.activity-export-panel > div:first-child {
+    align-items: stretch !important;
+    background: rgba(255, 255, 255, .65);
+    border: 1px solid #dbe4dc;
+    border-radius: 7px;
+    box-sizing: border-box;
+    grid-column: 1;
+    grid-row: 1;
+    margin: 0 !important;
+    padding: 10px;
+}
+
+.activity-export-panel .level-count-field,
+.activity-export-panel .billing-payment-methods {
+    background: rgba(255, 255, 255, .65);
+    border: 1px solid #dbe4dc;
+    border-radius: 7px;
+    box-sizing: border-box;
+    padding: 10px;
+}
+
+.activity-export-panel .billing-payment-methods {
+    grid-column: 2;
+    grid-row: 1;
+    margin: 0;
+}
+
+.activity-export-panel .payment-options {
+    gap: 8px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.activity-export-panel .payment-option {
+    gap: 8px;
+    min-width: 0;
+    padding: 8px;
+}
+
+.activity-export-panel > .form-hint {
+    align-self: center;
+    grid-column: 3;
+    grid-row: 1;
+    margin: 0;
+}
+
+.activity-export-panel .settings-actions {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    margin: 0;
 }
 
 .activity-filter-actions button:first-child {
@@ -2476,6 +2553,17 @@ It can make small UI text appear soft/blurry in Chromium.
     border-color: rgba(145, 199, 174, .2);
 }
 
+.admin-theme-dark .activity-export-panel .level-count-field,
+.admin-theme-dark .activity-export-panel .billing-payment-methods {
+    background: rgba(16, 35, 28, .6);
+    border-color: rgba(145, 199, 174, .2);
+}
+
+.admin-theme-dark .activity-export-panel > div:first-child {
+    background: rgba(16, 35, 28, .6);
+    border-color: rgba(145, 199, 174, .2);
+}
+
 .admin-theme-dark .activity-filter-panel span,
 .admin-theme-dark .activity-filter-panel legend {
     color: #fff;
@@ -2781,6 +2869,18 @@ It can make small UI text appear soft/blurry in Chromium.
 
     .camera-assignment-status {
         justify-self: start;
+    }
+
+    .activity-export-panel {
+        grid-template-columns: 1fr;
+    }
+
+    .activity-export-panel > div:first-child,
+    .activity-export-panel .billing-payment-methods,
+    .activity-export-panel > .form-hint,
+    .activity-export-panel .settings-actions {
+        grid-column: 1;
+        grid-row: auto;
     }
 }
 
