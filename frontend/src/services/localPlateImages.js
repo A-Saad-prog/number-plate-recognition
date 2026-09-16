@@ -38,10 +38,24 @@ export async function selectPlateImageFolder() {
     return { handle, name: handle.name };
 }
 
+async function clearHandle() {
+    const db = await openDatabase();
+    return new Promise((resolve, reject) => {
+        const request = db.transaction(STORE_NAME, "readwrite").objectStore(STORE_NAME).delete(HANDLE_KEY);
+        request.onsuccess = resolve;
+        request.onerror = () => reject(request.error);
+    });
+}
+
 export async function activatePlateImageFolder(handle) {
     if (!handle) return null;
     await storeHandle(handle);
     return handle.name;
+}
+
+export async function removePlateImageFolder() {
+    if (!localPlateImageSupport()) return;
+    await clearHandle();
 }
 
 export async function savedPlateImageFolderName() {

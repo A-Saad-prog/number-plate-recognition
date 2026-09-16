@@ -1247,6 +1247,32 @@ It can make small UI text appear soft/blurry in Chromium.
     justify-self: start;
 }
 
+.local-image-folder-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.remove-folder-button {
+    background: transparent;
+    border: 1px solid #b43f28;
+    border-radius: 7px;
+    color: #b43f28;
+    cursor: pointer;
+    font: 700 11px 'Manrope', sans-serif;
+    padding: 9px 12px;
+    white-space: nowrap;
+}
+
+.remove-folder-button:hover:not(:disabled) {
+    background: rgba(180, 63, 40, .1);
+}
+
+.remove-folder-button:disabled {
+    cursor: not-allowed;
+    opacity: .5;
+}
+
 .local-image-status {
     color: #587066;
     line-height: 1.6;
@@ -1267,6 +1293,15 @@ It can make small UI text appear soft/blurry in Chromium.
 
     -webkit-font-smoothing: auto;
     text-rendering: optimizeLegibility;
+}
+
+.local-image-status small:not(:has(strong)) {
+    display: none;
+}
+
+.local-image-status small + small {
+    color: #b99000;
+    display: block;
 }
 
 
@@ -2312,6 +2347,19 @@ It can make small UI text appear soft/blurry in Chromium.
 
 .admin-theme-dark .local-image-status {
     color: #afc1b5;
+}
+
+.admin-theme-dark .local-image-status small + small {
+    color: #f5c542;
+}
+
+.admin-theme-dark .remove-folder-button {
+    border-color: #ff8a78;
+    color: #ff8a78;
+}
+
+.admin-theme-dark .remove-folder-button:hover:not(:disabled) {
+    background: rgba(180, 63, 40, .22);
 }
 
 .admin-theme-dark .activity-table-section p {

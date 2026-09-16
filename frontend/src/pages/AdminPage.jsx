@@ -43,7 +43,7 @@ import {
 } from "../services/parkingActivityExport";
 
 import "../styles/AdminPage.css";
-import { activatePlateImageFolder, localPlateImageSupport, savedPlateImageFolderName, selectPlateImageFolder } from "../services/localPlateImages";
+import { activatePlateImageFolder, localPlateImageSupport, removePlateImageFolder, savedPlateImageFolderName, selectPlateImageFolder } from "../services/localPlateImages";
 import AdminTour from "../components/AdminTour";
 import { ADMIN_TOUR_STEPS } from "../config/adminTourSteps";
 
@@ -983,8 +983,8 @@ function AdminPage() {
     }
 
     async function chooseLocalImageFolder() {
-        try { const folder = await selectPlateImageFolder(); if (folder.name === localImageFolder) { setPendingLocalImageFolder(null); setLocalImageStatus("Selected folder is already active."); return; } setPendingLocalImageFolder(folder); setLocalImageStatus(`New folder selected: ${folder.name}. Apply settings to activate it.`); }
-        catch (error) { setLocalImageStatus(error?.message || "Folder selection was cancelled."); }
+        try { const folder = await selectPlateImageFolder(); if (folder.name === localImageFolder) { setPendingLocalImageFolder(null); setLocalImageStatus(""); return; } setPendingLocalImageFolder(folder); setLocalImageStatus(`Selected folder: ${folder.name}. Apply settings to activate it.`); }
+        catch { }
     }
 
     async function removeLiveSession(sessionId) {
@@ -1022,6 +1022,15 @@ function AdminPage() {
 
     async function editListEntry(kind, entry) {
         openListEditor(kind, [entry]);
+    }
+
+    async function clearLocalImageFolder() {
+        try {
+            await removePlateImageFolder();
+            setLocalImageFolder("");
+            setPendingLocalImageFolder(null);
+            setLocalImageStatus("");
+        } catch { setLocalImageStatus(""); }
     }
 
     function toggleListMenu(kind, entry, trigger) {
@@ -1248,6 +1257,7 @@ function AdminPage() {
     }
 
     async function loadAnalytics(period = analyticsPeriod) {
+        setActivityError("");
         try { setAnalytics(await getAnalytics(token, period)); }
         catch (err) { setActivityError(err.message || "Unable to load analytics."); }
     }
@@ -1862,6 +1872,11 @@ function AdminPage() {
         if (garageSettings.mode === "tracking") {
             setGarageErrors({ levels: "", spaces_per_level: "" });
             setLevelErrors({});
+            if (garageSettings.local_image_saving && !localImageFolder && !pendingLocalImageFolder) {
+                setGarageSettingsMessageType("warning");
+                setGarageSettingsMessage("Select a folder before enabling local plate images.");
+                return;
+            }
             openSettingsConfirmation("garage");
             return;
         }
@@ -1905,6 +1920,11 @@ function AdminPage() {
 
         setGarageSettingsMessageType("success");
         setGarageSettingsMessage("");
+        if (garageSettings.local_image_saving && !localImageFolder && !pendingLocalImageFolder) {
+            setGarageSettingsMessageType("warning");
+            setGarageSettingsMessage("Select a folder before enabling local plate images.");
+            return;
+        }
         openSettingsConfirmation("garage");
     }
 
@@ -1929,6 +1949,7 @@ function AdminPage() {
                 if (pendingLocalImageFolder) {
                     setLocalImageFolder(await activatePlateImageFolder(pendingLocalImageFolder.handle));
                     setPendingLocalImageFolder(null);
+                    setLocalImageStatus("");
                 }
                 const normalizedSaved = {
                     mode: "tracking",
@@ -2004,6 +2025,7 @@ function AdminPage() {
             if (pendingLocalImageFolder) {
                 setLocalImageFolder(await activatePlateImageFolder(pendingLocalImageFolder.handle));
                 setPendingLocalImageFolder(null);
+                setLocalImageStatus("");
             }
             setSavedGarageSettings({
                 mode: savedSettings.mode || "parking",
@@ -2208,6 +2230,7 @@ function AdminPage() {
                         ) : activeFeature === "analytics" ? (
                             <div className="feature-view" data-tour="analytics-panel">
                                 <h1>Garage<br /><span>analytics.</span></h1>
+                                {activityError && <p className="admin-error whitelist-feedback">{activityError}</p>}
                                 {analytics ? (
                                     <>
                                         <div className="analytics-grid">
@@ -2316,7 +2339,7 @@ function AdminPage() {
                                                     </small>
                                                 </label>
                                             </div>
-                                            <div className="local-image-setting"><label><span>Enable Local Plate Images</span><input type="checkbox" checked={Boolean(garageSettings.local_image_saving)} onChange={(event) => setGarageSettings((current) => ({ ...current, local_image_saving: event.target.checked }))} /></label><button type="button" className="camera-refresh-button" onClick={chooseLocalImageFolder}>Select Folder</button><div className="local-image-status"><small>{localImageFolder ? <>Selected folder: <strong>{localImageFolder}</strong><br />Saving structure: {localImageFolder} / YYYY-MM-DD / Entry | Exit</> : localPlateImageSupport() ? "No local folder selected." : "Local folder saving requires Chromium."}</small>{localImageStatus && <small>{localImageStatus}</small>}</div></div>
+                                            <div className="local-image-setting"><label><span>Enable Local Plate Images</span><input type="checkbox" checked={Boolean(garageSettings.local_image_saving)} onChange={(event) => setGarageSettings((current) => ({ ...current, local_image_saving: event.target.checked }))} /></label><div className="local-image-folder-actions"><button type="button" className="camera-refresh-button" onClick={chooseLocalImageFolder}>Select Folder</button><button type="button" className="remove-folder-button" onClick={clearLocalImageFolder} disabled={!localImageFolder && !pendingLocalImageFolder} aria-label="Remove selected folder">× Remove Folder</button></div><div className="local-image-status"><small>{localImageFolder ? <>Selected folder: <strong>{localImageFolder}</strong><br />Saving structure: {localImageFolder} / YYYY-MM-DD / Entry | Exit</> : localPlateImageSupport() ? "No local folder selected." : "Local folder saving requires Chromium."}</small>{localImageStatus && <small>{localImageStatus}</small>}</div></div>
                                         </div>
 
                                         {advancedGarageSettings && (
@@ -2357,7 +2380,7 @@ function AdminPage() {
                                             </div>
                                         )}
 
-                                    </>}{garageSettings.mode === "tracking" && <div className="local-image-setting"><label><span>Enable Local Plate Images</span><input type="checkbox" checked={Boolean(garageSettings.local_image_saving)} onChange={(event) => setGarageSettings((current) => ({ ...current, local_image_saving: event.target.checked }))} /></label><button type="button" className="camera-refresh-button" onClick={chooseLocalImageFolder}>Select Folder</button><div className="local-image-status"><small>{localImageFolder ? <>Selected folder: <strong>{localImageFolder}</strong><br />Saving structure: {localImageFolder} / YYYY-MM-DD / Entry | Exit</> : localPlateImageSupport() ? "No local folder selected." : "Local folder saving requires Chromium."}</small>{localImageStatus && <small>{localImageStatus}</small>}</div></div>}{garageSettingsMessage && (
+                                    </>}{garageSettings.mode === "tracking" && <div className="local-image-setting"><label><span>Enable Local Plate Images</span><input type="checkbox" checked={Boolean(garageSettings.local_image_saving)} onChange={(event) => setGarageSettings((current) => ({ ...current, local_image_saving: event.target.checked }))} /></label><div className="local-image-folder-actions"><button type="button" className="camera-refresh-button" onClick={chooseLocalImageFolder}>Select Folder</button><button type="button" className="remove-folder-button" onClick={clearLocalImageFolder} disabled={!localImageFolder && !pendingLocalImageFolder} aria-label="Remove selected folder">× Remove Folder</button></div><div className="local-image-status"><small>{localImageFolder ? <>Selected folder: <strong>{localImageFolder}</strong><br />Saving structure: {localImageFolder} / YYYY-MM-DD / Entry | Exit</> : localPlateImageSupport() ? "No local folder selected." : "Local folder saving requires Chromium."}</small>{localImageStatus && <small>{localImageStatus}</small>}</div></div>}{garageSettingsMessage && (
                                         <p className={garageSettingsMessageType === "warning" ? "admin-error whitelist-feedback" : "whitelist-success"}>{garageSettingsMessage}</p>
                                     )}
 
