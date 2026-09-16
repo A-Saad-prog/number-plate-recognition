@@ -2500,12 +2500,32 @@ function GaragePage() {
     // same VehicleInformation component and renderCameraVehicleAction
     // handlers/markup that used to sit directly under each camera card --
     // only the container it's placed in has changed.
+    function dismissCameraReceipt(slot) {
+        if (slot.receipt) {
+            setExternalReceipts((current) => current.filter((item) => item.id !== slot.receipt.session_id));
+            return;
+        }
+        updateCameraVehicleState(slot.id, {
+            plate: null,
+            action: null,
+            loading: false,
+            error: "",
+            selectedSpaceId: null,
+            entryResult: null,
+            exitResult: null,
+            paymentRequired: false,
+            paymentMethod: null,
+            ratePerMinute: null,
+        });
+    }
+
     function renderCameraReceipt(slot) {
         const vehicleState = slot.receipt
             ? { ...(slot.lane === "Exit" ? { exitResult: slot.receipt } : { entryResult: slot.receipt }) }
             : cameraVehicleState[slot.id] || {};
         return (
             <div className={`mini-receipt ${slot.lane === "Entry" ? "entry-receipt" : "exit-receipt"}`} key={slot.id}>
+                <button type="button" className="mini-receipt-dismiss" onClick={() => dismissCameraReceipt(slot)} aria-label="Dismiss receipt">×</button>
                 <div className="mini-receipt-source">{slot.label}</div>
                 <VehicleInformation
                     exitResult={vehicleState.exitResult}

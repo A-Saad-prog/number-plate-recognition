@@ -2678,6 +2678,33 @@ body {
     background: var(--garage-bg);
     border-radius: 6px;
     padding: calc(var(--gu) * 0.625);
+    position: relative;
+}
+
+.app .mini-receipt-dismiss {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: 4px;
+    color: var(--garage-muted);
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 16px;
+    height: 20px;
+    justify-content: center;
+    line-height: 1;
+    padding: 0;
+    position: absolute;
+    right: calc(var(--gu) * 0.5);
+    top: calc(var(--gu) * 0.5);
+    width: 20px;
+}
+
+.app .mini-receipt-dismiss:hover,
+.app .mini-receipt-dismiss:focus-visible {
+    background: rgba(224, 91, 53, .12);
+    color: #e05b35;
+    outline: none;
 }
 
 .app .mini-receipt-source {
