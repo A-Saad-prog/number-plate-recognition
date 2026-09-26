@@ -1,18 +1,23 @@
 import logging
+import re
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database.database import get_db
 from app.models.admin_password_recovery import AdminPasswordRecovery
+from app.models.admin_user import AdminUser
 from app.services.auth_service import get_current_admin
 from app.services.email_service import EmailNotConfiguredError, send_security_code
 from app.services.recovery_service import (
     OTP_TTL_MINUTES,
     PURPOSE_EMAIL_VERIFICATION,
     CooldownActiveError,
+    invalidate_all_for_admin,
     start_challenge,
     verify_email_otp,
 )
@@ -24,6 +29,7 @@ from app.services.totp_service import (
     generate_totp_secret,
     verify_totp_code,
 )
+from app.services.mfa_recovery_service import generate_recovery_codes
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +49,10 @@ class EmailOtpVerifyRequest(BaseModel):
     code: str = Field(min_length=1, max_length=12)
 
 
+class EmailAssignmentRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+
+
 class TotpConfirmRequest(BaseModel):
     code: str = Field(min_length=1, max_length=12)
 
@@ -54,6 +64,43 @@ def security_status(admin=Depends(current_admin)):
         "email_verified": bool(admin.email_verified),
         "totp_enabled": bool(admin.totp_enabled),
     }
+
+
+@router.patch("/email")
+def assign_admin_email(
+    request: EmailAssignmentRequest,
+    db: Session = Depends(get_db),
+    admin=Depends(current_admin),
+):
+    email = request.email.strip().lower()
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+        raise HTTPException(status_code=422, detail="Enter a valid email address.")
+
+    owner = (
+        db.query(AdminUser)
+        .filter(func.lower(AdminUser.email) == email, AdminUser.id != admin.id)
+        .first()
+    )
+    if owner:
+        raise HTTPException(status_code=409, detail="That email is already in use.")
+
+    if admin.email == email:
+        return {
+            "success": True,
+            "email": admin.email,
+            "email_verified": bool(admin.email_verified),
+        }
+
+    admin.email = email
+    admin.email_verified = False
+    invalidate_all_for_admin(db, admin.id, PURPOSE_EMAIL_VERIFICATION, commit=False)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="That email is already in use.") from None
+
+    return {"success": True, "email": admin.email, "email_verified": False}
 
 
 @router.post("/email/send-verification")
@@ -130,6 +177,8 @@ def setup_totp(
     db: Session = Depends(get_db),
     admin=Depends(current_admin),
 ):
+    if admin.totp_enabled:
+        raise HTTPException(status_code=400, detail="Authenticator is already enabled.")
     if not admin.email_verified:
         raise HTTPException(
             status_code=400,
@@ -165,6 +214,9 @@ def confirm_totp(
 ):
     invalid = HTTPException(status_code=400, detail="Invalid or expired verification code.")
 
+    if admin.totp_enabled:
+        raise HTTPException(status_code=400, detail="Authenticator is already enabled.")
+
     if not admin.totp_secret_encrypted:
         raise HTTPException(
             status_code=400,
@@ -184,6 +236,11 @@ def confirm_totp(
         raise invalid
 
     admin.totp_enabled = True
+    recovery_codes = generate_recovery_codes(db, admin.id)
     db.commit()
 
-    return {"success": True}
+    return {
+        "success": True,
+        "recovery_codes": recovery_codes,
+        "recovery_codes_message": "Save these recovery codes somewhere safe. Each code can only be used once.",
+    }

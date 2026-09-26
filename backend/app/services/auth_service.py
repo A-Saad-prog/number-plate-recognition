@@ -13,6 +13,7 @@ from app.models.tenant import Tenant
 
 password_hash = PasswordHash.recommended()
 ADMIN_SESSION_MINUTES = max(5, int(os.getenv("ADMIN_SESSION_MINUTES", "480")))
+LOGIN_CHALLENGE_MINUTES = 5
 
 
 def find_admin_by_identifier(db: Session, identifier: str) -> AdminUser | None:
@@ -42,6 +43,7 @@ def create_access_token(admin: AdminUser) -> str:
 
     now = datetime.now(timezone.utc)
     payload = {
+        "type": "access",
         "sub": str(admin.id),
         "username": admin.username,
         "sv": admin.session_version,
@@ -49,6 +51,37 @@ def create_access_token(admin: AdminUser) -> str:
         "exp": now + timedelta(minutes=ADMIN_SESSION_MINUTES),
     }
     return jwt.encode(payload, secret, algorithm="HS256")
+
+
+def create_login_challenge(admin: AdminUser, challenge_id: str) -> str:
+    """Create a purpose-restricted token that cannot authenticate API requests."""
+    secret = os.getenv("JWT_SECRET_KEY")
+    if not secret:
+        raise RuntimeError("JWT_SECRET_KEY is not set")
+
+    now = datetime.now(timezone.utc)
+    payload = {
+        "type": "2fa_login",
+        "purpose": "2fa_login",
+        "jti": challenge_id,
+        "sub": str(admin.id),
+        "sv": admin.session_version,
+        "iat": now,
+        "exp": now + timedelta(minutes=LOGIN_CHALLENGE_MINUTES),
+    }
+    return jwt.encode(payload, secret, algorithm="HS256")
+
+
+def decode_login_challenge(token: str) -> dict:
+    secret = os.getenv("JWT_SECRET_KEY")
+    if not secret or not token:
+        raise ValueError("Invalid login challenge")
+    payload = jwt.decode(token, secret, algorithms=["HS256"])
+    if payload.get("type") != "2fa_login" or payload.get("purpose") != "2fa_login":
+        raise ValueError("Invalid login challenge")
+    if not payload.get("jti") or not payload.get("sub") or "sv" not in payload:
+        raise ValueError("Invalid login challenge")
+    return payload
 
 
 def get_current_admin(token: str | None, db: Session) -> AdminUser:
@@ -64,6 +97,8 @@ def get_current_admin(token: str | None, db: Session) -> AdminUser:
 
     try:
         payload = jwt.decode(token, secret, algorithms=["HS256"])
+        if payload.get("type") == "2fa_login" or payload.get("purpose") == "2fa_login":
+            raise jwt.InvalidTokenError("A login challenge is not an access token")
         admin_id = int(payload["sub"])
     except (jwt.InvalidTokenError, KeyError, TypeError, ValueError):
         raise unauthorized from None

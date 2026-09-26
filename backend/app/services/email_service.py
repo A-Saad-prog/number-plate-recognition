@@ -12,7 +12,7 @@ class EmailNotConfiguredError(RuntimeError):
 
 _SUBJECTS = {
     "email_verification": "Verify your Parking Garage admin email",
-    "password_recovery": "Your Parking Garage password recovery code",
+    "password_recovery": "ParkingOS Password Reset Code",
 }
 
 _REASONS = {
@@ -58,11 +58,11 @@ def send_security_code(recipient: str, code: str, purpose: str, expires_in_minut
 
     if dev_show_otp:
         logger.warning(
-            "[AUTH_DEV_SHOW_OTP] %s code for %s: %s (expires in %sm). "
+            "[DEV SECURITY WARNING] Email OTP for %s: %s (purpose=%s, expires in %sm). "
             "This flag must never be enabled in production.",
-            purpose,
             recipient,
             code,
+            purpose,
             expires_in_minutes,
         )
 
@@ -79,12 +79,23 @@ def send_security_code(recipient: str, code: str, purpose: str, expires_in_minut
     subject = _SUBJECTS.get(purpose, "Your Parking Garage security code")
     reason = _REASONS.get(purpose, "verify this request")
 
-    body = (
-        f"Your security code is: {code}\n\n"
-        f"This code expires in {expires_in_minutes} minutes and is needed to {reason}.\n\n"
-        "If you did not request this, you can safely ignore this email -- "
-        "no changes will be made to your account."
-    )
+    if purpose == "password_recovery":
+        body = (
+            "ParkingOS\n\n"
+            "Password Reset\n\n"
+            "We received a request to reset the password for your ParkingOS account.\n\n"
+            "Your verification code is:\n\n"
+            f"{code}\n\n"
+            f"This code expires in {expires_in_minutes} minutes.\n\n"
+            "If you did not request a password reset, you can ignore this email."
+        )
+    else:
+        body = (
+            f"Your security code is: {code}\n\n"
+            f"This code expires in {expires_in_minutes} minutes and is needed to {reason}.\n\n"
+            "If you did not request this, you can safely ignore this email -- "
+            "no changes will be made to your account."
+        )
 
     message = EmailMessage()
     message["Subject"] = subject

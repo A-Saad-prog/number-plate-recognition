@@ -10,6 +10,8 @@ import {
     getAnalytics,
     getWhitelist,
     loginAdmin,
+    verifyAdminLoginTotp,
+    verifyAdminLoginRecoveryCode,
     removeWhitelistEntry,
     getBlacklist,
     updateWhitelistEntry,
@@ -25,13 +27,13 @@ import {
     removeParkingSession,
     updateParkingVehicle,
     getAdminSecurityStatus,
+    assignAdminEmail,
     sendAdminEmailVerification,
     verifyAdminEmail,
     setupAdminTotp,
     confirmAdminTotp,
     requestPasswordRecovery,
     verifyRecoveryEmail,
-    verifyRecoveryTotp,
     resetAdminPassword,
     completeAdminOnboarding,
     registerEntry,
@@ -331,18 +333,22 @@ function AdminPage() {
     const isUrdu = language === "ur";
     const [identifier, setIdentifier] = useState("");
     const [password, setPassword] = useState("");
+    const [twoFactorChallenge, setTwoFactorChallenge] = useState("");
+    const [twoFactorMode, setTwoFactorMode] = useState("totp");
+    const [twoFactorCode, setTwoFactorCode] = useState("");
+    const [twoFactorSubmitting, setTwoFactorSubmitting] = useState(false);
+    const [twoFactorError, setTwoFactorError] = useState("");
     const [showPassword, setShowPassword] = useState(false);
     const [forgotPasswordOpen, setForgotPasswordOpen] = useState(false);
     const [forgotNotice, setForgotNotice] = useState("");
 
     // Forgot-password state machine: forgot_identifier -> forgot_email_code
-    // -> forgot_totp -> forgot_new_password -> forgot_success.
+    // -> forgot_new_password -> forgot_success.
     const [forgotStep, setForgotStep] = useState("forgot_identifier");
     const [forgotError, setForgotError] = useState("");
     const [forgotSubmitting, setForgotSubmitting] = useState(false);
     const [recoveryChallengeToken, setRecoveryChallengeToken] = useState("");
     const [recoveryEmailCode, setRecoveryEmailCode] = useState("");
-    const [recoveryTotpCode, setRecoveryTotpCode] = useState("");
     const [recoveryResetToken, setRecoveryResetToken] = useState("");
     const [recoveryNewPassword, setRecoveryNewPassword] = useState("");
     const [recoveryConfirmPassword, setRecoveryConfirmPassword] = useState("");
@@ -355,10 +361,12 @@ function AdminPage() {
     const [securityLoading, setSecurityLoading] = useState(false);
     const [securityError, setSecurityError] = useState("");
     const [securityMessage, setSecurityMessage] = useState("");
+    const [securityEmail, setSecurityEmail] = useState("");
     const [securityEmailCodeSent, setSecurityEmailCodeSent] = useState(false);
     const [securityEmailCode, setSecurityEmailCode] = useState("");
     const [securityTotpSetup, setSecurityTotpSetup] = useState(null);
     const [securityTotpCode, setSecurityTotpCode] = useState("");
+    const [securityRecoveryCodes, setSecurityRecoveryCodes] = useState([]);
     const [adminName, setAdminName] = useState("");
     const [onboardingCompleted, setOnboardingCompleted] = useState(true);
     const [tourOpen, setTourOpen] = useState(false);
@@ -694,6 +702,14 @@ function AdminPage() {
         setError("");
         try {
             const result = await loginAdmin(identifier, password);
+            if (result.requires_2fa) {
+                setTwoFactorChallenge(result.challenge_token || "");
+                setTwoFactorMode("totp");
+                setTwoFactorCode("");
+                setTwoFactorError("");
+                setPassword("");
+                return;
+            }
             localStorage.setItem(TOKEN_KEY, result.access_token);
             sessionStorage.removeItem(TOKEN_KEY);
             setToken(result.access_token);
@@ -713,7 +729,6 @@ function AdminPage() {
         setForgotSubmitting(false);
         setRecoveryChallengeToken("");
         setRecoveryEmailCode("");
-        setRecoveryTotpCode("");
         setRecoveryResetToken("");
         setRecoveryNewPassword("");
         setRecoveryConfirmPassword("");
@@ -752,25 +767,10 @@ function AdminPage() {
         setForgotSubmitting(true);
         setForgotError("");
         try {
-            await verifyRecoveryEmail(recoveryChallengeToken, recoveryEmailCode.trim());
+            const result = await verifyRecoveryEmail(recoveryChallengeToken, recoveryEmailCode.trim());
             setForgotNotice("");
             setRecoveryEmailCode("");
-            setForgotStep("forgot_totp");
-        } catch (error) {
-            setForgotError(error.message || "Invalid or expired verification code.");
-        } finally {
-            setForgotSubmitting(false);
-        }
-    }
-
-    async function handleRecoveryTotpSubmit(event) {
-        event.preventDefault();
-        setForgotSubmitting(true);
-        setForgotError("");
-        try {
-            const result = await verifyRecoveryTotp(recoveryChallengeToken, recoveryTotpCode.trim());
             setRecoveryResetToken(result.reset_token || "");
-            setRecoveryTotpCode("");
             setForgotStep("forgot_new_password");
         } catch (error) {
             setForgotError(error.message || "Invalid or expired verification code.");
@@ -798,7 +798,6 @@ function AdminPage() {
             // Clear every recovery secret from memory now that it's been used.
             setRecoveryChallengeToken("");
             setRecoveryEmailCode("");
-            setRecoveryTotpCode("");
             setRecoveryResetToken("");
             setRecoveryNewPassword("");
             setRecoveryConfirmPassword("");
@@ -823,6 +822,7 @@ function AdminPage() {
         setSecurityEmailCode("");
         setSecurityTotpSetup(null);
         setSecurityTotpCode("");
+        setSecurityRecoveryCodes([]);
         setSecurityError("");
         setSecurityMessage("");
     }
@@ -834,6 +834,7 @@ function AdminPage() {
         try {
             const result = await getAdminSecurityStatus(token);
             setSecurityStatus(result);
+            setSecurityEmail(result.email || "");
         } catch (error) {
             setSecurityError(error.message || t.requestFailed);
         } finally {
@@ -849,6 +850,7 @@ function AdminPage() {
         setSecurityEmailCode("");
         setSecurityTotpSetup(null);
         setSecurityTotpCode("");
+        setSecurityRecoveryCodes([]);
         setSecurityModalOpen(true);
         void loadSecurityStatus();
     }
@@ -867,6 +869,64 @@ function AdminPage() {
             setSecurityEmailCodeSent(true);
         } catch (error) {
             setSecurityError(error.message || t.requestFailed);
+        } finally {
+            setSecurityLoading(false);
+        }
+    }
+
+    async function handleTwoFactorSubmit(event) {
+        event.preventDefault();
+        const code = twoFactorCode.trim();
+        const validLength = twoFactorMode === "totp" ? /^\d{6}$/.test(code) : code.length >= 8;
+        if (!validLength) {
+            setTwoFactorError("Enter a valid authentication code.");
+            return;
+        }
+        setTwoFactorSubmitting(true);
+        setTwoFactorError("");
+        try {
+            const result = twoFactorMode === "totp"
+                ? await verifyAdminLoginTotp(twoFactorChallenge, code)
+                : await verifyAdminLoginRecoveryCode(twoFactorChallenge, code);
+            localStorage.setItem(TOKEN_KEY, result.access_token);
+            sessionStorage.removeItem(TOKEN_KEY);
+            setToken(result.access_token);
+            setAdminName(identifier.trim());
+            setTwoFactorChallenge("");
+            setTwoFactorCode("");
+        } catch (error) {
+            if (error.status === 410) {
+                backToPasswordLogin();
+                setError("Your authentication challenge expired. Please sign in again.");
+            } else {
+                setTwoFactorError("Invalid or expired authentication challenge.");
+            }
+        } finally {
+            setTwoFactorSubmitting(false);
+        }
+    }
+
+    function backToPasswordLogin() {
+        setTwoFactorChallenge("");
+        setTwoFactorCode("");
+        setTwoFactorError("");
+        setTwoFactorMode("totp");
+    }
+
+    async function handleAssignEmail(event) {
+        event.preventDefault();
+        setSecurityLoading(true);
+        setSecurityError("");
+        setSecurityMessage("");
+        try {
+            const result = await assignAdminEmail(token, securityEmail);
+            setSecurityEmail(result.email || securityEmail.trim().toLowerCase());
+            setSecurityEmailCodeSent(false);
+            setSecurityEmailCode("");
+            setSecurityMessage("Email saved. Send a verification code to confirm it.");
+            await loadSecurityStatus();
+        } catch (error) {
+            setSecurityError(error.message || "Unable to save email.");
         } finally {
             setSecurityLoading(false);
         }
@@ -908,7 +968,8 @@ function AdminPage() {
         setSecurityLoading(true);
         setSecurityError("");
         try {
-            await confirmAdminTotp(token, securityTotpCode.trim());
+            const result = await confirmAdminTotp(token, securityTotpCode.trim());
+            setSecurityRecoveryCodes(result.recovery_codes || []);
             setSecurityTotpCode("");
             setSecurityTotpSetup(null);
             setSecurityMessage("Authenticator enabled.");
@@ -2768,12 +2829,25 @@ function AdminPage() {
                                         </p>
 
                                         {!securityStatus.email_verified && !securityStatus.email && (
-                                            <p className="admin-message">Add an email to your admin account before it can be verified.</p>
+                                            <form onSubmit={handleAssignEmail}>
+                                                <label htmlFor="security-email-address">Email address</label>
+                                                <input
+                                                    id="security-email-address"
+                                                    type="email"
+                                                    value={securityEmail}
+                                                    onChange={(event) => setSecurityEmail(event.target.value)}
+                                                    autoComplete="email"
+                                                    required
+                                                />
+                                                <button type="submit" className="confirmation-confirm" disabled={securityLoading}>
+                                                    Save email
+                                                </button>
+                                            </form>
                                         )}
 
                                         {!securityStatus.email_verified && securityStatus.email && !securityEmailCodeSent && (
                                             <button type="button" className="confirmation-confirm" onClick={handleSendEmailVerification} disabled={securityLoading}>
-                                                Verify email
+                                                Send verification code
                                             </button>
                                         )}
 
@@ -2812,6 +2886,13 @@ function AdminPage() {
                                                     <input id="security-totp-code" value={securityTotpCode} onChange={(event) => setSecurityTotpCode(event.target.value)} autoComplete="one-time-code" required />
                                                     <button type="submit" className="confirmation-confirm" disabled={securityLoading}>Confirm authenticator</button>
                                                 </form>
+                                            </div>
+                                        )}
+
+                                        {securityRecoveryCodes.length > 0 && (
+                                            <div className="admin-message">
+                                                <strong>Save these recovery codes somewhere safe. Each code can only be used once.</strong>
+                                                <p><code>{securityRecoveryCodes.join("\n")}</code></p>
                                             </div>
                                         )}
                                     </>
@@ -2886,20 +2967,6 @@ function AdminPage() {
                                 </>
                             )}
 
-                            {forgotStep === "forgot_totp" && (
-                                <>
-                                    <p className="admin-label">Authenticator verification</p>
-                                    <h2>Enter the 6-digit code from Google Authenticator.</h2>
-                                    <form onSubmit={handleRecoveryTotpSubmit}>
-                                        <label htmlFor="admin-recovery-totp-code">Code</label>
-                                        <input id="admin-recovery-totp-code" value={recoveryTotpCode} onChange={(event) => setRecoveryTotpCode(event.target.value)} autoComplete="one-time-code" inputMode="numeric" required />
-                                        {forgotError && <p className="admin-error" role="alert">{forgotError}</p>}
-                                        <button type="submit" disabled={forgotSubmitting}>{forgotSubmitting ? "Verifying..." : "Verify"}<span>→</span></button>
-                                    </form>
-                                    <button type="button" className="admin-forgot-link" onClick={closeForgotPassword}>{t.backToSignIn}</button>
-                                </>
-                            )}
-
                             {forgotStep === "forgot_new_password" && (
                                 <>
                                     <p className="admin-label">{t.forgotPassword}</p>
@@ -2933,6 +3000,30 @@ function AdminPage() {
                                     <button type="button" onClick={closeForgotPassword}>{t.backToSignIn}<span>→</span></button>
                                 </>
                             )}
+                        </>
+                    ) : twoFactorChallenge ? (
+                        <>
+                            <p className="admin-label">Security</p>
+                            <h2>Two-factor authentication</h2>
+                            <p>Enter the 6-digit code from your authenticator app.</p>
+                            <form onSubmit={handleTwoFactorSubmit}>
+                                <label htmlFor="admin-two-factor-code">{twoFactorMode === "totp" ? "Authentication code" : "Recovery code"}</label>
+                                <input
+                                    id="admin-two-factor-code"
+                                    value={twoFactorCode}
+                                    onChange={(event) => setTwoFactorCode(event.target.value)}
+                                    autoComplete="one-time-code"
+                                    inputMode={twoFactorMode === "totp" ? "numeric" : "text"}
+                                    maxLength={twoFactorMode === "totp" ? 6 : 14}
+                                    autoFocus
+                                    required
+                                />
+                                {twoFactorError && <p className="admin-error" role="alert">{twoFactorError}</p>}
+                                <button type="submit" disabled={twoFactorSubmitting}>{twoFactorSubmitting ? "Verifying..." : "Verify"}<span>→</span></button>
+                            </form>
+                            {twoFactorMode === "totp" && <button type="button" className="admin-forgot-link" onClick={() => { setTwoFactorMode("recovery"); setTwoFactorCode(""); setTwoFactorError(""); }}>Use a recovery code</button>}
+                            {twoFactorMode === "recovery" && <button type="button" className="admin-forgot-link" onClick={() => { setTwoFactorMode("totp"); setTwoFactorCode(""); setTwoFactorError(""); }}>Use authenticator code</button>}
+                            <button type="button" className="admin-forgot-link" onClick={backToPasswordLogin}>Back to login</button>
                         </>
                     ) : (
                         <>

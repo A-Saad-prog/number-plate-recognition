@@ -3,6 +3,7 @@ from app.models.parking_space import ParkingSpace
 from app.models.parking_session import ParkingSession
 from app.models.admin_user import AdminUser
 from app.models.admin_password_recovery import AdminPasswordRecovery
+from app.models.admin_mfa_recovery_code import AdminMfaRecoveryCode
 from app.models.whitelist_entry import WhitelistEntry
 from app.models.blacklist_entry import BlacklistEntry
 from app.models.admin_settings import AdminSettings

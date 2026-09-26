@@ -4,15 +4,25 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 from sqlalchemy import Integer, func
 from datetime import timedelta
+from uuid import uuid4
+import jwt
 
 from app.database.database import get_db
 from app.models.whitelist_entry import WhitelistEntry
 from app.models.blacklist_entry import BlacklistEntry
 from app.services.auth_service import (
     authenticate_admin,
+    create_login_challenge,
     create_access_token,
+    decode_login_challenge,
     get_current_admin,
+    LOGIN_CHALLENGE_MINUTES,
 )
+from app.models.admin_password_recovery import AdminPasswordRecovery
+from app.models.tenant import Tenant
+from app.services.mfa_recovery_service import consume_recovery_code
+from app.services.totp_service import TotpEncryptionNotConfiguredError, verify_totp_code
+from app.services.time_service import pakistan_now
 from app.services.settings_service import get_admin_settings, settings_response
 from app.services.garage_service import sync_parking_spaces
 from app.models.parking_session import ParkingSession
@@ -34,6 +44,11 @@ MAX_TOTAL_PARKING_SPACES = 1000
 class AdminLoginRequest(BaseModel):
     username: str = Field(min_length=1, max_length=80)
     password: str = Field(min_length=1, max_length=128)
+
+
+class AdminTwoFactorRequest(BaseModel):
+    challenge_token: str = Field(min_length=1, max_length=2048)
+    code: str = Field(min_length=1, max_length=12)
 
 
 class WhitelistCreateRequest(BaseModel):
@@ -164,7 +179,95 @@ def admin_login(request: AdminLoginRequest, db: Session = Depends(get_db)):
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    if not admin.totp_enabled:
+        return {"access_token": create_access_token(admin), "token_type": "bearer"}
+
+    challenge_id = uuid4().hex
+    challenge = AdminPasswordRecovery(
+        admin_user_id=admin.id,
+        purpose="2fa_login",
+        challenge_token=challenge_id,
+        expires_at=pakistan_now() + timedelta(minutes=LOGIN_CHALLENGE_MINUTES),
+    )
+    db.add(challenge)
+    db.commit()
+    return {
+        "requires_2fa": True,
+        "challenge_token": create_login_challenge(admin, challenge_id),
+        "expires_in": LOGIN_CHALLENGE_MINUTES * 60,
+    }
+
+
+def _load_login_challenge(db: Session, token: str):
+    invalid = HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired authentication challenge.")
+    try:
+        payload = decode_login_challenge(token)
+        admin_id = int(payload["sub"])
+        challenge_id = payload["jti"]
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail="Invalid or expired authentication challenge.") from None
+    except Exception:
+        raise invalid from None
+
+    challenge = (
+        db.query(AdminPasswordRecovery)
+        .filter(
+            AdminPasswordRecovery.admin_user_id == admin_id,
+            AdminPasswordRecovery.purpose == "2fa_login",
+            AdminPasswordRecovery.challenge_token == challenge_id,
+            AdminPasswordRecovery.used_at.is_(None),
+        )
+        .with_for_update()
+        .first()
+    )
+    admin = db.get(AdminUser, admin_id)
+    tenant = db.get(Tenant, admin.tenant_id) if admin else None
+    if (
+        not challenge
+        or not admin
+        or not tenant
+        or not tenant.is_active
+        or challenge.expires_at < pakistan_now()
+        or payload.get("sv") != admin.session_version
+        or not admin.totp_enabled
+        or not admin.totp_secret_encrypted
+        or challenge.attempt_count >= 5
+    ):
+        if challenge and challenge.expires_at < pakistan_now():
+            raise HTTPException(status_code=status.HTTP_410_GONE, detail="Invalid or expired authentication challenge.")
+        raise invalid
+    return challenge, admin, invalid
+
+
+def _complete_login_2fa(db: Session, challenge, admin, code: str, recovery: bool) -> dict:
+    if recovery:
+        valid = consume_recovery_code(db, admin.id, code)
+    else:
+        try:
+            valid = verify_totp_code(admin.totp_secret_encrypted, code.strip())
+        except TotpEncryptionNotConfiguredError:
+            valid = False
+
+    if not valid:
+        challenge.attempt_count += 1
+        db.commit()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired authentication challenge.")
+
+    challenge.used_at = pakistan_now()
+    db.commit()
     return {"access_token": create_access_token(admin), "token_type": "bearer"}
+
+
+@router.post("/login/2fa")
+def admin_login_2fa(request: AdminTwoFactorRequest, db: Session = Depends(get_db)):
+    challenge, admin, _ = _load_login_challenge(db, request.challenge_token)
+    return _complete_login_2fa(db, challenge, admin, request.code, recovery=False)
+
+
+@router.post("/login/2fa/recovery-code")
+def admin_login_recovery_code(request: AdminTwoFactorRequest, db: Session = Depends(get_db)):
+    challenge, admin, _ = _load_login_challenge(db, request.challenge_token)
+    return _complete_login_2fa(db, challenge, admin, request.code, recovery=True)
 
 
 @router.get("/me")

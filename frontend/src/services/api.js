@@ -352,6 +352,36 @@ export async function removeWhitelistEntry(token, search) {
     return data;
 }
 
+export async function verifyAdminLoginTotp(challengeToken, code) {
+    const response = await fetch(`${API_BASE_URL}/admin/login/2fa`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ challenge_token: challengeToken, code }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        const error = new Error("Invalid or expired authentication challenge.");
+        error.status = response.status;
+        throw error;
+    }
+    return data;
+}
+
+export async function verifyAdminLoginRecoveryCode(challengeToken, code) {
+    const response = await fetch(`${API_BASE_URL}/admin/login/2fa/recovery-code`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ challenge_token: challengeToken, code }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        const error = new Error("Invalid or expired authentication challenge.");
+        error.status = response.status;
+        throw error;
+    }
+    return data;
+}
+
 async function adminListRequest(token, path, method = "GET", body) {
     const response = await fetch(`${API_BASE_URL}/admin/${path}`, {
         method,
@@ -452,6 +482,17 @@ export async function getAdminSecurityStatus(token) {
     const response = await fetch(`${API_BASE_URL}/admin/security/status`, { headers: { Authorization: `Bearer ${token}` } });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw requestError(response, data, "Unable to load security status.");
+    return data;
+}
+
+export async function assignAdminEmail(token, email) {
+    const response = await fetch(`${API_BASE_URL}/admin/security/email`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ email }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw requestError(response, data, "Unable to save email.");
     return data;
 }
 

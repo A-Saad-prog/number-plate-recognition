@@ -66,9 +66,7 @@ def request_password_recovery(request: PasswordRecoveryRequest, db: Session = De
     identifier = request.identifier.strip()
     admin = find_admin_by_identifier(db, identifier) if identifier else None
 
-    eligible = bool(
-        admin and admin.email and admin.email_verified and admin.totp_enabled
-    )
+    eligible = bool(admin and admin.email and admin.email_verified)
 
     challenge_token = None
 
@@ -76,16 +74,23 @@ def request_password_recovery(request: PasswordRecoveryRequest, db: Session = De
         try:
             row, otp = start_challenge(db, admin.id, PURPOSE_PASSWORD_RECOVERY)
             challenge_token = row.challenge_token
-            send_security_code(admin.email, otp, PURPOSE_PASSWORD_RECOVERY, OTP_TTL_MINUTES)
+            try:
+                send_security_code(admin.email, otp, PURPOSE_PASSWORD_RECOVERY, OTP_TTL_MINUTES)
+            except Exception:
+                # Do not leave a challenge active when its OTP was not delivered.
+                row.used_at = pakistan_now()
+                db.commit()
+                challenge_token = None
+                raise
         except CooldownActiveError:
             # A legitimate user re-submitting quickly (e.g. double-click)
             # should land on the same in-progress challenge, not a dead one.
             active = get_active_challenge_for_admin(db, admin.id, PURPOSE_PASSWORD_RECOVERY)
             challenge_token = active.challenge_token if active else None
-        except (RecoveryConfigError, EmailNotConfiguredError) as error:
-            logger.error("Password recovery could not be started: %s", error)
+        except (RecoveryConfigError, EmailNotConfiguredError):
+            logger.error("Password recovery email delivery is not configured.")
         except Exception:
-            logger.exception("Unexpected error starting password recovery")
+            logger.error("Password recovery email delivery failed.")
 
     if not challenge_token:
         # Keep the response shape identical whether the account is real,
@@ -106,11 +111,16 @@ def verify_recovery_email(request: PasswordRecoveryOtpRequest, db: Session = Dep
     if not verify_email_otp(db, row, request.code.strip()):
         raise INVALID_CODE
 
-    return {"success": True}
+    # Email verification is the identity proof for this recovery flow. TOTP
+    # remains available for account security, but is intentionally optional
+    # and is not part of password recovery.
+    reset_token = issue_reset_token(db, row)
+    return {"success": True, "reset_token": reset_token}
 
 
 @router.post("/verify-totp")
 def verify_recovery_totp(request: PasswordRecoveryOtpRequest, db: Session = Depends(get_db)):
+    """Legacy optional recovery step retained for future 2FA policy changes."""
     row = get_active_challenge(db, request.challenge_token, PURPOSE_PASSWORD_RECOVERY)
     if not row or row.verified_at is None:
         raise INVALID_CODE
