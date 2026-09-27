@@ -15,6 +15,7 @@ import { saveConfirmedPlateImage } from "../services/localPlateImages";
 import { createMultiCameraVisionTestScheduler } from "../services/multiCameraVisionTestScheduler";
 
 import "../styles/App.css";
+import "../styles/GaragePrototype.css";
 
 const MAX_INFERENCE_FRAME_WIDTH = 960;
 const VISION_DEBUG = import.meta.env.DEV && import.meta.env.VITE_VISION_DEBUG === "true";
@@ -110,6 +111,8 @@ function GaragePage() {
     const plateCandidateFirstSeenRef = useRef({});
     const candidateAgeTimersRef = useRef({});
     const confirmedPlateLockRef = useRef({});
+    const dismissedPlateRef = useRef({});
+    const receiptLatencyRef = useRef({});
     const confirmedPlateLastDetectedAtRef = useRef({});
     const confirmedLockImageRef = useRef({});
     const completedLockActionRef = useRef({});
@@ -121,6 +124,22 @@ function GaragePage() {
     const pendingAutomaticExitRef = useRef({});
     const exitPaymentPrefetchRef = useRef({});
     const terminalClearTimersRef = useRef({});
+
+    function receiptLatencyKey(cameraId, plate) {
+        return `${cameraId}:${plate}`;
+    }
+
+    function markReceiptLatencyStage(cameraId, plate, stage, timestamp = performance.now()) {
+        if (!import.meta.env.DEV || !plate) return;
+        const key = receiptLatencyKey(cameraId, plate);
+        const current = receiptLatencyRef.current[key] || {
+            cameraId,
+            plate,
+            firstObservedAt: timestamp,
+        };
+        current[stage] = timestamp;
+        receiptLatencyRef.current[key] = current;
+    }
 
     const [selectedSpaceId, setSelectedSpaceId] = useState(null);
     const [entryLoading, setEntryLoading] = useState(false);
@@ -245,18 +264,19 @@ function GaragePage() {
             candidateAgeMs,
         } = candidate;
         const alreadyLockedPlate = confirmedPlateLockRef.current[cameraId];
-        if (alreadyLockedPlate === bestPlate) return;
-
+        if (
+            alreadyLockedPlate === bestPlate ||
+            dismissedPlateRef.current[cameraId] === bestPlate
+        ) return;
         clearCandidateAgeTimer(cameraId);
         if (lastCompletedPlateRef.current[cameraId] !== bestPlate) {
             delete lastCompletedPlateRef.current[cameraId];
         }
+        delete dismissedPlateRef.current[cameraId];
+        markReceiptLatencyStage(cameraId, bestPlate, "stabilizedAt");
         confirmedPlateLockRef.current[cameraId] = bestPlate;
         confirmedPlateLastDetectedAtRef.current[cameraId] = Date.now();
         detectedPlateRef.current[cameraId] = bestPlate;
-        // Locking stops inference for this camera immediately. An active
-        // request is allowed to complete, but its response is rejected below.
-        clearPendingSlotVision(cameraId);
         updateCameraVehicleState(cameraId, {
             plate: bestPlate,
             action: null,
@@ -271,6 +291,10 @@ function GaragePage() {
             ratePerMinute: null,
         });
         confirmedLockImageRef.current[cameraId] = image;
+        setCameraViews((current) => ({
+            ...current,
+            [cameraId]: { ...(current[cameraId] || {}), plate: bestPlate },
+        }));
         console.log("[Vision confirmed lock]", {
             source: cameraId,
             plate: bestPlate,
@@ -308,8 +332,7 @@ function GaragePage() {
                 delete candidateAgeTimersRef.current[cameraId];
                 if (
                     !isCurrentCameraSession(cameraId, sessionGeneration, stream) ||
-                    cameraLaneGenerationRef.current !== laneGeneration ||
-                    confirmedPlateLockRef.current[cameraId]
+                    cameraLaneGenerationRef.current !== laneGeneration
                 ) return;
 
                 const current = getCurrentCandidateConfirmation(cameraId, candidate.bestPlate);
@@ -474,8 +497,10 @@ function GaragePage() {
 
             if (trackingMode) {
                 if (automaticEntryRef.current && !MULTI_CAMERA_ORCHESTRATION_TEST) {
+                    markReceiptLatencyStage(cameraId, plate, "workflowReadyAt");
                     void handleConfirmEntry(plate, null, cameraId, true);
                 } else {
+                    markReceiptLatencyStage(cameraId, plate, "workflowReadyAt");
                     updateCameraVehicleState(cameraId, { plate, action: "entry", loading: false, selectedSpaceId: null, error: "" });
                 }
                 return;
@@ -500,12 +525,14 @@ function GaragePage() {
                 (space) => space.is_occupied && space.license_plate === plate
             );
             if (parkedSpace) {
+                markReceiptLatencyStage(cameraId, plate, "workflowReadyAt");
                 updateCameraVehicleState(cameraId, { plate, action: null, loading: false, alreadyParked: true, selectedSpaceId: null, error: "" });
                 scheduleTerminalCameraClear(cameraId, plate);
                 return;
             }
 
             if (automaticEntryRef.current && !MULTI_CAMERA_ORCHESTRATION_TEST) {
+                markReceiptLatencyStage(cameraId, plate, "workflowReadyAt");
                 void handleConfirmEntry(plate, null, cameraId, true);
                 return;
             }
@@ -518,6 +545,7 @@ function GaragePage() {
             // either has recorded its own pick (React applies queued
             // functional updates one at a time, each seeing the previous
             // one's result).
+            markReceiptLatencyStage(cameraId, plate, "workflowReadyAt");
             setCameraVehicleState((current) => {
                 const reservedByOtherPendingCameras = new Set(
                     Object.entries(current)
@@ -671,6 +699,8 @@ function GaragePage() {
 
     const [activeLane, setActiveLane] = useState("entry");
     const activeLaneRef = useRef("entry");
+    const [cameraFilter, setCameraFilter] = useState("all");
+    const [levelMenuOpen, setLevelMenuOpen] = useState(false);
 
     // Presentation-only state: which visual theme is applied, and which
     // Receipt Center tab is showing. Neither affects camera/entry/exit
@@ -781,6 +811,7 @@ function GaragePage() {
         plateVoteHistoryRef.current = {};
         plateCandidateFirstSeenRef.current = {};
         confirmedPlateLockRef.current = {};
+        dismissedPlateRef.current = {};
         confirmedPlateLastDetectedAtRef.current = {};
         confirmedLockImageRef.current = {};
         completedLockActionRef.current = {};
@@ -798,6 +829,7 @@ function GaragePage() {
         setSelectedSpaceId(null);
         setExitRatePerMinute(null);
         setCameraVehicleState({});
+        setPendingReceiptQueue([]);
         setActiveEntryCameraId(null);
     }
 
@@ -1202,6 +1234,7 @@ function GaragePage() {
             const paymentRequired =
                 Boolean(result.payment_required);
 
+            markReceiptLatencyStage(source, plate, "workflowReadyAt");
             updateCameraVehicleState(source, {
                 action: "exit",
                 loading: true,
@@ -1859,6 +1892,15 @@ function GaragePage() {
         ...Array.from({ length: entryCameraCount }, (_, index) => ({ id: `entry-${index + 1}`, label: `Entry Camera ${index + 1}`, lane: "Entry" })),
         ...Array.from({ length: exitCameraCount }, (_, index) => ({ id: `exit-${index + 1}`, label: `Exit Camera ${index + 1}`, lane: "Exit" })),
     ];
+    const visibleCameraSlots = cameraSlots.filter((slot) =>
+        cameraFilter === "all" || slot.lane.toLowerCase() === cameraFilter
+    );
+    const floorLevels = [...new Set(parkingSpaces.map((space) => Number(space.level)))].sort((a, b) => a - b);
+    const selectedLevelSpaces = parkingSpaces.filter((space) => Number(space.level) === Number(openLevel));
+    const selectedLevelOccupied = selectedLevelSpaces.filter((space) => space.is_occupied).length;
+    const selectedLevelPercent = selectedLevelSpaces.length
+        ? Math.round((selectedLevelOccupied / selectedLevelSpaces.length) * 100)
+        : 0;
 
     // Derived render data ONLY -- the Receipt Center reads directly from
     // cameraVehicleState (the existing per-camera source of truth) rather
@@ -1879,6 +1921,52 @@ function GaragePage() {
     const externalReceiptSlots = externalReceipts.map((item) => ({ id: `admin-${item.id}`, label: "Admin", lane: item.type === "exit" ? "Exit" : "Entry", receipt: item.receipt, detectedAt: item.detectedAt }));
     const entryReceiptSlots = [...cameraSlots.filter((slot) => slot.lane === "Entry" && cameraHasReceiptData(slot.id)), ...externalReceiptSlots.filter((slot) => slot.lane === "Entry")].sort((a, b) => (a.detectedAt || cameraVehicleState[a.id]?.detectedAt || 0) - (b.detectedAt || cameraVehicleState[b.id]?.detectedAt || 0));
     const exitReceiptSlots = [...cameraSlots.filter((slot) => slot.lane === "Exit" && cameraHasReceiptData(slot.id)), ...externalReceiptSlots.filter((slot) => slot.lane === "Exit")].sort((a, b) => (a.detectedAt || cameraVehicleState[a.id]?.detectedAt || 0) - (b.detectedAt || cameraVehicleState[b.id]?.detectedAt || 0));
+    const receiptRenderIdentity = [...entryReceiptSlots, ...exitReceiptSlots]
+        .filter((slot) => !slot.receipt)
+        .map((slot) => {
+            const state = cameraVehicleState[slot.id] || {};
+            const plate = state.plate || state.entryResult?.license_plate || state.exitResult?.license_plate || "";
+            return `${slot.id}:${plate}:${state.detectedAt || 0}`;
+        })
+        .join("|");
+
+    useEffect(() => {
+        if (!import.meta.env.DEV || !receiptRenderIdentity) return;
+
+        const cameraSlotsWithReceipts = [...entryReceiptSlots, ...exitReceiptSlots]
+            .filter((slot) => !slot.receipt);
+
+        cameraSlotsWithReceipts.forEach((slot) => {
+            const state = cameraVehicleState[slot.id] || {};
+            const plate = state.plate || state.entryResult?.license_plate || state.exitResult?.license_plate;
+            if (!plate) return;
+
+            const key = receiptLatencyKey(slot.id, plate);
+            const timing = receiptLatencyRef.current[key];
+            if (!timing || timing.renderScheduledAt) return;
+
+            timing.receiptCommittedAt = performance.now();
+            timing.renderScheduledAt = timing.receiptCommittedAt;
+            requestAnimationFrame(() => {
+                const renderedAt = performance.now();
+                const firstObservedAt = timing.firstObservedAt ?? renderedAt;
+                const stabilizedAt = timing.stabilizedAt ?? renderedAt;
+                const workflowReadyAt = timing.workflowReadyAt ?? stabilizedAt;
+                const receiptCommittedAt = timing.receiptCommittedAt ?? renderedAt;
+
+                console.log(
+                    "[PARKINGOS RECEIPT LATENCY]",
+                    `\nCamera: ${slot.label}`,
+                    `\nPlate: ${plate}`,
+                    `\nFirst observed → stabilized: ${(stabilizedAt - firstObservedAt).toFixed(0)} ms`,
+                    `\nStabilized → receipt ready: ${(workflowReadyAt - stabilizedAt).toFixed(0)} ms`,
+                    `\nReceipt ready → rendered: ${(renderedAt - receiptCommittedAt).toFixed(0)} ms`,
+                    `\nTOTAL TO RECEIPT: ${(renderedAt - firstObservedAt).toFixed(0)} ms`
+                );
+                delete receiptLatencyRef.current[key];
+            });
+        });
+    }, [receiptRenderIdentity]);
 
     function isCurrentCameraSession(cameraId, sessionGeneration, stream) {
         return (
@@ -1890,7 +1978,6 @@ function GaragePage() {
     function queueLatestSlotDetection(cameraId, sessionGeneration, stream) {
         if (
             !cameraFrameDirtyRef.current[cameraId] ||
-            confirmedPlateLockRef.current[cameraId] ||
             !isCurrentCameraSession(cameraId, sessionGeneration, stream)
         ) return;
         const job = cameraSchedulerJobRef.current[cameraId];
@@ -1905,7 +1992,6 @@ function GaragePage() {
 
     function markSlotCameraFrameFresh(cameraId, sessionGeneration, stream) {
         if (
-            confirmedPlateLockRef.current[cameraId] ||
             !isCurrentCameraSession(cameraId, sessionGeneration, stream)
         ) return;
         cameraFrameDirtyRef.current[cameraId] = true;
@@ -1990,9 +2076,6 @@ function GaragePage() {
                 async () => {
                     // Read the ref at worker execution time: a frame can sit
                     // pending while another response confirms this camera.
-                    if (confirmedPlateLockRef.current[cameraId]) {
-                        return { discarded: true };
-                    }
                     const job = cameraSchedulerJobRef.current[cameraId];
                     if (job?.sessionGeneration === sessionGeneration) {
                         // This job has consumed the latest-frame signal.
@@ -2040,14 +2123,25 @@ function GaragePage() {
             if (
                 completed?.discarded ||
                 !isCurrentCameraSession(cameraId, sessionGeneration, stream) ||
-                cameraLaneGenerationRef.current !== laneGeneration ||
-                confirmedPlateLockRef.current[cameraId]
+                cameraLaneGenerationRef.current !== laneGeneration
             ) return;
             if (cameraStreamsRef.current[cameraId]) {
+                    if (!result.box) {
+                        delete dismissedPlateRef.current[cameraId];
+                        if (!cameraVehicleStateRef.current[cameraId]?.plate) {
+                            delete confirmedPlateLockRef.current[cameraId];
+                            delete confirmedPlateLastDetectedAtRef.current[cameraId];
+                        }
+                        clearPlateCandidates(cameraId);
+                        plateVoteHistoryRef.current[cameraId] = { reads: [], lastSeenAt: 0 };
+                        for (const [latencyKey, timing] of Object.entries(receiptLatencyRef.current)) {
+                            if (timing.cameraId === cameraId) delete receiptLatencyRef.current[latencyKey];
+                        }
+                    }
                     setCameraViews((current) => {
                         const currentView = current[cameraId] || {};
-                        if (currentView.active && boxesEqual(currentView.box, result.box)) return current;
-                        return { ...current, [cameraId]: { ...currentView, active: true, box: result.box || null } };
+                        if (result.box && currentView.active && boxesEqual(currentView.box, result.box)) return current;
+                        return { ...current, [cameraId]: { ...currentView, active: true, box: result.box || null, ...(result.box ? {} : { plate: null }) } };
                     });
                     const plate = result.license_plate?.trim().toUpperCase();
                     // Per-camera temporal confirmation and lock.
@@ -2259,6 +2353,12 @@ function GaragePage() {
 
                             if (!plateCandidateFirstSeenRef.current[candidateKey]) {
                                 plateCandidateFirstSeenRef.current[candidateKey] = now;
+                                markReceiptLatencyStage(cameraId, bestPlate, "firstObservedAt", performance.now());
+                                for (const [latencyKey, timing] of Object.entries(receiptLatencyRef.current)) {
+                                    if (timing.cameraId === cameraId && now - timing.firstObservedAt > 60000) {
+                                        delete receiptLatencyRef.current[latencyKey];
+                                    }
+                                }
                             }
 
                             const candidateAgeMs =
@@ -2287,6 +2387,17 @@ function GaragePage() {
                                 matureEnough,
                                 longerCompatiblePlate,
                             };
+
+                            if (
+                                bestCount >= requiredVotesForCandidate &&
+                                matureEnough &&
+                                !longerCompatiblePlate
+                            ) {
+                                setCameraViews((current) => ({
+                                    ...current,
+                                    [cameraId]: { ...(current[cameraId] || {}), plate: bestPlate },
+                                }));
+                            }
 
                             if (
                                 bestCount >= requiredVotesForCandidate &&
@@ -2352,19 +2463,12 @@ function GaragePage() {
             }
             // If a new video frame arrived while this job was executing and
             // RAF did not already enqueue its one successor, enqueue it now.
-            if (!confirmedPlateLockRef.current[cameraId]) {
-                queueLatestSlotDetection(cameraId, sessionGeneration, stream);
-            }
+            queueLatestSlotDetection(cameraId, sessionGeneration, stream);
         }
     }
 
     function renderCameraVehicleAction(cameraId, vehicleState) {
         const trackingMode = adminSettings?.garage_settings?.mode === "tracking";
-        const selectedCameraSpace = trackingMode
-            ? null
-            : parkingSpaces.find(
-                (space) => space.id === vehicleState.selectedSpaceId
-            );
         const isExit = cameraId.startsWith("exit-");
         // PLATE_TRACKING_BILLING_PARITY_V1
         // vehicleState.paymentRequired is already a server-verified signal
@@ -2401,11 +2505,6 @@ function GaragePage() {
                             <p className="description">Processing Entry...</p>
                         ) : (
                             <>
-                                <h3>{trackingMode ? "Log Vehicle Entry" : "Select Parking Space"}</h3>
-                                {!trackingMode && <div className="selected-space-info">
-                                    <strong>Selected Space:</strong>
-                                    <span>{selectedCameraSpace ? `Level ${selectedCameraSpace.level} - ${selectedCameraSpace.space}` : "No space available"}</span>
-                                </div>}
                                 <div className="confirmation-buttons">
                                     <button
                                         type="button"
@@ -2461,40 +2560,35 @@ function GaragePage() {
         const view = cameraViews[slot.id] || {};
         const vehicleState = cameraVehicleState[slot.id] || {};
         const assigned = Boolean(cameraAssignments[slot.id]);
-        const isActiveLane = true;
-        const liveStatusLabel = isActiveLane && view.active ? "Live" : "Standby";
+        const cameraNumber = slot.id.split("-")[1].padStart(2, "0");
+        const liveStatusLabel = view.active ? "LIVE" : "STANDBY";
+        const visible = cameraFilter === "all" || slot.lane.toLowerCase() === cameraFilter;
+        const plate = view.plate || "MONITORING LANE";
         return (
-            <div className="camera-panel" key={slot.id}>
-                <div className="camera-preview">
-                    {assigned && (
-                        <span className={`camera-feed-status camera-status ${isActiveLane && view.active ? "active" : "standby"}`}>
-                            {liveStatusLabel}
-                        </span>
-                    )}
+            <div className={`cam ${visible ? "" : "camera-hidden"}`} data-kind={slot.lane.toLowerCase()} key={slot.id}>
+                <div className="scene">
                     {!assigned ? (
                         <div className="camera-standby"><strong>Camera not assigned</strong></div>
-                    ) : !isActiveLane ? (
-                        <div className="camera-standby"><strong>{slot.lane} cameras are on standby</strong></div>
                     ) : (
-                        <>
-                            <video ref={(node) => { cameraNodesRef.current[slot.id] = node; if (node) void startSlotCamera(slot.id); }} autoPlay playsInline muted />
-                            {renderDetectionBox(view.box, { current: cameraNodesRef.current[slot.id] })}
-                        </>
+                        <video ref={(node) => { cameraNodesRef.current[slot.id] = node; if (node) void startSlotCamera(slot.id); }} autoPlay playsInline muted />
                     )}
                 </div>
-                <div className="camera-info">
+                <div className="camHeader">
+                    <span>{slot.lane.toUpperCase()} · {cameraNumber}</span>
+                    <span className={`live ${view.active ? "" : "standby"}`}>{liveStatusLabel}</span>
+                </div>
+                {renderDetectionBox(view.box, { current: cameraNodesRef.current[slot.id] })}
+                <div className="camFooter">
                     <div>
-                        <span className="camera-kicker">{slot.label}</span>
-                        <div className="camera-info-plate">{vehicleState.plate || "Waiting"}</div>
-                        <p className="camera-info-status">
-                            {vehicleState.error || (!assigned ? "Camera not assigned" : view.active ? "Detection active" : "Standby")}
-                        </p>
+                        <small>{vehicleState.error || (vehicleState.plate ? "RECOGNIZED" : view.active ? "DETECTION ACTIVE" : "STANDBY")}</small>
+                        <b>{plate}</b>
                     </div>
                 </div>
                 {view.error && <div className="error">{view.error}</div>}
             </div>
         );
     }
+
 
     // Renders one pending process for the Receipt Center. Reuses the exact
     // same VehicleInformation component and renderCameraVehicleAction
@@ -2505,6 +2599,16 @@ function GaragePage() {
             setExternalReceipts((current) => current.filter((item) => item.id !== slot.receipt.session_id));
             return;
         }
+        const dismissedPlate = cameraVehicleStateRef.current[slot.id]?.plate;
+        if (dismissedPlate) dismissedPlateRef.current[slot.id] = dismissedPlate;
+        delete confirmedPlateLockRef.current[slot.id];
+        delete confirmedPlateLastDetectedAtRef.current[slot.id];
+        clearPlateCandidates(slot.id);
+        plateVoteHistoryRef.current[slot.id] = { reads: [], lastSeenAt: 0 };
+        setCameraViews((current) => ({
+            ...current,
+            [slot.id]: { ...(current[slot.id] || {}), box: null, plate: null },
+        }));
         updateCameraVehicleState(slot.id, {
             plate: null,
             action: null,
@@ -2519,25 +2623,73 @@ function GaragePage() {
         });
     }
 
+    function formatEntryDetectionTime(value) {
+        if (!value) return "Now";
+
+        const date = parseBackendDate(value);
+        if (Number.isNaN(date.getTime())) return "Now";
+
+        return date.toLocaleTimeString("en-US", {
+            hour: "numeric",
+            minute: "2-digit",
+            hour12: true,
+            timeZone: "Asia/Karachi",
+        });
+    }
+
     function renderCameraReceipt(slot) {
         const vehicleState = slot.receipt
             ? { ...(slot.lane === "Exit" ? { exitResult: slot.receipt } : { entryResult: slot.receipt }) }
             : cameraVehicleState[slot.id] || {};
+        const result = vehicleState.exitResult || vehicleState.entryResult;
+        const plate = result?.license_plate || vehicleState.plate || "Waiting";
+        const receiptLabel = slot.lane === "Exit"
+            ? (slot.receipt
+                ? `${slot.label} · completed`
+                : `${slot.label} · session ready`)
+            : slot.label;
+        const timelineLeft = slot.lane === "Exit" ? "SESSION" : "DETECTED";
+        const timelineRight = slot.lane === "Exit" ? "TOTAL" : "ASSIGNED";
+        const timelineRightValue = result
+            ? (slot.lane === "Exit" ? "Completed" : `${result.level ?? "-"}-${result.space ?? "-"}`)
+            : (vehicleState.selectedSpaceId ? (parkingSpaces.find((space) => space.id === vehicleState.selectedSpaceId)?.space || "Selected") : "Pending");
         return (
-            <div className={`mini-receipt ${slot.lane === "Entry" ? "entry-receipt" : "exit-receipt"}`} key={slot.id}>
-                <button type="button" className="mini-receipt-dismiss" onClick={() => dismissCameraReceipt(slot)} aria-label="Dismiss receipt">×</button>
-                <div className="mini-receipt-source">{slot.label}</div>
-                <VehicleInformation
-                    exitResult={vehicleState.exitResult}
-                    entryResult={vehicleState.entryResult}
-                    detectedPlate={vehicleState.plate}
-                    vehicleAction={vehicleState.action}
-                    selectedSpace={parkingSpaces.find((space) => space.id === vehicleState.selectedSpaceId)}
-                    trackingMode={isTrackingModeGarage}
-                    onReceiptDone={() => slot.receipt
-                        ? setExternalReceipts((current) => current.filter((item) => item.id !== slot.receipt.session_id))
-                        : updateCameraVehicleState(slot.id, { exitResult: null })}
-                />
+            <div className={`receipt ${slot.receipt ? "" : "newReceipt"}`} key={slot.id}>
+                {slot.lane === "Entry" && <button type="button" className="mini-receipt-dismiss" onClick={() => dismissCameraReceipt(slot)} aria-label="Dismiss receipt">×</button>}
+                {slot.lane === "Exit" ? (
+                    <div className="receiptTop exit-receipt-top">
+                        <div className="exit-receipt-identity">
+                            <div className="sub exit-receipt-source">{slot.label}</div>
+                            <div className="exit-receipt-main">
+                                <div className="plate">{plate}</div>
+                                <div className="exit-receipt-location">
+                                    <span>Level {result?.level ?? "-"}</span>
+                                    <b>{result?.space ?? "-"}</b>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="receiptTop">
+                        <div><div className="plate">{plate}</div><div className="sub">{receiptLabel}</div></div>
+                    </div>
+                )}
+                <div className={`timeline ${slot.lane === "Exit" ? "exit-legacy-timeline" : "entry-split-status"}`}>
+                    <div className="entry-split-cell entry-split-detected"><span>{timelineLeft}</span><b>{formatEntryDetectionTime(vehicleState.detectedAt)}</b></div>
+                    {slot.lane === "Exit" && <div className="arrow">→</div>}
+                    <div className="entry-split-cell entry-split-assigned"><span>{timelineRight}</span><b>{timelineRightValue}</b></div>
+                </div>
+                {slot.lane === "Exit" && <VehicleInformation
+                        exitResult={vehicleState.exitResult}
+                        entryResult={vehicleState.entryResult}
+                        detectedPlate={vehicleState.plate}
+                        vehicleAction={vehicleState.action}
+                        selectedSpace={parkingSpaces.find((space) => space.id === vehicleState.selectedSpaceId)}
+                        trackingMode={isTrackingModeGarage}
+                        onReceiptDone={() => slot.receipt
+                            ? setExternalReceipts((current) => current.filter((item) => item.id !== slot.receipt.session_id))
+                            : updateCameraVehicleState(slot.id, { exitResult: null })}
+                    />}
                 {renderCameraVehicleAction(slot.id, vehicleState)}
             </div>
         );
@@ -2547,43 +2699,50 @@ function GaragePage() {
         const entryCount = entryReceiptSlots.length;
         const exitCount = exitReceiptSlots.length;
         return (
-            <div className="side-card receipt-center">
-                <div className="eyebrow">Receipt center</div>
-                <h3>Live processes.</h3>
+            <>
+                <div className="actionHead">
+                <h2>Entry &amp; Exit Receipts</h2>
+                <p>Normal activity stays quiet. Only actionable processes appear here.</p>
+                </div>
 
-                <div className="receipt-tabs">
+                <div className="tabs">
                     <button
                         type="button"
-                        className={`receipt-tab ${receiptTab === "entry" ? "active" : ""} ${entryCount > 0 ? "has-new" : ""}`}
+                        className={`${receiptTab === "entry" ? "active" : ""} ${entryCount > 0 ? "has-new" : ""}`}
                         onClick={() => setReceiptTab("entry")}
                     >
-                        <span>Entry <b className="inline-count">{entryCount}</b></span>
+                        Entry {entryCount > 0 && <span className="queuePing">{entryCount}</span>}
                     </button>
                     <button
                         type="button"
-                        className={`receipt-tab ${receiptTab === "exit" ? "active" : ""} ${exitCount > 0 ? "has-new" : ""}`}
+                        className={`${receiptTab === "exit" ? "active" : ""} ${exitCount > 0 ? "has-new" : ""}`}
                         onClick={() => setReceiptTab("exit")}
                     >
-                        <span>Exit <b className="inline-count">{exitCount}</b></span>
+                        Exit {exitCount > 0 && <span className="queuePing">{exitCount}</span>}
                     </button>
                 </div>
 
-                <div className={`receipt-panel ${receiptTab === "entry" ? "active" : ""}`}>
+                <div className={`queue entry-receipt-queue ${receiptTab === "entry" ? "active" : ""}`}>
                     {entryReceiptSlots.length > 0 ? (
-                        <div className="receipt-stack">{entryReceiptSlots.map(renderCameraReceipt)}</div>
+                        entryReceiptSlots.map(renderCameraReceipt)
                     ) : (
                         <p className="description">No pending entries.</p>
                     )}
                 </div>
 
-                <div className={`receipt-panel ${receiptTab === "exit" ? "active" : ""}`}>
+                <div className={`queue ${receiptTab === "exit" ? "active" : ""}`}>
                     {exitReceiptSlots.length > 0 ? (
-                        <div className="receipt-stack">{exitReceiptSlots.map(renderCameraReceipt)}</div>
+                        exitReceiptSlots.map(renderCameraReceipt)
                     ) : (
                         <p className="description">No pending exits.</p>
                     )}
                 </div>
-            </div>
+
+                <div className="garageStatus">
+                    <div className="garageStatusLabel">GARAGE STATUS</div>
+                    <div className="garageStatusMain"><strong><span className="animatedNumber">{occupiedSpaces}</span> vehicles inside</strong></div>
+                </div>
+            </>
         );
     }
 
@@ -2597,7 +2756,7 @@ function GaragePage() {
     }
 
     return (
-        <div className={`app ${garageTheme === "dark" ? "garage-theme-dark" : ""}`}>
+        <div className={`app garage-prototype ${garageTheme === "dark" ? "garage-theme-dark" : ""}`}>
             <dialog
                 ref={reloadDialogRef}
                 className="garage-reload-dialog"
@@ -2629,13 +2788,14 @@ function GaragePage() {
             </dialog>
             {garageAuthFailed && <div className="settings-reload-notice" role="alert">Your admin session has expired. <a href="/admin">Sign in again</a></div>}
 
-            <header className="garage-top">
-                <div className="garage-logo">PARKING<span>OS</span> / GARAGE</div>
-                <div className="garage-top-actions">
-                    <span className={`garage-status-pill ${adminLoggedIn ? "online" : "offline"}`}><svg className="garage-status-dot" viewBox="0 0 10 10" aria-hidden="true"><circle cx="5" cy="5" r="5" /></svg> {adminLoggedIn ? "SYSTEM ONLINE" : "SYSTEM OFFLINE"}</span>
+            <header>
+                <div className="logo">Parking<b>OS</b></div>
+                <div className="mode">Garage Operations</div>
+                <div className="headStats">
+                    <span className={adminLoggedIn ? "online" : "offline"}>{adminLoggedIn ? "Online" : "Offline"}</span>
                     <button
                         type="button"
-                        className="garage-theme-slider"
+                        className="theme"
                         onClick={toggleGarageTheme}
                         aria-label="Toggle theme"
                         aria-pressed={garageTheme === "dark"}
@@ -2654,21 +2814,39 @@ function GaragePage() {
                 </div>
             </header>
 
-            <div className="garage-layout">
-                <main className="garage-main">
-                    <section className="garage-camera-panel">
-                        <h2>Vehicle <span>detection</span></h2>
-                        <p className="description">The camera automatically detects the vehicle's license plate.</p>
-
-                        <div className={`camera-slot-grid ${cameraSlots.length === 2 ? "camera-slot-grid-pair" : ""}`}>{cameraSlots.map(renderSlotCamera)}</div>
+            <div className="workspace">
+                <main className="left">
+                    <section className="liveArea">
+                        <div className="sectionHead">
+                            <div><h1>Live lanes</h1><p>Recognition and lane status at a glance.</p></div>
+                            <div className="filters">
+                                <button type="button" className={cameraFilter === "all" ? "active" : ""} onClick={() => setCameraFilter("all")}>All {cameraSlots.length}</button>
+                                <button type="button" className={cameraFilter === "entry" ? "active" : ""} onClick={() => setCameraFilter("entry")}>Entry</button>
+                                <button type="button" className={cameraFilter === "exit" ? "active" : ""} onClick={() => setCameraFilter("exit")}>Exit</button>
+                            </div>
+                        </div>
+                        <div className={`cams camera-count-${Math.max(1, visibleCameraSlots.length)}`}>
+                            {cameraSlots.map(renderSlotCamera)}
+                        </div>
                     </section>
 
                     {!isTrackingModeGarage && (
-                        <section className="garage-floor-panel">
-                            <div className="floor-panel-head">
+                        <section className="floor">
+                            <div className="floorIntro floorIntroV2">
                                 <div>
-                                    <p className="eyebrow">Garage occupancy</p>
-                                    <h2>Parking <span>floor</span></h2>
+                                    <div className="eyebrow">PARKING FLOOR</div>
+                                    <h2>Level {String(openLevel || 0).padStart(2, "0")}</h2>
+                                    <div className="levelViewport">
+                                        <div className="levelSelectWrap">
+                                            <button className={`levelTrigger levelTriggerV2 ${levelMenuOpen ? "open" : ""}`} type="button" aria-haspopup="listbox" aria-expanded={levelMenuOpen} onClick={() => setLevelMenuOpen((open) => !open)}>
+                                                <span className="selectorRail" /><span className="levelGlyph"><i /></span>
+                                                <span className="levelTriggerCopy"><small>SELECT LEVEL</small><strong>Level {String(openLevel || 0).padStart(2, "0")}</strong></span><span className="levelChevron" />
+                                            </button>
+                                            <div className={`levelMenu ${levelMenuOpen ? "show" : ""}`} role="listbox">
+                                                {floorLevels.map((level) => <button key={level} type="button" className={`levelOption ${openLevel === level ? "active" : ""}`} onClick={() => { setOpenLevel(level); setLevelMenuOpen(false); }} role="option" aria-selected={openLevel === level}>L{String(level).padStart(2, "0")}</button>)}
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
 
                                 {parkingSpaces.length > 0 && (
@@ -2693,8 +2871,14 @@ function GaragePage() {
                                             })}
                                     </div>
                                 )}
+                            <div className="floorOccupancy">
+                                <div className="floorOccHead"><div className="floorOccLabel">OCCUPANCY</div><div className="floorOccCount">{selectedLevelOccupied}<span>/ {selectedLevelSpaces.length}</span></div></div>
+                                <div className="floorOccTrack"><div className="floorOccFill" style={{ width: `${selectedLevelPercent}%` }} /></div>
+                                <div className="floorOccFoot"><span>{selectedLevelPercent}% occupied</span><strong>{selectedLevelSpaces.length - selectedLevelOccupied} spaces free</strong></div>
+                            </div>
                             </div>
 
+                            <div className="spotViewport">
                             {parkingLoading && parkingSpaces.length === 0 && (
                                 <div className="status-message">Loading parking status...</div>
                             )}
@@ -2722,11 +2906,12 @@ function GaragePage() {
                                     </div>
                                 </>
                             )}
+                            </div>
                         </section>
                     )}
                 </main>
 
-                <aside className="garage-side">
+                <aside className="right">
                     {renderReceiptCenter()}
                 </aside>
             </div>
