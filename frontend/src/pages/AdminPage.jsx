@@ -801,7 +801,7 @@ function AdminPage() {
             setRecoveryResetToken("");
             setRecoveryNewPassword("");
             setRecoveryConfirmPassword("");
-            setForgotStep("forgot_success");
+            closeForgotPassword();
         } catch (error) {
             setForgotError(error.message || "Unable to reset password.");
         } finally {
@@ -2284,10 +2284,10 @@ function AdminPage() {
                         <button type="button" className={`sidebar-feature ${activeFeature === "billing" ? "active" : ""}`} onClick={() => setActiveFeature(activeFeature === "billing" ? null : "billing")}>
                             <span className="feature-number">04</span><span>{t.billing}</span><span className="feature-arrow">{activeFeature === "billing" ? "−" : "+"}</span>
                         </button>
-                        <button type="button" className={`sidebar-feature ${activeFeature === "parking-activity" ? "active" : ""}`} onClick={() => { setActiveFeature("parking-activity"); loadParkingActivity(); }}>
-                            <span className="feature-number">05</span><span>Parking Activity</span><span className="feature-arrow">+</span>
+                        <button type="button" className={`sidebar-feature ${activeFeature === "parking-activity" ? "active" : ""}`} onClick={() => { if (activeFeature === "parking-activity") { setActiveFeature(null); return; } setActiveFeature("parking-activity"); loadParkingActivity(); }}>
+                            <span className="feature-number">05</span><span>Parking Activity</span><span className="feature-arrow">{activeFeature === "parking-activity" ? "−" : "+"}</span>
                         </button>
-                        <button type="button" className={`sidebar-feature ${activeFeature === "analytics" ? "active" : ""}`} onClick={() => { setActiveFeature("analytics"); loadAnalytics(); }}><span className="feature-number">06</span><span>Analytics</span><span className="feature-arrow">+</span></button>
+                        <button type="button" className={`sidebar-feature ${activeFeature === "analytics" ? "active" : ""}`} onClick={() => { if (activeFeature === "analytics") { setActiveFeature(null); return; } setActiveFeature("analytics"); loadAnalytics(); }}><span className="feature-number">06</span><span>Analytics</span><span className="feature-arrow">{activeFeature === "analytics" ? "−" : "+"}</span></button>
                     </aside>
                     <section className="admin-dashboard">
                         {activeFeature === "parking-activity" ? (
@@ -2993,13 +2993,6 @@ function AdminPage() {
                                 </>
                             )}
 
-                            {forgotStep === "forgot_success" && (
-                                <>
-                                    <p className="admin-label">{t.forgotPassword}</p>
-                                    <h2>Password changed successfully.</h2>
-                                    <button type="button" onClick={closeForgotPassword}>{t.backToSignIn}<span>→</span></button>
-                                </>
-                            )}
                         </>
                     ) : twoFactorChallenge ? (
                         <>

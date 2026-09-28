@@ -1420,11 +1420,11 @@ p{
 .garage-prototype .parking-space-vehicle{max-width:100%;overflow:hidden;text-align:center}
 .garage-prototype .parking-space-number{color:#4f5b55!important}
 .garage-prototype .parking-space.selected .parking-space-number{color:#123622!important}
-.garage-prototype .parking-space:hover:not(:disabled),.garage-prototype .parking-space.occupied:hover:not(:disabled){outline:none!important;border-color:#303632!important;transform:translateY(-1px);box-shadow:0 7px 16px color-mix(in srgb,var(--ink) 7%,transparent)}
+.garage-prototype .parking-space:hover:not(:disabled),.garage-prototype .parking-space.occupied:hover:not(:disabled),.garage-prototype .parking-space.occupied:hover,.garage-prototype .parking-space.available:hover{outline:none!important;border-color:#303632!important;transform:translateY(-1px);box-shadow:0 7px 16px color-mix(in srgb,var(--ink) 7%,transparent)}
 .garage-prototype.garage-theme-dark .parking-space-number{color:#d3ddd6!important}
 .garage-prototype.garage-theme-dark .parking-space.selected{background:#edf6f0!important;border-color:#00ad6d!important;box-shadow:0 0 0 2px rgba(0,173,109,.12)!important}
 .garage-prototype.garage-theme-dark .parking-space.selected .parking-space-number{color:#123622!important}
-.garage-prototype.garage-theme-dark .parking-space:hover:not(:disabled),.garage-prototype.garage-theme-dark .parking-space.occupied:hover:not(:disabled){border-color:#d7e2db!important;box-shadow:0 7px 16px color-mix(in srgb,#000 24%,transparent)}
+.garage-prototype.garage-theme-dark .parking-space:hover:not(:disabled),.garage-prototype.garage-theme-dark .parking-space.occupied:hover:not(:disabled),.garage-prototype.garage-theme-dark .parking-space.occupied:hover,.garage-prototype.garage-theme-dark .parking-space.available:hover{border-color:#d7e2db!important;box-shadow:0 7px 16px color-mix(in srgb,#000 24%,transparent)}
 .garage-prototype .floorOccupancy{width:100%;margin-top:16px;padding:12px 13px 11px;border:1px solid var(--line);border-radius:16px!important;background:var(--surface);box-shadow:0 8px 20px color-mix(in srgb,var(--ink) 5%,transparent)}
 .garage-prototype .floorOccHead{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
 .garage-prototype .floorOccLabel{display:flex;align-items:center;gap:7px;font:700 8px JetBrains Mono;color:var(--ink);letter-spacing:.09em}

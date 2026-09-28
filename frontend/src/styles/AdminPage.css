@@ -1058,9 +1058,12 @@ It can make small UI text appear soft/blurry in Chromium.
 .camera-assignment-status {
     align-self: center;
     border-radius: 99px;
+    box-sizing: border-box;
     font: 700 10px 'Manrope', sans-serif;
     padding: 6px 9px;
+    text-align: center;
     white-space: nowrap;
+    width: 96px;
 }
 
 .camera-assignment-status.assigned {
