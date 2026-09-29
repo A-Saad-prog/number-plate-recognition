@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import AdminPage from "./pages/AdminPage";
 import GaragePage from "./pages/GaragePage";
 import LoginPage from "./pages/LoginPage";
+import LandingPage from "./pages/LandingPage";
 
 const TOKEN_KEY = "parking_admin_token";
 
@@ -34,6 +35,8 @@ function App() {
         if (token) return null;
         return <LoginPage redirectTo={loginRedirectTo} />;
     }
+
+    if (pathname === "/landing") return <LandingPage />;
 
     const redirectTo = getLoginTarget(pathname);
     if (!token) return <LoginPage redirectTo={redirectTo} />;
