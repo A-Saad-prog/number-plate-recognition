@@ -14,8 +14,7 @@ import VehicleInformation from "../components/VehicleInformation";
 import { saveConfirmedPlateImage } from "../services/localPlateImages";
 import { createMultiCameraVisionTestScheduler } from "../services/multiCameraVisionTestScheduler";
 
-import "../styles/App.css";
-import "../styles/GaragePrototype.css";
+import "../styles/GaragePage.css";
 
 const MAX_INFERENCE_FRAME_WIDTH = 960;
 const VISION_DEBUG = import.meta.env.DEV && import.meta.env.VITE_VISION_DEBUG === "true";
