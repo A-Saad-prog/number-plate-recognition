@@ -6,9 +6,37 @@ const CARD_WIDTH = 300;
 const CARD_MARGIN = 16;
 const SPOTLIGHT_PADDING = 8;
 const MAX_POLL_ATTEMPTS = 60;
+const ADMIN_HEADER_SELECTOR = ".admin-header";
 
 function clamp(value, min, max) {
     return Math.min(Math.max(value, min), max);
+}
+
+function getVisibleTargetRect(element) {
+    const rect = element.getBoundingClientRect();
+    const header = document.querySelector(ADMIN_HEADER_SELECTOR);
+    const isHeaderTarget = header?.contains(element);
+    const headerBottom = header?.getBoundingClientRect().bottom || 0;
+
+    // The header is sticky, so content highlights must not paint through it
+    // after the user scrolls. Header-owned targets (the account menu) still
+    // need to be spotlighted in the header itself.
+    const top = isHeaderTarget ? rect.top : Math.max(rect.top, headerBottom);
+    const bottom = Math.min(rect.bottom, window.innerHeight);
+
+    if (bottom <= top) return null;
+
+    return {
+        top,
+        left: rect.left,
+        width: rect.width,
+        height: Math.max(0, bottom - top),
+    };
+}
+
+function scrollAdminPageToTop() {
+    window.scrollTo(0, 0);
+    document.scrollingElement?.scrollTo?.(0, 0);
 }
 
 function computeLayout(rect, placement, cardSize) {
@@ -112,7 +140,11 @@ export default function AdminTour({ steps, open, onNavigate, onFinish, onSkip })
         const measure = () => {
             const el = document.querySelector(step.target);
             if (!el || cancelled) return false;
-            const rect = el.getBoundingClientRect();
+            const rect = getVisibleTargetRect(el);
+            if (!rect) {
+                setLayout(null);
+                return false;
+            }
             const cardSize = { width: CARD_WIDTH, height: cardRef.current?.offsetHeight || 160 };
             setLayout(computeLayout(rect, step.placement || "bottom", cardSize));
             return true;
@@ -123,7 +155,7 @@ export default function AdminTour({ steps, open, onNavigate, onFinish, onSkip })
             if (cancelled) return;
             const el = document.querySelector(step.target);
             if (el) {
-                el.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+                scrollAdminPageToTop();
                 window.setTimeout(() => {
                     if (!cancelled) measure();
                 }, 220);
@@ -146,7 +178,11 @@ export default function AdminTour({ steps, open, onNavigate, onFinish, onSkip })
         const recompute = () => {
             const el = document.querySelector(step.target);
             if (!el) return;
-            const rect = el.getBoundingClientRect();
+            const rect = getVisibleTargetRect(el);
+            if (!rect) {
+                setLayout(null);
+                return;
+            }
             const cardSize = { width: CARD_WIDTH, height: cardRef.current?.offsetHeight || 160 };
             setLayout(computeLayout(rect, step.placement || "bottom", cardSize));
         };
