@@ -31,6 +31,12 @@ const VERY_HIGH_OCR_CONFIDENCE = 0.92;
 const MEDIUM_OCR_CONFIDENCE = 0.80;
 const MIN_VOTING_CONFIDENCE = 0.60;
 
+function redirectToGarageLogin() {
+    localStorage.removeItem(ADMIN_TOKEN_STORAGE_KEY);
+    sessionStorage.removeItem(ADMIN_TOKEN_STORAGE_KEY);
+    window.location.replace(`/login?next=${encodeURIComponent(window.location.pathname)}`);
+}
+
 function boxesEqual(first, second) {
     if (first === second) return true;
     if (!first || !second) return false;
@@ -888,8 +894,7 @@ function GaragePage() {
         } catch (error) {
             if (error.status === 401) {
                 garageAuthFailedRef.current = true;
-                localStorage.removeItem("parking_admin_token");
-                sessionStorage.removeItem("parking_admin_token");
+                redirectToGarageLogin();
                 setGarageAuthFailed(true);
                 return false;
             }
@@ -965,8 +970,7 @@ function GaragePage() {
         } catch (error) {
             if (error.status === 401) {
                 garageAuthFailedRef.current = true;
-                localStorage.removeItem("parking_admin_token");
-                sessionStorage.removeItem("parking_admin_token");
+                redirectToGarageLogin();
                 setGarageAuthFailed(true);
                 return false;
             }

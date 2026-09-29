@@ -2,19 +2,30 @@
 
 .admin-shell {
     min-height: 100vh;
-    background:
-        radial-gradient(
-            circle at 85% -10%,
-            rgba(224, 91, 53, .13) 0,
-            transparent 32%
-        ),
-        #e8efe6;
-    background-attachment: fixed;
+    background: #e8efe6;
     color: #10231c;
     font-family: 'Manrope', sans-serif;
     -webkit-font-smoothing: auto;
     -moz-osx-font-smoothing: auto;
+    isolation: isolate;
+    position: relative;
     text-rendering: optimizeLegibility;
+}
+
+.admin-shell::before {
+    background: radial-gradient(
+        circle at 85% -10%,
+        rgba(224, 91, 53, .13) 0,
+        transparent 32%
+    );
+    content: "";
+    height: clamp(720px, 84vw, 1240px);
+    pointer-events: none;
+    position: absolute;
+    right: 0;
+    top: 0;
+    width: clamp(720px, 84vw, 1240px);
+    z-index: -1;
 }
 
 .admin-header-actions,
@@ -2295,21 +2306,16 @@ It can make small UI text appear soft/blurry in Chromium.
 ============================================================ */
 
 .admin-theme-dark {
-    /* background-attachment: fixed anchors this vignette to the viewport
-       instead of the (variable-height) content box. Without it, the
-       gradient's radius scales with how tall the page is, so a section
-       with a lot of stacked content (e.g. Parking Activity's three
-       tables) stretches the bright glow much further down the page and
-       reads as visibly lighter than shorter sections. */
-    background:
-        radial-gradient(
-            circle at 85% -10%,
-            #1f5647 0,
-            transparent 32%
-        ),
-        #081511;
-    background-attachment: fixed;
+    background: #081511;
     color: #edf7f2;
+}
+
+.admin-theme-dark::before {
+    background: radial-gradient(
+        circle at 85% -10%,
+        #1f5647 0,
+        transparent 32%
+    );
 }
 
 .admin-theme-dark .admin-welcome,

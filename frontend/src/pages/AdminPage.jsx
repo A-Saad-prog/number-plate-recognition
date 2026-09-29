@@ -9,9 +9,6 @@ import {
     getParkingActivity,
     getAnalytics,
     getWhitelist,
-    loginAdmin,
-    verifyAdminLoginTotp,
-    verifyAdminLoginRecoveryCode,
     removeWhitelistEntry,
     getBlacklist,
     updateWhitelistEntry,
@@ -32,9 +29,6 @@ import {
     verifyAdminEmail,
     setupAdminTotp,
     confirmAdminTotp,
-    requestPasswordRecovery,
-    verifyRecoveryEmail,
-    resetAdminPassword,
     completeAdminOnboarding,
     registerEntry,
 } from "../services/api";
@@ -227,26 +221,6 @@ function formatRushHourRange(rushHour) {
     return `${formatHour(startHour)} – ${formatHour(endHour)}`;
 }
 
-function EyeIcon() {
-    return (
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z" />
-            <circle cx="12" cy="12" r="3" />
-        </svg>
-    );
-}
-
-function EyeOffIcon() {
-    return (
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-7 0-11-7-11-7a20.6 20.6 0 0 1 5.06-5.94" />
-            <path d="M9.9 4.24A10.4 10.4 0 0 1 12 5c7 0 11 7 11 7a20.6 20.6 0 0 1-3.35 4.3" />
-            <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
-            <line x1="1" y1="1" x2="23" y2="23" />
-        </svg>
-    );
-}
-
 function EditIcon() {
     return (
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -304,7 +278,7 @@ function TrashIcon() {
     );
 }
 
-function DisplayControls({ theme, language, onLanguageChange, onThemeChange }) {
+export function DisplayControls({ theme, language, onLanguageChange, onThemeChange }) {
     return (
         <div className="admin-display-controls">
             <select className="language-select" value={language} onChange={(event) => onLanguageChange(event.target.value)} aria-label="Select language">
@@ -331,30 +305,6 @@ function AdminPage() {
     const appliedTheme = theme === "system" ? (systemDark ? "dark" : "light") : theme;
     const t = TRANSLATIONS[language];
     const isUrdu = language === "ur";
-    const [identifier, setIdentifier] = useState("");
-    const [password, setPassword] = useState("");
-    const [twoFactorChallenge, setTwoFactorChallenge] = useState("");
-    const [twoFactorMode, setTwoFactorMode] = useState("totp");
-    const [twoFactorCode, setTwoFactorCode] = useState("");
-    const [twoFactorSubmitting, setTwoFactorSubmitting] = useState(false);
-    const [twoFactorError, setTwoFactorError] = useState("");
-    const [showPassword, setShowPassword] = useState(false);
-    const [forgotPasswordOpen, setForgotPasswordOpen] = useState(false);
-    const [forgotNotice, setForgotNotice] = useState("");
-
-    // Forgot-password state machine: forgot_identifier -> forgot_email_code
-    // -> forgot_new_password -> forgot_success.
-    const [forgotStep, setForgotStep] = useState("forgot_identifier");
-    const [forgotError, setForgotError] = useState("");
-    const [forgotSubmitting, setForgotSubmitting] = useState(false);
-    const [recoveryChallengeToken, setRecoveryChallengeToken] = useState("");
-    const [recoveryEmailCode, setRecoveryEmailCode] = useState("");
-    const [recoveryResetToken, setRecoveryResetToken] = useState("");
-    const [recoveryNewPassword, setRecoveryNewPassword] = useState("");
-    const [recoveryConfirmPassword, setRecoveryConfirmPassword] = useState("");
-    const [recoveryShowNewPassword, setRecoveryShowNewPassword] = useState(false);
-    const [recoveryShowConfirmPassword, setRecoveryShowConfirmPassword] = useState(false);
-
     // Account Security modal (logged-in admin: email verification + TOTP).
     const [securityModalOpen, setSecurityModalOpen] = useState(false);
     const [securityStatus, setSecurityStatus] = useState(null);
@@ -371,12 +321,10 @@ function AdminPage() {
     const [onboardingCompleted, setOnboardingCompleted] = useState(true);
     const [tourOpen, setTourOpen] = useState(false);
     const tourAutoStartedRef = useRef(false);
-    const [token, setToken] = useState(() => {
+    const [token] = useState(() => {
         return localStorage.getItem(TOKEN_KEY);
     });
     const [loading, setLoading] = useState(Boolean(token));
-    const [submitting, setSubmitting] = useState(false);
-    const [error, setError] = useState("");
     const [activeFeature, setActiveFeature] = useState(null);
     const [accountMenuOpen, setAccountMenuOpen] = useState(false);
     const [plate, setPlate] = useState("");
@@ -571,7 +519,7 @@ function AdminPage() {
                 if (sessionError.status === 401) {
                     localStorage.removeItem(TOKEN_KEY);
                     sessionStorage.removeItem(TOKEN_KEY);
-                    setToken(null);
+                    window.location.replace(`/login?next=${encodeURIComponent(window.location.pathname)}`);
                 }
             })
             .finally(() => setLoading(false));
@@ -696,135 +644,10 @@ function AdminPage() {
         }
     }, [garageSettings.levels, garageSettings.mode, advancedGarageSettings]);
 
-    async function handleSubmit(event) {
-        event.preventDefault();
-        setSubmitting(true);
-        setError("");
-        try {
-            const result = await loginAdmin(identifier, password);
-            if (result.requires_2fa) {
-                setTwoFactorChallenge(result.challenge_token || "");
-                setTwoFactorMode("totp");
-                setTwoFactorCode("");
-                setTwoFactorError("");
-                setPassword("");
-                return;
-            }
-            localStorage.setItem(TOKEN_KEY, result.access_token);
-            sessionStorage.removeItem(TOKEN_KEY);
-            setToken(result.access_token);
-            setAdminName(identifier.trim());
-            setPassword("");
-        } catch {
-            setError(t.loginFailed);
-        } finally {
-            setSubmitting(false);
-        }
-    }
-
-    function resetForgotPasswordState() {
-        setForgotStep("forgot_identifier");
-        setForgotNotice("");
-        setForgotError("");
-        setForgotSubmitting(false);
-        setRecoveryChallengeToken("");
-        setRecoveryEmailCode("");
-        setRecoveryResetToken("");
-        setRecoveryNewPassword("");
-        setRecoveryConfirmPassword("");
-        setRecoveryShowNewPassword(false);
-        setRecoveryShowConfirmPassword(false);
-    }
-
-    function openForgotPassword() {
-        resetForgotPasswordState();
-        setForgotPasswordOpen(true);
-    }
-
-    function closeForgotPassword() {
-        resetForgotPasswordState();
-        setForgotPasswordOpen(false);
-    }
-
-    async function handleRecoveryIdentifierSubmit(event) {
-        event.preventDefault();
-        setForgotSubmitting(true);
-        setForgotError("");
-        try {
-            const result = await requestPasswordRecovery(identifier);
-            setRecoveryChallengeToken(result.challenge_token || "");
-            setForgotNotice(result.message || "If the account is eligible for recovery, a verification code has been sent.");
-            setForgotStep("forgot_email_code");
-        } catch (error) {
-            setForgotError(error.message || t.requestFailed);
-        } finally {
-            setForgotSubmitting(false);
-        }
-    }
-
-    async function handleRecoveryEmailCodeSubmit(event) {
-        event.preventDefault();
-        setForgotSubmitting(true);
-        setForgotError("");
-        try {
-            const result = await verifyRecoveryEmail(recoveryChallengeToken, recoveryEmailCode.trim());
-            setForgotNotice("");
-            setRecoveryEmailCode("");
-            setRecoveryResetToken(result.reset_token || "");
-            setForgotStep("forgot_new_password");
-        } catch (error) {
-            setForgotError(error.message || "Invalid or expired verification code.");
-        } finally {
-            setForgotSubmitting(false);
-        }
-    }
-
-    async function handleRecoveryResetSubmit(event) {
-        event.preventDefault();
-        setForgotError("");
-
-        if (recoveryNewPassword.length < 12) {
-            setForgotError("Password must be at least 12 characters.");
-            return;
-        }
-        if (recoveryNewPassword !== recoveryConfirmPassword) {
-            setForgotError("Passwords do not match.");
-            return;
-        }
-
-        setForgotSubmitting(true);
-        try {
-            await resetAdminPassword(recoveryResetToken, recoveryNewPassword);
-            // Clear every recovery secret from memory now that it's been used.
-            setRecoveryChallengeToken("");
-            setRecoveryEmailCode("");
-            setRecoveryResetToken("");
-            setRecoveryNewPassword("");
-            setRecoveryConfirmPassword("");
-            closeForgotPassword();
-        } catch (error) {
-            setForgotError(error.message || "Unable to reset password.");
-        } finally {
-            setForgotSubmitting(false);
-        }
-    }
-
     function signOut() {
         localStorage.removeItem(TOKEN_KEY);
         sessionStorage.removeItem(TOKEN_KEY);
-        setToken(null);
-        setAdminName("");
-        setTourOpen(false);
-        setOnboardingCompleted(true);
-        setSecurityModalOpen(false);
-        setSecurityStatus(null);
-        setSecurityEmailCodeSent(false);
-        setSecurityEmailCode("");
-        setSecurityTotpSetup(null);
-        setSecurityTotpCode("");
-        setSecurityRecoveryCodes([]);
-        setSecurityError("");
-        setSecurityMessage("");
+        window.location.replace("/login?next=/admin");
     }
 
     async function loadSecurityStatus() {
@@ -872,45 +695,6 @@ function AdminPage() {
         } finally {
             setSecurityLoading(false);
         }
-    }
-
-    async function handleTwoFactorSubmit(event) {
-        event.preventDefault();
-        const code = twoFactorCode.trim();
-        const validLength = twoFactorMode === "totp" ? /^\d{6}$/.test(code) : code.length >= 8;
-        if (!validLength) {
-            setTwoFactorError("Enter a valid authentication code.");
-            return;
-        }
-        setTwoFactorSubmitting(true);
-        setTwoFactorError("");
-        try {
-            const result = twoFactorMode === "totp"
-                ? await verifyAdminLoginTotp(twoFactorChallenge, code)
-                : await verifyAdminLoginRecoveryCode(twoFactorChallenge, code);
-            localStorage.setItem(TOKEN_KEY, result.access_token);
-            sessionStorage.removeItem(TOKEN_KEY);
-            setToken(result.access_token);
-            setAdminName(identifier.trim());
-            setTwoFactorChallenge("");
-            setTwoFactorCode("");
-        } catch (error) {
-            if (error.status === 410) {
-                backToPasswordLogin();
-                setError("Your authentication challenge expired. Please sign in again.");
-            } else {
-                setTwoFactorError("Invalid or expired authentication challenge.");
-            }
-        } finally {
-            setTwoFactorSubmitting(false);
-        }
-    }
-
-    function backToPasswordLogin() {
-        setTwoFactorChallenge("");
-        setTwoFactorCode("");
-        setTwoFactorError("");
-        setTwoFactorMode("totp");
     }
 
     async function handleAssignEmail(event) {
@@ -2927,6 +2711,9 @@ function AdminPage() {
         );
     }
 
+    return null;
+
+    /*
     return (
         <main className={`admin-shell admin-theme-${appliedTheme} admin-login-shell`} dir={isUrdu ? "rtl" : "ltr"} lang={language}>
             <section className="admin-welcome">
@@ -3042,6 +2829,9 @@ function AdminPage() {
             </section>
         </main>
     );
+}
+*/
+
 }
 
 export default AdminPage;
