@@ -2055,6 +2055,7 @@ function AdminPage() {
                 </header>
                 <div className="admin-app-body">
                     <aside className="admin-sidebar">
+                        <div className="admin-sidebar-inner">
                         <p className="admin-label">{t.controlCenter}</p>
                         <button type="button" className={`sidebar-feature ${activeFeature === "whitelist" ? "active" : ""}`} onClick={() => { setActiveFeature(activeFeature === "whitelist" ? null : "whitelist"); setWhitelistError(""); }}>
                             <span className="feature-number">01</span><span>{t.whitelist}</span><span className="feature-arrow">{activeFeature === "whitelist" ? "−" : "+"}</span>
@@ -2072,6 +2073,7 @@ function AdminPage() {
                             <span className="feature-number">05</span><span>Parking Activity</span><span className="feature-arrow">{activeFeature === "parking-activity" ? "−" : "+"}</span>
                         </button>
                         <button type="button" className={`sidebar-feature ${activeFeature === "analytics" ? "active" : ""}`} onClick={() => { if (activeFeature === "analytics") { setActiveFeature(null); return; } setActiveFeature("analytics"); loadAnalytics(); }}><span className="feature-number">06</span><span>Analytics</span><span className="feature-arrow">{activeFeature === "analytics" ? "−" : "+"}</span></button>
+                        </div>
                     </aside>
                     <section className="admin-dashboard">
                         {activeFeature === "parking-activity" ? (

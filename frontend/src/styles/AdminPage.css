@@ -1,5 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;600;700;800&display=swap');
-
 .admin-shell {
     min-height: 100vh;
     background: #e8efe6;
@@ -450,16 +448,32 @@
     display: grid;
     grid-template-columns: 250px 1fr;
     min-height: calc(100vh - 72px);
+    position: relative;
 }
 
 .admin-sidebar {
-    align-self: start;
-    border-right: 1px solid rgba(16, 35, 28, .14);
+    align-self: stretch;
+    border-right: 0;
+    min-height: 100%;
+    position: relative;
+    z-index: 1;
+}
+
+.admin-sidebar-inner {
     height: calc(100vh - 72px);
+    left: 0;
+    border-right: 1px solid rgba(16, 35, 28, .14);
     overflow-y: auto;
     padding: 55px 28px;
-    position: sticky;
+    position: fixed;
     top: 72px;
+    width: 250px;
+    z-index: 2;
+}
+
+.admin-dashboard {
+    position: relative;
+    z-index: 1;
 }
 
 .sidebar-feature,
@@ -2395,6 +2409,7 @@ It can make small UI text appear soft/blurry in Chromium.
 }
 
 .admin-theme-dark .admin-sidebar,
+.admin-theme-dark .admin-sidebar-inner,
 .admin-theme-dark .card-heading,
 .admin-theme-dark .advanced-level-editor,
 .admin-theme-dark .whitelist-table-wrap th,
@@ -2682,11 +2697,19 @@ It can make small UI text appear soft/blurry in Chromium.
 ============================================================ */
 
 [dir="rtl"] .admin-sidebar {
-    border-left: 1px solid rgba(16, 35, 28, .14);
+    border-left: 0;
     border-right: 0;
 }
 
-.admin-theme-dark[dir="rtl"] .admin-sidebar {
+[dir="rtl"] .admin-sidebar-inner {
+    border-left: 1px solid rgba(16, 35, 28, .14);
+    border-right: 0;
+    left: auto;
+    right: 0;
+}
+
+.admin-theme-dark[dir="rtl"] .admin-sidebar,
+.admin-theme-dark[dir="rtl"] .admin-sidebar-inner {
     border-color: #385247;
 }
 
@@ -2806,10 +2829,18 @@ It can make small UI text appear soft/blurry in Chromium.
     .admin-sidebar {
         border-bottom: 1px solid rgba(16, 35, 28, .14);
         border-right: 0;
+        min-height: 0;
+        position: static;
+    }
+
+    .admin-sidebar-inner {
+        border-left: 0;
+        border-right: 0;
         height: auto;
         overflow-y: visible;
         padding: 25px 28px;
         position: static;
+        width: auto;
     }
 
     .sidebar-muted {

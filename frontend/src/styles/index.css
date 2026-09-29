@@ -1,9 +1,17 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&family=Manrope:wght@400;600;700;800&display=swap');
+
+* {
+  box-sizing: border-box;
+}
+
 html {
   font-family: Arial, Helvetica, sans-serif;
   background: #f4f6f8;
 }
 
 body {
+  margin: 0;
+  padding: 0;
   min-width: 320px;
   min-height: 100vh;
 }

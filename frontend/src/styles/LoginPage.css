@@ -1,5 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;600;700;800&display=swap');
-
 .login-page.login-shell {
     min-height: 100vh;
     background: radial-gradient(circle at 85% -10%, rgba(224, 91, 53, .13) 0, transparent 32%), #e8efe6;

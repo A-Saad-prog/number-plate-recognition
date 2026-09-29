@@ -1,21 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;600;700;800&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap');
-
-* {
-    box-sizing: border-box;
-}
-
-body {
-    margin: 0;
-    font-family: Arial, Helvetica, sans-serif;
-    background: #f4f6f8;
-    color: #1f2937;
-}
-
-button {
-    font-family: inherit;
-}
-
 .app {
     min-height: 100vh;
 }
@@ -1337,7 +1319,7 @@ button {
     background: #000;
 }
 
-:root {
+.app {
     --ink: #17221d;
     --muted: #68736d;
     --paper: #f3f5f0;
@@ -1351,12 +1333,6 @@ button {
     --red: #c9574a;
     --red-soft: #fcebe8;
     --dashboard-shadow: 0 18px 45px rgba(23, 34, 29, 0.08);
-}
-
-body {
-    background: var(--paper);
-    color: var(--ink);
-    font-family: "Trebuchet MS", "Segoe UI", sans-serif;
 }
 
 .app {
@@ -2954,7 +2930,7 @@ body {
     border-radius: 999px !important;
 }
 
-*{box-sizing:border-box}.garage-prototype{--bg:#f5f6f4;--surface:#fff;--ink:#151a17;--muted:#7b847f;--line:#e2e6e3;--accent:#ff633c;--green:#16a66a;--red:#e3554d;--soft:#eef1ef}
+.garage-prototype{--bg:#f5f6f4;--surface:#fff;--ink:#151a17;--muted:#7b847f;--line:#e2e6e3;--accent:#ff633c;--green:#16a66a;--red:#e3554d;--soft:#eef1ef}
 .garage-prototype.garage-theme-dark{--bg:#0f1210;--surface:#171b18;--ink:#f0f4f1;--muted:#8e9992;--line:#2a302c;--soft:#202521}
 .garage-prototype{margin:0;min-height:100%;font-family:Inter,sans-serif;background:var(--bg);color:var(--ink)}.garage-prototype button{font:inherit}
 .app{height:100vh;min-height:720px;display:grid;grid-template-rows:62px 1fr;overflow:hidden}
@@ -3676,27 +3652,6 @@ body {
 #entryQ > .receipt.mb-from-left{ --mbx:-13px; --shadowx:7px; }
 #exitQ > .receipt.mb-from-right{ --mbx:13px; --shadowx:-7px; }
 
-@keyframes receiptMotionBlurV15{
-  0%{
-    opacity:.66;
-    transform:translateX(var(--mbx)) scaleX(1.012);
-    filter:blur(.7px);
-    text-shadow:var(--shadowx) 0 7px color-mix(in srgb,var(--ink) 20%,transparent);
-  }
-  45%{
-    opacity:.94;
-    transform:translateX(calc(var(--mbx) * .18)) scaleX(1.003);
-    filter:blur(.18px);
-    text-shadow:calc(var(--shadowx) * .25) 0 3px color-mix(in srgb,var(--ink) 8%,transparent);
-  }
-  100%{
-    opacity:1;
-    transform:translateX(0) scaleX(1);
-    filter:blur(0);
-    text-shadow:none;
-  }
-}
-
 /* LIVE LANES: every visible camera gets the same motion-blur reveal on All/Entry/Exit. */
 .camera-grid > .cam.cam-mb-left,
 .camera-grid > .cam.cam-mb-right{
@@ -3706,24 +3661,6 @@ body {
 }
 .camera-grid > .cam.cam-mb-left{ --camx:-12px; }
 .camera-grid > .cam.cam-mb-right{ --camx:12px; }
-
-@keyframes cameraMotionBlurV15{
-  0%{
-    opacity:.64;
-    transform:translateX(var(--camx)) scale(.996);
-    filter:blur(.8px);
-  }
-  46%{
-    opacity:.94;
-    transform:translateX(calc(var(--camx) * .18)) scale(.999);
-    filter:blur(.18px);
-  }
-  100%{
-    opacity:1;
-    transform:translateX(0) scale(1);
-    filter:blur(0);
-  }
-}
 
 /* Old reveal classes cannot compete with the new motion-blur implementation. */
 .receipt.receiptTabReveal,
